@@ -62,6 +62,7 @@ const verificationOwnerService = require("../ownerService");
 const { runMemberPrivacyDeletion } = require("../services/privacyDeletion");
 const { runGuildPreflight } = require("../services/guildPreflightService");
 const { verificationWebhookManager } = require("../services/webhook/verificationWebhookManager");
+const { verificationWebhookRepository } = require("../../../database/sqlite/repositories/core/VerificationWebhookRepository");
 
 function maskWebhookUrl(url) {
   if (!url || typeof url !== "string") return null;
@@ -398,17 +399,11 @@ function sanitizeVerificationBasicFlags(input = {}) {
     out.minAccountAgeDays = Math.max(0, Math.min(3650, Number.parseInt(input.minAccountAgeDays, 10) || 0));
   }
 
-  if ("minConnections" in input) {
-    out.minConnections = Math.max(1, Math.min(20, Number.parseInt(input.minConnections, 10) || 1));
-  }
-
   const SNOWFLAKE_FIELDS = ["roleId", "channelId", "messageId"];
   for (const field of SNOWFLAKE_FIELDS) {
     if (field in input) out[field] = cleanOptionalSnowflake(input[field]);
   }
 
-  if ("allowedCountries" in input) out.allowedCountries = normalizeStringArray(input.allowedCountries);
-  if ("blockedCountries" in input) out.blockedCountries = normalizeStringArray(input.blockedCountries);
   return out;
 }
 
@@ -1532,12 +1527,12 @@ router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildA
           text: readiness.urlValid ? "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล" : (readiness.urlConfigured ? "รูปแบบ Webhook URL ไม่ถูกต้อง" : "ยังไม่ได้ระบุ Webhook URL")
         },
         databaseReady: {
-          ok: true,
-          text: "ระบบฐานข้อมูลเชื่อมต่อเรียบร้อย"
+          ok: readiness.databaseReady?.ok === true,
+          text: readiness.databaseReady?.ok === true ? "ระบบฐานข้อมูลเชื่อมต่อเรียบร้อย" : "การเชื่อมต่อฐานข้อมูลไม่พร้อมทำงาน"
         },
         queueReady: {
-          ok: true,
-          text: "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน"
+          ok: readiness.queueReady?.ok === true,
+          text: readiness.queueReady?.ok === true ? "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน" : "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน"
         },
         workerReady: {
           ok: readiness.enabled && readiness.urlValid,
@@ -1574,11 +1569,22 @@ router.post("/api/guild/:guildId/webhook-log/url", requireAdmin, requireGuildAdm
       });
     }
 
+    const config = await GuildConfig.findOne().where("guildId").equals(String(guildId));
+    const previousUrl = config?.verification?.webhookLog?.url || "";
+    const isNewUrl = previousUrl.trim() !== url.trim();
+    let currentVersion = config?.verification?.webhookLog?.destinationVersion || 1;
+    if (isNewUrl && previousUrl) {
+      currentVersion += 1;
+      // Cancel any ongoing backfill jobs associated with the old destination URL (P1-5)
+      verificationWebhookRepository.cancelOrFailOldJobs(guildId, "webhook_url_changed");
+    }
+
     await GuildConfig.updateOne(
       { guildId: String(guildId) },
       {
         $set: {
           "verification.webhookLog.url": url.trim(),
+          "verification.webhookLog.destinationVersion": currentVersion,
           "verification.webhookLog.valid": true,
           "verification.updatedAt": Date.now()
         }
@@ -1589,10 +1595,24 @@ router.post("/api/guild/:guildId/webhook-log/url", requireAdmin, requireGuildAdm
     return res.json({
       success: true,
       message: "บันทึกและตรวจสอบ Discord Webhook URL เรียบร้อยแล้ว",
+      destinationVersion: currentVersion,
       urlMasked: maskWebhookUrl(url)
     });
   } catch (err) {
     return sendServerError(res, "webhook-log.url", err, "บันทึก Webhook URL ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/webhook-log/retry", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    verificationWebhookManager.triggerWorker(guildId);
+    return res.json({
+      success: true,
+      message: "สั่งให้ระบบลองส่งข้อมูลที่รออยู่ในคิวใหม่เรียบร้อยแล้ว"
+    });
+  } catch (err) {
+    return sendServerError(res, "webhook-log.retry", err, "สั่งลองส่งข้อมูลใหม่ไม่สำเร็จ");
   }
 });
 

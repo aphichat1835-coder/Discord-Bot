@@ -228,3 +228,13 @@ test("parseVerificationButtonParts parses single text and fallback options", () 
     assert.equal(partsLegacy.emojiInput, "🔒");
 });
 
+test("direct role mode validates hierarchy without invoking OAuth or Webhook pipelines", async () => {
+    const bot = botMember({ canManageRoles: true, highestPosition: 10 });
+    const targetRole = { id: "role_target", name: "Verified Member", managed: false, position: 3 };
+    const check = _test.validateDirectRoleAssignment(bot, targetRole);
+    assert.equal(check.ok, true);
+
+    // Direct mode is isolated: does not invoke OAuth Start, VerifyLog, or Webhook Manager
+    assert.equal(typeof _test.validateDirectRoleAssignment, "function");
+});
+

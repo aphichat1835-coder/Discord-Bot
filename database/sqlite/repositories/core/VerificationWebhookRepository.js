@@ -127,13 +127,51 @@ class VerificationWebhookRepository {
         return result.changes > 0;
     }
 
-    completeJob(jobId) {
+    completeJob(jobId, status = 'COMPLETED') {
         const now = Date.now();
+        const finalStatus = ['COMPLETED', 'COMPLETED_WITH_FAILURES'].includes(status) ? status : 'COMPLETED';
         return this.db.prepare(`
             UPDATE verification_webhook_jobs
-            SET status = 'COMPLETED', lease_token = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
+            SET status = ?, lease_token = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
             WHERE job_id = ?
-        `).run(now, now, String(jobId));
+        `).run(finalStatus, now, now, String(jobId));
+    }
+
+    updateJobStatus(jobId, status, {
+        processedCount,
+        successCount,
+        failureCount,
+        retryCount,
+        errorMessage = null
+    } = {}) {
+        const now = Date.now();
+        const completedAt = ['COMPLETED', 'COMPLETED_WITH_FAILURES', 'FAILED'].includes(status) ? now : null;
+        return this.db.prepare(`
+            UPDATE verification_webhook_jobs
+            SET status = ?,
+                processed_count = COALESCE(?, processed_count),
+                success_count = COALESCE(?, success_count),
+                failure_count = COALESCE(?, failure_count),
+                retry_count = COALESCE(?, retry_count),
+                error_message = COALESCE(?, error_message),
+                lease_token = CASE WHEN ? IN ('COMPLETED', 'COMPLETED_WITH_FAILURES', 'FAILED') THEN NULL ELSE lease_token END,
+                lease_expires_at = CASE WHEN ? IN ('COMPLETED', 'COMPLETED_WITH_FAILURES', 'FAILED') THEN NULL ELSE lease_expires_at END,
+                completed_at = COALESCE(?, completed_at),
+                updated_at = ?
+            WHERE job_id = ?
+        `).run(
+            String(status),
+            processedCount !== undefined ? Number(processedCount) : null,
+            successCount !== undefined ? Number(successCount) : null,
+            failureCount !== undefined ? Number(failureCount) : null,
+            retryCount !== undefined ? Number(retryCount) : null,
+            errorMessage ? String(errorMessage) : null,
+            String(status),
+            String(status),
+            completedAt,
+            now,
+            String(jobId)
+        );
     }
 
     failJob(jobId, errorMessage) {
@@ -143,6 +181,15 @@ class VerificationWebhookRepository {
             SET status = 'FAILED', lease_token = NULL, lease_expires_at = NULL, error_message = ?, updated_at = ?
             WHERE job_id = ?
         `).run(String(errorMessage || "unknown_error"), now, String(jobId));
+    }
+
+    cancelOrFailOldJobs(guildId, errorMessage = "destination_version_changed") {
+        const now = Date.now();
+        return this.db.prepare(`
+            UPDATE verification_webhook_jobs
+            SET status = 'FAILED', lease_token = NULL, lease_expires_at = NULL, error_message = ?, updated_at = ?
+            WHERE guild_id = ? AND status IN ('RUNNING', 'PENDING')
+        `).run(String(errorMessage), now, String(guildId));
     }
 
     enqueueDelivery({
@@ -242,6 +289,35 @@ class VerificationWebhookRepository {
             stats.total += row.count;
         }
         return stats;
+    }
+
+    recoverStuckSendingDeliveries(maxAgeMs = 300000) {
+        const now = Date.now();
+        const cutoff = now - Math.max(30000, Number(maxAgeMs) || 300000);
+        const stmt = this.db.prepare(`
+            UPDATE verification_webhook_deliveries
+            SET status = 'RETRY', next_retry_at = ?, error_code = 'sending_stuck_recovered', error_message = 'Recovered stuck SENDING delivery after timeout', updated_at = ?
+            WHERE status = 'SENDING' AND (last_attempt_at IS NULL OR last_attempt_at <= ?)
+        `);
+        const result = stmt.run(now, now, cutoff);
+        return result.changes;
+    }
+
+    getNextRetryTimestamp(guildId) {
+        const row = this.db.prepare(`
+            SELECT MIN(next_retry_at) as next_retry
+            FROM verification_webhook_deliveries
+            WHERE guild_id = ? AND status = 'RETRY' AND next_retry_at IS NOT NULL
+        `).get(String(guildId));
+        return row?.next_retry || null;
+    }
+
+    getDeliveryByEventId(guildId, destinationVersion, eventId) {
+        return this.db.prepare(`
+            SELECT * FROM verification_webhook_deliveries
+            WHERE guild_id = ? AND destination_version = ? AND event_id = ?
+            LIMIT 1
+        `).get(String(guildId), Number(destinationVersion) || 1, String(eventId)) || null;
     }
 }
 

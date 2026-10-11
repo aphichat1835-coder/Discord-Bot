@@ -115,7 +115,8 @@ describe("unified verification data contract", () => {
         expect(connection.metadata.value).toHaveLength(12 * 1024);
     });
 
-    test("stores all 200 Discord user guilds with permission metadata", () => {
+    test("computes aggregate guild summary for 200 user guilds without storing full array", () => {
+        const { computeGuildSummary } = require("../discord/verification/services/collectors/discordDataCollector");
         const input = Array.from({ length: 200 }, (_, index) => ({
             id: String(10000000000000000n + BigInt(index)),
             name: `guild-${index}`,
@@ -123,13 +124,12 @@ describe("unified verification data contract", () => {
             permissions: index === 0 ? "8" : "0",
             features: []
         }));
-        const guilds = normalizeGuilds(input);
-        expect(guilds).toHaveLength(200);
-        expect(guilds[0]).toMatchObject({
-            owner: true,
-            isOwner: true,
-            isAdmin: true
-        });
+        const summary = computeGuildSummary(input, false, null);
+        expect(summary.totalCount).toBe(200);
+        expect(summary.ownedCount).toBe(1);
+        expect(summary.status).toBe("success");
+        expect(summary.failureReason).toBeNull();
+        expect(summary.guilds).toBeUndefined();
     });
 
     test("stores more than 80 target-guild roles without truncation", () => {

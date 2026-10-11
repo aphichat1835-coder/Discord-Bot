@@ -94,6 +94,8 @@ const schema = new mongoose.Schema({
             enabled:             { type: Boolean, default: false },
             mode:                { type: String, enum: ['off', 'live', 'backfill_live'], default: 'off' },
             url:                 { type: String, default: '' },
+            destinationVersion:  { type: Number, default: 1 },
+            liveStartedAt:       Number,
             validatedAt:         Number,
             channelId:           String,
             guildId:             String,

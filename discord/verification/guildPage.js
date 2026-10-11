@@ -79,7 +79,7 @@ ${navBar("/verification")}
           <button class="btn btn-soft" type="button" data-tab="system">แก้ระบบ</button>
           <button class="btn btn-soft" type="button" data-tab="panel">แก้แผง</button>
           <button class="btn btn-soft" type="button" data-tab="policy">แก้เงื่อนไข</button>
-          <button class="btn btn-soft" type="button" data-tab="data">เปิดข้อมูลสมาชิก</button>
+          <button class="btn btn-soft" type="button" data-tab="data">ตั้งค่า Webhook Log</button>
         </div>
       </article>
     </div>
@@ -154,9 +154,7 @@ ${navBar("/verification")}
         <div class="toggle-row"><div><div class="toggle-title">ต้องมี Email</div></div><label class="toggle"><input id="v-requireEmail" type="checkbox"><span class="slider"></span></label></div>
         <div class="toggle-row"><div><div class="toggle-title">Email ต้องยืนยันแล้ว</div></div><label class="toggle"><input id="v-requireEmailVerified" type="checkbox"><span class="slider"></span></label></div>
         <div class="toggle-row"><div><div class="toggle-title">ต้องเชื่อมบัญชีภายนอกกับ Discord</div><div class="toggle-sub">เช่น Steam, Twitch, YouTube หรือ GitHub</div></div><label class="toggle"><input id="v-requireConnections" type="checkbox"><span class="slider"></span></label></div>
-        <div class="form-row form-row-2"><div><label for="v-minAge">อายุบัญชีขั้นต่ำ (วัน)</label><input id="v-minAge" type="number" min="0" max="3650" value="7"></div><div><label for="v-minConnections">ต้องเชื่อมอย่างน้อยกี่บริการ</label><input id="v-minConnections" type="number" min="1" max="20" value="1"></div></div>
-        <label for="v-allowedCountries">ประเทศที่อนุญาต</label><input id="v-allowedCountries" type="text" placeholder="TH,US,JP หรือปล่อยว่าง">
-        <label for="v-blockedCountries">ประเทศที่บล็อก</label><input id="v-blockedCountries" type="text" placeholder="CN,RU หรือปล่อยว่าง">
+        <div class="form-row"><div><label for="v-minAge">อายุบัญชีขั้นต่ำ (วัน) — ระบุ 0 หากไม่จำกัด</label><input id="v-minAge" type="number" min="0" max="3650" value="0"></div></div>
       </article>
       <article class="verify-panel"><div class="section-title"><div><h2>กฎตรวจสอบและการดำเนินการ</h2><p>แต่ละกฎเปิด–ปิดและเลือกการทำงานใน Discord ได้แยกจากกัน</p></div></div><div id="security-rules" class="security-rules">
         ${securityRuleMarkup("vpnProxyTor", "VPN, Proxy หรือ TOR", "ตรวจเครือข่ายที่ปกปิดต้นทาง")}

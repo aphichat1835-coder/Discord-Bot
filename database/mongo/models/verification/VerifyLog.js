@@ -16,6 +16,7 @@ const schema = new mongoose.Schema({
 
     policySnapshot: mixed,
     discordSnapshot: mixed,
+    connectionsSnapshot: mixed,
     guildSummary: mixed,
     joinResult: mixed,
     roleAssignResult: mixed,

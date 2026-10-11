@@ -529,10 +529,7 @@
     setChecked("v-requireEmail", !!verification.requireEmail);
     setChecked("v-requireEmailVerified", !!verification.requireEmailVerified);
     setChecked("v-requireConnections", !!verification.requireConnections);
-    setInput("v-minAge", verification.minAccountAgeDays ?? 7);
-    setInput("v-minConnections", verification.minConnections ?? 1);
-    setInput("v-allowedCountries", Array.isArray(verification.allowedCountries) ? verification.allowedCountries.join(",") : "");
-    setInput("v-blockedCountries", Array.isArray(verification.blockedCountries) ? verification.blockedCountries.join(",") : "");
+    setInput("v-minAge", verification.minAccountAgeDays ?? 0);
   }
 
   function fillConfig(config) {
@@ -1455,9 +1452,6 @@
       requireEmailVerified: readBool("v-requireEmailVerified"),
       requireConnections: readBool("v-requireConnections"),
       minAccountAgeDays: Math.max(0, Math.min(3650, Number.parseInt(readText("v-minAge"), 10) || 0)),
-      minConnections: Math.max(1, Math.min(20, Number.parseInt(readText("v-minConnections"), 10) || 1)),
-      allowedCountries: readText("v-allowedCountries"),
-      blockedCountries: readText("v-blockedCountries"),
 
       panel: {
         content: readText("p-content"),

@@ -20,7 +20,6 @@ const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require(".
 const { verificationWebhookManager } = require("./webhook/verificationWebhookManager");
 const oauthTokenManager = require("../../core/oauthTokenManager");
 const snapshotBudget = require("./snapshotBudget");
-const snapshotStore = require("./oauthSnapshotStore");
 const ipIdentityHistory = require("./ipIdentityHistoryService");
 const { withSnapshotMutationLock } = require("./snapshotMutationLock");
 
@@ -538,16 +537,6 @@ async function executeVerification({
             verifiedAt: Date.now()
         });
 
-        // Dispatch Webhook Log asynchronously
-        if (verifyLog?._id) {
-            verificationWebhookManager.dispatchLiveEvent({
-                guildId,
-                userId: profile.id,
-                logId: String(verifyLog._id),
-                eventData: verifyLog
-            }).catch(err => console.error("[VERIFY] live webhook dispatch failed:", err.message));
-        }
-
         return {
             statusCode: 200,
             body: {
@@ -663,6 +652,10 @@ async function executeVerification({
             badgeFlags: profile.badgeFlags,
             connectionsCount: connections.length
         },
+        connectionsSnapshot: connections.map(c => ({
+            type: String(c.type || ""),
+            verified: Boolean(c.verified)
+        })),
         guildSummary,
         joinResult,
         roleAssignResult,
@@ -708,7 +701,8 @@ async function executeVerification({
     }
 
     // --- Step 9: Webhook Log Verify Dispatch (Asynchronous) ---
-    if (verifyLogSaved?._id) {
+    const roleAssignedOk = roleAssignResult?.ok === true || roleAssignResult?.alreadyHadRole === true || roleAssignResult?.joinedWithRole === true;
+    if (verifyLogSaved?._id && verifyLogSaved.result === "success" && roleAssignedOk) {
         verificationWebhookManager.dispatchLiveEvent({
             guildId,
             userId: profile.id,
