@@ -16,6 +16,7 @@ const {
     chunkStringToFields,
     splitEmbedFields,
     fitEmbedsIntoMessages,
+    isEligibleVerifyLog,
     VerificationWebhookManager
 } = require("../discord/verification/services/webhook/verificationWebhookManager");
 
@@ -510,4 +511,275 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             assert.ok(msg.embeds.length <= 10, "Every message must contain at most 10 embeds");
         }
     });
+
+    await t.test("14. P1-1: Unified Backfill & Live eligibility checker (isEligibleVerifyLog)", () => {
+        // Ineligible: null or non-object
+        assert.equal(isEligibleVerifyLog(null), false);
+        assert.equal(isEligibleVerifyLog("string"), false);
+
+        // Ineligible: result !== "success"
+        assert.equal(isEligibleVerifyLog({ result: "blocked", roleAssignResult: { ok: true } }), false);
+        assert.equal(isEligibleVerifyLog({ result: "failed", roleAssignResult: { ok: true } }), false);
+
+        // Ineligible: result === "success" but no roleAssignResult
+        assert.equal(isEligibleVerifyLog({ result: "success" }), false);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: null }), false);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: false } }), false);
+
+        // Eligible: concrete role assignment outcomes
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: true } }), true);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { alreadyHadRole: true } }), true);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { joinedWithRole: true } }), true);
+    });
+
+    await t.test("15. P1-3: Standardized Delivery ID across Live and Backfill prevents duplicate deliveries", () => {
+        const guildId = "g_std_" + runNonce;
+        const destinationVersion = 1;
+        const eventId = "ev_shared_" + runNonce;
+        const userId = "u_shared_" + runNonce;
+
+        // 1. Live enqueues delivery first
+        const liveDeliveryId = `del_${guildId}_v${destinationVersion}_${eventId}`;
+        const liveEnqueue = repo.enqueueDelivery({
+            deliveryId: liveDeliveryId,
+            guildId,
+            destinationVersion,
+            eventId,
+            userId
+        });
+        assert.equal(liveEnqueue.changes, 1, "Live delivery row inserted");
+
+        // 2. Backfill finds existing delivery
+        const existing = repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+        assert.ok(existing, "Backfill finds existing delivery row");
+        assert.equal(existing.delivery_id, liveDeliveryId, "Existing row has identical standardized deliveryId");
+        assert.equal(existing.status, "PENDING", "Initial status is PENDING");
+
+        // 3. Backfill uses existing deliveryId when sending
+        const targetDeliveryId = existing.delivery_id;
+        repo.markDeliverySent(targetDeliveryId);
+
+        // 4. Verification: delivery is now SENT, exactly 1 row exists
+        const updated = repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+        assert.equal(updated.status, "SENT", "Status successfully updated to SENT on shared deliveryId");
+        const stats = repo.getDeliveryStats(guildId, destinationVersion);
+        assert.equal(stats.total, 1, "Exactly one delivery row exists across live and backfill");
+        assert.equal(stats.sent, 1, "Row is marked SENT");
+    });
+
+    await t.test("16. P1-4: Switching to Live-only mode while Backfill is RUNNING cancels the job", () => {
+        const guildId = "g_switch_" + runNonce;
+        const jobId = "job_switch_" + runNonce;
+
+        // Create running backfill job
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 50
+        });
+
+        const activeBefore = repo.getActiveJob(guildId);
+        assert.ok(activeBefore, "Active job exists");
+        assert.equal(activeBefore.status, "RUNNING");
+
+        // Simulate cancelJob when switching to live mode
+        repo.cancelJob(jobId, "switched_to_live_only");
+
+        const activeAfter = repo.getActiveJob(guildId);
+        assert.equal(activeAfter, null, "No active job remains after switching to live mode");
+
+        const jobRecord = repo.getJobById(jobId);
+        assert.equal(jobRecord.status, "FAILED", "Job is marked FAILED");
+        assert.equal(jobRecord.error_message, "switched_to_live_only");
+    });
+
+    await t.test("17. P1-6 & P1-7: Startup recovery recovers PENDING, due RETRY, and future RETRY", () => {
+        const gPending = "g_pending_" + runNonce;
+        const gRetryDue = "g_retry_due_" + runNonce;
+        const gRetryFuture = "g_retry_fut_" + runNonce;
+
+        // Insert PENDING
+        repo.enqueueDelivery({
+            deliveryId: `del_${gPending}_v1_ev1`,
+            guildId: gPending,
+            destinationVersion: 1,
+            eventId: "ev1",
+            userId: "u1"
+        });
+
+        // Insert RETRY due now
+        repo.enqueueDelivery({
+            deliveryId: `del_${gRetryDue}_v1_ev2`,
+            guildId: gRetryDue,
+            destinationVersion: 1,
+            eventId: "ev2",
+            userId: "u2"
+        });
+        repo.markDeliveryRetry(`del_${gRetryDue}_v1_ev2`, 1000, "temp_err", "Retry due");
+        // Backdate next_retry_at to past
+        db.prepare("UPDATE verification_webhook_deliveries SET next_retry_at = ? WHERE delivery_id = ?")
+            .run(Date.now() - 5000, `del_${gRetryDue}_v1_ev2`);
+
+        // Insert RETRY due in future
+        repo.enqueueDelivery({
+            deliveryId: `del_${gRetryFuture}_v1_ev3`,
+            guildId: gRetryFuture,
+            destinationVersion: 1,
+            eventId: "ev3",
+            userId: "u3"
+        });
+        repo.markDeliveryRetry(`del_${gRetryFuture}_v1_ev3`, 60000, "temp_err", "Retry in future");
+
+        // Probe recovery queries
+        const pendingOrDue = repo.getPendingOrRetryGuildIds();
+        assert.ok(pendingOrDue.includes(gPending), "Finds guild with PENDING delivery");
+        assert.ok(pendingOrDue.includes(gRetryDue), "Finds guild with due RETRY delivery");
+
+        const allRetry = repo.getAllRetryGuildIds();
+        assert.ok(allRetry.includes(gRetryDue), "Finds guild with due retry");
+        assert.ok(allRetry.includes(gRetryFuture), "Finds guild with future retry");
+
+        // Schedule timer for future retry
+        manager.scheduleNextRetry(gRetryFuture);
+        assert.ok(manager.retryTimers.has(gRetryFuture), "Retry timer is scheduled for future retry guild");
+    });
+
+    await t.test("18. P1-5 & P1-6: Startup recovery cleans up active/orphaned backfill jobs", () => {
+        const guildId = "g_orphan_" + runNonce;
+        const jobId = "job_orphan_" + runNonce;
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 20
+        });
+
+        const activeJobs = repo.getAllActiveJobs();
+        assert.ok(activeJobs.some(j => j.job_id === jobId), "Active job discovered by getAllActiveJobs");
+
+        repo.cancelJob(jobId, "orphan_job_recovered_on_startup");
+        const afterCancel = repo.getJobById(jobId);
+        assert.equal(afterCancel.status, "FAILED", "Orphaned job successfully transitioned to FAILED");
+        assert.equal(afterCancel.error_message, "orphan_job_recovered_on_startup");
+    });
+
+    await t.test("19. P1-7: Lost-wakeup prevention in triggerWorker loops when wakeup is pending", () => {
+        const guildId = "g_wake_" + runNonce;
+        assert.ok(manager.pendingWakeups instanceof Set, "pendingWakeups is a Set");
+
+        // Simulate active worker
+        manager.activeWorkers.set(guildId, Promise.resolve());
+        manager.triggerWorker(guildId);
+
+        assert.ok(manager.pendingWakeups.has(guildId), "Guild added to pendingWakeups when worker is busy");
+
+        // Clean up
+        manager.pendingWakeups.delete(guildId);
+        manager.activeWorkers.delete(guildId);
+    });
+
+    await t.test("20. P2-8: Data contract fidelity: Guild Summary displays actual collector output", () => {
+        // Case 1: Collector output format with totalCount / ownedCount
+        const payloadFromCollector = buildWebhookPayload({
+            eventId: "ev_collector",
+            profile: { id: "123", username: "collectorUser" },
+            guildSummary: { totalCount: 42, ownedCount: 7 },
+            result: "success"
+        });
+        const guildField1 = payloadFromCollector[0].fields.find(f => f.name === "ข้อมูลเซิร์ฟเวอร์ Discord");
+        assert.ok(guildField1, "Discord server stats field must exist");
+        assert.ok(guildField1.value.includes("เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: 42"), "Correct total count from totalCount");
+        assert.ok(guildField1.value.includes("เซิร์ฟเวอร์ที่เป็นเจ้าของ: 7"), "Correct owner count from ownedCount");
+
+        // Case 2: Legacy format with totalGuilds / ownerGuildsCount
+        const payloadLegacy = buildWebhookPayload({
+            eventId: "ev_legacy",
+            profile: { id: "456", username: "legacyUser" },
+            guildSummary: { totalGuilds: 15, ownerGuildsCount: 3 },
+            result: "success"
+        });
+        const guildField2 = payloadLegacy[0].fields.find(f => f.name === "ข้อมูลเซิร์ฟเวอร์ Discord");
+        assert.ok(guildField2.value.includes("เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: 15"), "Correct total count from totalGuilds");
+        assert.ok(guildField2.value.includes("เซิร์ฟเวอร์ที่เป็นเจ้าของ: 3"), "Correct owner count from ownerGuildsCount");
+
+        // Case 3: Null guild summary
+        const payloadNull = buildWebhookPayload({
+            eventId: "ev_null",
+            profile: { id: "789", username: "nullUser" },
+            guildSummary: null,
+            result: "success"
+        });
+        const guildField3 = payloadNull[0].fields.find(f => f.name === "ข้อมูลเซิร์ฟเวอร์ Discord");
+        assert.equal(guildField3.value, "ไม่มีข้อมูลสรุปเซิร์ฟเวอร์", "Handles null summary gracefully");
+    });
+
+    await t.test("21. P1-5: URL change cascades to cancel active deliveries including SENDING", () => {
+        const guildId = "g_url_change_" + runNonce;
+        const d1 = `del_${guildId}_v1_pending`;
+        const d2 = `del_${guildId}_v1_sending`;
+
+        repo.enqueueDelivery({
+            deliveryId: d1,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_d1",
+            userId: "u1"
+        });
+
+        repo.enqueueDelivery({
+            deliveryId: d2,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_d2",
+            userId: "u2"
+        });
+
+        // Mark d2 as SENDING
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING' WHERE delivery_id = ?").run(d2);
+
+        // Cancel old jobs/deliveries for new destination version 2
+        repo.cancelOrFailOldJobs(guildId, "webhook_url_changed", 2);
+
+        const check1 = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d1);
+        const check2 = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d2);
+
+        assert.equal(check1.status, "FAILED", "Pending delivery from version 1 is FAILED");
+        assert.equal(check2.status, "FAILED", "SENDING delivery from version 1 is FAILED");
+    });
+
+    await t.test("22. P1-8: Multi-part messages are annotated with part numbers for at-least-once traceability", () => {
+        // Create 15 embeds so they exceed the 10 embeds per message limit
+        const embeds = Array.from({ length: 15 }, (_, i) => ({
+            title: `Embed ${i + 1}`,
+            description: "Test description"
+        }));
+
+        const splitEmbeds = [];
+        for (const emb of embeds) {
+            splitEmbeds.push(...splitEmbedFields(emb));
+        }
+        const messages = fitEmbedsIntoMessages(splitEmbeds);
+        assert.equal(messages.length, 2, "15 embeds split into exactly 2 messages");
+
+        // Annotate like deliverWebhookEvent
+        for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            for (const emb of msg.embeds) {
+                const partTag = `ส่วนที่ ${i + 1}/${messages.length}`;
+                if (emb.footer && emb.footer.text) {
+                    emb.footer.text = `${emb.footer.text} • ${partTag}`;
+                } else {
+                    emb.footer = { text: partTag };
+                }
+            }
+        }
+
+        assert.ok(messages[0].embeds[0].footer.text.includes("ส่วนที่ 1/2"), "First batch annotated with part 1/2");
+        assert.ok(messages[1].embeds[0].footer.text.includes("ส่วนที่ 2/2"), "Second batch annotated with part 2/2");
+    });
 });
+

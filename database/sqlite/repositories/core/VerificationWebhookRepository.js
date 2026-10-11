@@ -183,6 +183,15 @@ class VerificationWebhookRepository {
         `).run(String(errorMessage || "unknown_error"), now, String(jobId));
     }
 
+    cancelJob(jobId, reason = "cancelled") {
+        const now = Date.now();
+        return this.db.prepare(`
+            UPDATE verification_webhook_jobs
+            SET status = 'FAILED', lease_token = NULL, lease_expires_at = NULL, error_message = ?, updated_at = ?
+            WHERE job_id = ? AND status IN ('RUNNING', 'PENDING')
+        `).run(String(reason), now, String(jobId));
+    }
+
     cancelOrFailOldJobs(guildId, errorMessage = "destination_version_changed", newDestinationVersion = null) {
         const now = Date.now();
         return this.db.transaction(() => {
@@ -196,13 +205,13 @@ class VerificationWebhookRepository {
                 this.db.prepare(`
                     UPDATE verification_webhook_deliveries
                     SET status = 'FAILED', error_code = 'destination_version_changed', error_message = ?, updated_at = ?
-                    WHERE guild_id = ? AND status IN ('PENDING', 'RETRY') AND destination_version < ?
+                    WHERE guild_id = ? AND status IN ('PENDING', 'RETRY', 'SENDING') AND destination_version < ?
                 `).run(String(errorMessage), now, String(guildId), Number(newDestinationVersion));
             } else {
                 this.db.prepare(`
                     UPDATE verification_webhook_deliveries
                     SET status = 'FAILED', error_code = 'destination_version_changed', error_message = ?, updated_at = ?
-                    WHERE guild_id = ? AND status IN ('PENDING', 'RETRY')
+                    WHERE guild_id = ? AND status IN ('PENDING', 'RETRY', 'SENDING')
                 `).run(String(errorMessage), now, String(guildId));
             }
 
@@ -353,6 +362,33 @@ class VerificationWebhookRepository {
             WHERE guild_id = ? AND destination_version = ? AND event_id = ?
             LIMIT 1
         `).get(String(guildId), Number(destinationVersion) || 1, String(eventId)) || null;
+    }
+
+    getPendingOrRetryGuildIds() {
+        const now = Date.now();
+        const rows = this.db.prepare(`
+            SELECT DISTINCT guild_id
+            FROM verification_webhook_deliveries
+            WHERE (status = 'PENDING')
+               OR (status = 'RETRY' AND (next_retry_at IS NULL OR next_retry_at <= ?))
+        `).all(now);
+        return rows.map(r => String(r.guild_id));
+    }
+
+    getAllRetryGuildIds() {
+        const rows = this.db.prepare(`
+            SELECT DISTINCT guild_id
+            FROM verification_webhook_deliveries
+            WHERE status = 'RETRY'
+        `).all();
+        return rows.map(r => String(r.guild_id));
+    }
+
+    getAllActiveJobs() {
+        return this.db.prepare(`
+            SELECT * FROM verification_webhook_jobs
+            WHERE status IN ('RUNNING', 'PENDING')
+        `).all();
     }
 }
 

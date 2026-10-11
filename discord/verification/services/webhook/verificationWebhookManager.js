@@ -151,8 +151,10 @@ function buildWebhookPayload({
         ? profile.badgeFlags.join(", ")
         : "ไม่มี";
 
+    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
+    const ownerGuildsCount = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
     const guildSummaryStr = guildSummary
-        ? `• เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: ${guildSummary.totalGuilds ?? "ไม่ระบุ"}\n• เซิร์ฟเวอร์ที่เป็นเจ้าของ: ${guildSummary.ownerGuildsCount ?? 0}`
+        ? `• เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: ${totalGuilds}\n• เซิร์ฟเวอร์ที่เป็นเจ้าของ: ${ownerGuildsCount}`
         : "ไม่มีข้อมูลสรุปเซิร์ฟเวอร์";
 
     const embed1Fields = [
@@ -348,13 +350,38 @@ async function deliverWebhookEvent(webhookUrl, embeds = []) {
         splitEmbeds.push(...splitEmbedFields(emb));
     }
     const messages = fitEmbedsIntoMessages(splitEmbeds);
-    for (const msg of messages) {
-        await postWebhookMessage(webhookUrl, msg);
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
         if (messages.length > 1) {
+            for (const emb of msg.embeds) {
+                const partTag = `ส่วนที่ ${i + 1}/${messages.length}`;
+                if (emb.footer && emb.footer.text) {
+                    if (!emb.footer.text.includes("ส่วนที่")) {
+                        emb.footer.text = `${emb.footer.text} • ${partTag}`;
+                    }
+                } else {
+                    emb.footer = { text: partTag };
+                }
+            }
+        }
+        await postWebhookMessage(webhookUrl, msg);
+        if (messages.length > 1 && i < messages.length - 1) {
             await sleep(RATE_LIMIT_DELAY_MS);
         }
     }
     return true;
+}
+
+/**
+ * Checks whether a verification log or event is eligible for webhook delivery.
+ * Must be successful AND have concrete evidence of role assignment (P0-1, P1-1).
+ */
+function isEligibleVerifyLog(log) {
+    if (!log || typeof log !== "object") return false;
+    if (log.result !== "success") return false;
+    const r = log.roleAssignResult;
+    if (!r || typeof r !== "object") return false;
+    return Boolean(r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true);
 }
 
 class VerificationWebhookManager {
@@ -362,16 +389,67 @@ class VerificationWebhookManager {
         this.repo = repo;
         this.activeWorkers = new Map(); // guildId -> worker promise
         this.retryTimers = new Map(); // guildId -> setTimeout timer
+        this.pendingWakeups = new Set(); // guildId set for lost-wakeup prevention
 
-        // Recover any stuck SENDING deliveries from prior node crashes/restarts (P1-6)
+        // Perform complete startup recovery across SENDING, PENDING, RETRY, and active jobs
+        this.performStartupRecovery();
+    }
+
+    /**
+     * Complete startup recovery (P1-6, P1-7):
+     * 1. Recovers stuck SENDING deliveries from crashes/restarts
+     * 2. Recovers active backfill jobs (or cancels orphaned jobs)
+     * 3. Wakes workers for all guilds with PENDING or ready RETRY deliveries
+     * 4. Schedules timers for future RETRY deliveries
+     */
+    async performStartupRecovery() {
         try {
+            // 1. Recover stuck SENDING deliveries from node crashes
             const recovery = this.repo.recoverStuckSendingDeliveries();
-            const guildIds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
-            for (const gId of guildIds) {
+            const stuckGuildIds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
+
+            // If MongoDB is not connected yet, skip Mongoose operations (pure SQLite recovery above succeeded)
+            if (mongoose.connection?.readyState !== 1) {
+                return;
+            }
+
+            // 2. Recover active backfill jobs
+            if (typeof this.repo.getAllActiveJobs === "function") {
+                const activeJobs = this.repo.getAllActiveJobs();
+                for (const job of activeJobs) {
+                    try {
+                        const config = await GuildConfig.findOne().where("guildId").equals(job.guild_id).lean();
+                        if (config?.verification?.webhookLog?.enabled && config?.verification?.webhookLog?.mode === "backfill_live") {
+                            this.triggerWorker(job.guild_id, job.job_id);
+                        } else {
+                            if (typeof this.repo.cancelJob === "function") {
+                                this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
+                            }
+                        }
+                    } catch {
+                        this.triggerWorker(job.guild_id, job.job_id);
+                    }
+                }
+            }
+
+            // 3. Wake up all guilds with PENDING or ready RETRY deliveries
+            const pendingGuildIds = typeof this.repo.getPendingOrRetryGuildIds === "function"
+                ? this.repo.getPendingOrRetryGuildIds()
+                : [];
+            const allReadyGuildIds = new Set([...stuckGuildIds, ...pendingGuildIds]);
+            for (const gId of allReadyGuildIds) {
                 this.triggerWorker(gId);
             }
+
+            // 4. Schedule retry timers for guilds with future RETRY deliveries
+            const retryGuildIds = typeof this.repo.getAllRetryGuildIds === "function"
+                ? this.repo.getAllRetryGuildIds()
+                : [];
+            for (const gId of retryGuildIds) {
+                this.scheduleNextRetry(gId);
+            }
         } catch {
-            // SQLite may not be open yet in isolated module tests
+            // SQLite or Mongo might not be open yet in isolated unit tests
         }
     }
 
@@ -454,6 +532,12 @@ class VerificationWebhookManager {
             throw new Error("กรุณาตั้งค่า Discord Webhook URL ที่ถูกต้องก่อนเริ่มใช้งาน");
         }
 
+        // Cancel any ongoing backfill job for this guild to ensure pure Live-only mode
+        const activeJob = this.repo.getActiveJob(safeGuildId);
+        if (activeJob) {
+            this.repo.cancelJob(activeJob.job_id, "switched_to_live_only");
+        }
+
         const now = Date.now();
         await GuildConfig.updateOne({ guildId: safeGuildId }, {
             $set: {
@@ -500,10 +584,15 @@ class VerificationWebhookManager {
 
         const destinationVersion = Number(config.verification?.webhookLog?.destinationVersion) || 1;
 
-        // Count eligible successful historical verifications
+        // Count eligible successful historical verifications with confirmed role assignment
         const totalEligible = await VerifyLog.countDocuments({
             guildId: safeGuildId,
             result: "success",
+            $or: [
+                { "roleAssignResult.ok": true },
+                { "roleAssignResult.alreadyHadRole": true },
+                { "roleAssignResult.joinedWithRole": true }
+            ],
             deletedAt: { $exists: false }
         });
 
@@ -517,16 +606,21 @@ class VerificationWebhookManager {
         });
 
         const now = Date.now();
-        await GuildConfig.updateOne({ guildId: safeGuildId }, {
-            $set: {
-                "verification.webhookLog.enabled": true,
-                "verification.webhookLog.mode": "backfill_live",
-                "verification.webhookLog.liveStartedAt": now,
-                "verification.webhookLog.lastStatus": "running",
-                "verification.webhookLog.lastError": null,
-                "verification.updatedAt": now
-            }
-        });
+        try {
+            await GuildConfig.updateOne({ guildId: safeGuildId }, {
+                $set: {
+                    "verification.webhookLog.enabled": true,
+                    "verification.webhookLog.mode": "backfill_live",
+                    "verification.webhookLog.liveStartedAt": now,
+                    "verification.webhookLog.lastStatus": "running",
+                    "verification.webhookLog.lastError": null,
+                    "verification.updatedAt": now
+                }
+            });
+        } catch (mongoErr) {
+            this.repo.cancelJob(jobId, `config_update_failed:${mongoErr.message}`);
+            throw mongoErr;
+        }
 
         // Start background backfill processor
         this.triggerWorker(safeGuildId, jobId);
@@ -547,18 +641,12 @@ class VerificationWebhookManager {
     async dispatchLiveEvent({ guildId, userId, logId, eventData }) {
         const safeGuildId = String(guildId);
 
-        // P0-1: Guard centrally against non-success or unassigned events
+        // P0-1: Guard centrally against non-success or unassigned events using unified eligibility
         if (eventData) {
-            if (eventData.result !== "success") return null;
-            const r = eventData.roleAssignResult;
-            const roleOk = r && (r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true);
-            if (!roleOk) return null;
+            if (!isEligibleVerifyLog(eventData)) return null;
         } else if (logId) {
             const log = await VerifyLog.findById(logId).lean();
-            if (!log || log.result !== "success") return null;
-            const r = log.roleAssignResult;
-            const roleOk = r && (r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true);
-            if (!roleOk) return null;
+            if (!isEligibleVerifyLog(log)) return null;
         } else {
             return null;
         }
@@ -600,14 +688,26 @@ class VerificationWebhookManager {
 
     /**
      * Triggers the background delivery worker for a guild.
+     * Prevents lost wake-ups with a pendingWakeups loop (P1-7).
      */
     triggerWorker(guildId, backfillJobId = null) {
         const safeGuildId = String(guildId);
-        if (this.activeWorkers.has(safeGuildId)) return;
-        const workerPromise = this.runWorker(safeGuildId, backfillJobId)
-            .finally(() => {
+        if (this.activeWorkers.has(safeGuildId)) {
+            this.pendingWakeups.add(safeGuildId);
+            return;
+        }
+        const workerPromise = (async () => {
+            let nextBackfillJobId = backfillJobId;
+            try {
+                do {
+                    this.pendingWakeups.delete(safeGuildId);
+                    await this.runWorker(safeGuildId, nextBackfillJobId);
+                    nextBackfillJobId = null;
+                } while (this.pendingWakeups.has(safeGuildId));
+            } finally {
                 this.activeWorkers.delete(safeGuildId);
-            });
+            }
+        })();
         this.activeWorkers.set(safeGuildId, workerPromise);
     }
 
@@ -637,6 +737,10 @@ class VerificationWebhookManager {
      * Worker execution loop handling backfill draining followed by live event delivery.
      */
     async runWorker(guildId, backfillJobId = null) {
+        if (mongoose.connection?.readyState !== 1) {
+            return;
+        }
+
         const safeGuildId = String(guildId);
         const leaseToken = crypto.randomBytes(8).toString("hex");
 
@@ -687,6 +791,13 @@ class VerificationWebhookManager {
             }
 
             const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+            const currentMode = currentConfig?.verification?.webhookLog?.mode;
+            if (currentMode !== "backfill_live") {
+                console.warn(`[VerificationWebhook] Guild ${guildId} mode changed to ${currentMode || "off"}, halting backfill`);
+                this.repo.cancelJob(job.job_id, `mode_changed_to_${currentMode || "live"}`);
+                break;
+            }
+
             const currentDestVersion = Number(currentConfig?.verification?.webhookLog?.destinationVersion) || 1;
             if (currentDestVersion !== destinationVersion) {
                 console.warn(`[VerificationWebhook] Destination version changed for guild=${guildId} during backfill`);
@@ -702,6 +813,11 @@ class VerificationWebhookManager {
             const query = {
                 guildId,
                 result: "success",
+                $or: [
+                    { "roleAssignResult.ok": true },
+                    { "roleAssignResult.alreadyHadRole": true },
+                    { "roleAssignResult.joinedWithRole": true }
+                ],
                 deletedAt: { $exists: false }
             };
             if (lastCursorId) {
@@ -715,14 +831,17 @@ class VerificationWebhookManager {
 
             if (!batch.length) {
                 // Backfill completed!
-                const finalStatus = failures > 0 ? "COMPLETED_WITH_FAILURES" : "COMPLETED";
+                const stats = this.repo.getDeliveryStats(guildId, destinationVersion);
+                const finalStatus = (failures > 0 || stats.retry > 0 || stats.failed > 0)
+                    ? "COMPLETED_WITH_FAILURES"
+                    : "COMPLETED";
                 this.repo.completeJob(job.job_id, finalStatus);
                 await GuildConfig.updateOne({ guildId }, {
                     $set: {
                         "verification.webhookLog.mode": "live",
-                        "verification.webhookLog.lastStatus": failures > 0 ? "completed_with_failures" : "idle",
+                        "verification.webhookLog.lastStatus": finalStatus === "COMPLETED_WITH_FAILURES" ? "completed_with_failures" : "idle",
                         "verification.webhookLog.backfillCompletedAt": Date.now(),
-                        "verification.webhookLog.lastError": failures > 0 ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลว ${failures} รายการ (บันทึกในคิวสำหรับลองใหม่แล้ว)` : null
+                        "verification.webhookLog.lastError": finalStatus === "COMPLETED_WITH_FAILURES" ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลว ${failures} รายการ (บันทึกในคิวสำหรับลองใหม่แล้ว)` : null
                     }
                 });
                 break;
@@ -731,18 +850,35 @@ class VerificationWebhookManager {
             for (const log of batch) {
                 const eventId = String(log._id);
 
-                // P1-3: Check if already delivered for this destinationVersion
-                const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
-                if (existing && existing.status === "SENT") {
-                    successes++;
+                if (!isEligibleVerifyLog(log)) {
                     processed++;
                     lastCursorId = eventId;
                     continue;
                 }
 
-                const deliveryId = `del_bf_${job.job_id}_${eventId}`;
+                // Renew lease between items to prevent expiration during slow/rate-limited operations (P1-6)
+                this.repo.renewJobLease(job.job_id, leaseToken, 30000);
+
+                // P1-3: Check if already delivered for this destinationVersion
+                const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+                if (existing) {
+                    if (existing.status === "SENT") {
+                        successes++;
+                        processed++;
+                        lastCursorId = eventId;
+                        continue;
+                    }
+                    if (existing.status === "SENDING") {
+                        processed++;
+                        lastCursorId = eventId;
+                        continue;
+                    }
+                }
+
+                // Use standardized delivery ID across both Live and Backfill
+                const targetDeliveryId = existing?.delivery_id || `del_${guildId}_v${destinationVersion}_${eventId}`;
                 this.repo.enqueueDelivery({
-                    deliveryId,
+                    deliveryId: targetDeliveryId,
                     jobId: job.job_id,
                     guildId,
                     destinationVersion,
@@ -783,12 +919,12 @@ class VerificationWebhookManager {
                     });
 
                     await deliverWebhookEvent(webhookUrl, embeds);
-                    this.repo.markDeliverySent(deliveryId);
+                    this.repo.markDeliverySent(targetDeliveryId);
                     successes++;
                 } catch (sendErr) {
                     failures++;
                     console.error(`[VerificationWebhook] Error sending backfill for log=${log._id}:`, sendErr.message);
-                    this.repo.markDeliveryRetry(deliveryId, 15000, "backfill_fail", sendErr.message);
+                    this.repo.markDeliveryRetry(targetDeliveryId, 15000, "backfill_fail", sendErr.message);
                 }
 
                 processed++;
@@ -798,6 +934,7 @@ class VerificationWebhookManager {
                     processedCount: processed,
                     successCount: successes,
                     failureCount: failures,
+                    retryCount: failures,
                     lastCursorId
                 });
 
@@ -812,17 +949,21 @@ class VerificationWebhookManager {
      */
     async drainDeliveries(guildId) {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-        const webhookUrl = config?.verification?.webhookLog?.url;
-        if (!webhookUrl) return;
-        const currentVersion = Number(config?.verification?.webhookLog?.destinationVersion) || 1;
+        const initialWebhookUrl = config?.verification?.webhookLog?.url;
+        if (!initialWebhookUrl) return;
 
         while (true) {
             const deliveries = this.repo.claimNextDeliveries(guildId, 5);
             if (!deliveries.length) break;
 
             for (const item of deliveries) {
+                // Re-verify current destination version and URL on each delivery to prevent sending to obsolete URLs
+                const latestConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+                const activeVersion = Number(latestConfig?.verification?.webhookLog?.destinationVersion) || 1;
+                const activeUrl = latestConfig?.verification?.webhookLog?.url;
+
                 // If delivery belongs to an older destination version, fail and skip
-                if (currentVersion && item.destination_version < currentVersion) {
+                if (!activeUrl || item.destination_version < activeVersion) {
                     this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Delivery belongs to older webhook URL version");
                     continue;
                 }
@@ -840,8 +981,9 @@ class VerificationWebhookManager {
                         continue;
                     }
 
-                    if (log.result !== "success") {
-                        this.repo.markDeliveryFailed(item.delivery_id, "event_not_successful", "VerifyLog result is not success");
+                    // P0-1 / P1-1: Strict eligibility check before sending
+                    if (!isEligibleVerifyLog(log)) {
+                        this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)");
                         continue;
                     }
 
@@ -875,7 +1017,7 @@ class VerificationWebhookManager {
                         verifiedAt: log.verifiedAt || log.createdAt
                     });
 
-                    await deliverWebhookEvent(webhookUrl, embeds);
+                    await deliverWebhookEvent(activeUrl, embeds);
                     this.repo.markDeliverySent(item.delivery_id);
 
                     await GuildConfig.updateOne({ guildId }, {
@@ -914,6 +1056,7 @@ module.exports = {
     embedCharCount,
     fitEmbedsIntoMessages,
     deliverWebhookEvent,
+    isEligibleVerifyLog,
     VerificationWebhookManager,
     verificationWebhookManager
 };

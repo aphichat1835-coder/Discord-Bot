@@ -416,6 +416,9 @@
 
     if (tab === "data") {
       loadWebhookStatus();
+    } else if (webhookPollInterval) {
+      clearInterval(webhookPollInterval);
+      webhookPollInterval = null;
     }
     if (tab === "panel") renderEmbedPreview();
   }
@@ -2626,23 +2629,53 @@
       }
 
       const progressBox = $("webhook-progress-box");
+      const progressTitle = $("webhook-progress-title");
       const progressCount = $("webhook-progress-count");
       const progressBar = $("webhook-progress-bar");
+      const progressDetail = $("webhook-progress-detail");
       if (progressBox && progressCount && progressBar) {
         if (data.activeJob) {
           progressBox.classList.remove("hidden");
+          if (progressTitle) progressTitle.textContent = "กำลังประมวลผลส่งข้อมูล...";
           const processed = Number(data.activeJob.processedCount || 0);
           const total = Number(data.activeJob.totalEligible || 0);
           progressCount.textContent = `${processed} จาก ${total} รายการ`;
           const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
           progressBar.style.width = `${pct}%`;
+          progressBar.style.background = "#5865F2";
+          if (progressDetail) {
+            progressDetail.textContent = `ส่งสำเร็จ: ${data.activeJob.successCount || 0} | ลองใหม่: ${data.activeJob.retryCount || 0} | ล้มเหลว: ${data.activeJob.failureCount || 0}`;
+          }
 
           if (!webhookPollInterval) {
             webhookPollInterval = setInterval(loadWebhookStatus, 3000);
           }
+        } else if (data.stats && (data.stats.sent > 0 || data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures")) {
+          // Keep summary visible after job finishes (P1-10)
+          progressBox.classList.remove("hidden");
+          const hasIssues = data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures";
+          if (progressTitle) {
+            progressTitle.textContent = hasIssues ? "ประมวลผลเสร็จสิ้น (พบรายการติดขัด) ⚠️" : "ประมวลผลเสร็จสิ้นเรียบร้อยแล้ว ✅";
+          }
+          progressCount.textContent = `สำเร็จ ${data.stats.sent} | ลองใหม่ ${data.stats.retry} | ล้มเหลว ${data.stats.failed}`;
+          progressBar.style.width = "100%";
+          progressBar.style.background = hasIssues ? "var(--yellow2, #F39C12)" : "var(--green2, #2ECC71)";
+          if (progressDetail) {
+            progressDetail.textContent = data.lastError || "ระบบทำงานในโหมด Live พร้อมส่งข้อมูลทันที";
+          }
+          if (data.enabled && state.currentTab === "data") {
+            if (webhookPollInterval) clearInterval(webhookPollInterval);
+            webhookPollInterval = setInterval(loadWebhookStatus, 10000);
+          } else if (webhookPollInterval) {
+            clearInterval(webhookPollInterval);
+            webhookPollInterval = null;
+          }
         } else {
           progressBox.classList.add("hidden");
-          if (webhookPollInterval) {
+          if (data.enabled && state.currentTab === "data") {
+            if (webhookPollInterval) clearInterval(webhookPollInterval);
+            webhookPollInterval = setInterval(loadWebhookStatus, 10000);
+          } else if (webhookPollInterval) {
             clearInterval(webhookPollInterval);
             webhookPollInterval = null;
           }
@@ -2703,7 +2736,6 @@
       if (input && !input.value) delete input.dataset.userEditing;
     });
     $("btn-save-webhook-url")?.addEventListener("click", saveWebhookUrl);
-    $("btn-refresh-webhook-status")?.addEventListener("click", loadWebhookStatus);
     $("btn-start-live-only")?.addEventListener("click", () => startWebhookMode("live"));
     $("btn-start-backfill-all")?.addEventListener("click", () => startWebhookMode("backfill"));
   }

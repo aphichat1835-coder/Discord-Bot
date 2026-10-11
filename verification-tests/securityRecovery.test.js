@@ -105,3 +105,41 @@ test("failed rollback remains fail-closed and requires manual review", async () 
     assert.equal(result.manualReviewRequired, true);
     assert.equal(result.response.manualReviewRequired, true);
 });
+
+test("verifyLog budget degradation fails critical persistence and triggers rollback recovery rather than silent success", async () => {
+    const evaluated = evaluateCriticalPersistence({
+        oauthSaved: true,
+        verifyLogSaved: true,
+        verifyLogDegraded: true,
+        trackingRequired: true,
+        trackingSaved: true
+    });
+    assert.equal(evaluated.ok, false, "Degraded verifyLog must NOT be marked as ok");
+    assert.equal(evaluated.persistence.verifyLog, false, "verifyLog persistence must be false when degraded");
+    assert.equal(evaluated.degraded, true, "degraded flag is preserved");
+
+    const saved = [];
+    let rollbackCalls = 0;
+    const result = await coordinatePersistenceFailure({
+        requestId: "verify-budget-degraded",
+        guildId: GUILD_ID,
+        userId: USER_ID,
+        roleId: ROLE_ID,
+        result: "success",
+        roleAssignResult: { ok: true, alreadyHadRole: false },
+        persistence: evaluated.persistence,
+        removeRole: async () => {
+            rollbackCalls++;
+            return { ok: true };
+        },
+        saveRecovery: async recovery => {
+            saved.push(recovery);
+            return true;
+        }
+    });
+
+    assert.equal(rollbackCalls, 1, "Role is rolled back when verifyLog is degraded");
+    assert.equal(result.rollbackSucceeded, true);
+    assert.equal(saved[0].status, "role_rolled_back");
+});
+

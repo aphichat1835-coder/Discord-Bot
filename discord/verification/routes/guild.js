@@ -529,8 +529,12 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
   if (hasIncomingSecurityRules) {
-    merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
-    merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
+    if (clean.securityRules && Object.hasOwn(clean.securityRules, "vpnProxyTor")) {
+      merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
+    }
+    if (clean.securityRules && Object.hasOwn(clean.securityRules, "hosting")) {
+      merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
+    }
   }
   return normalizeVerificationConfig(merged);
 }

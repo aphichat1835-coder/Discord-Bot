@@ -1,14 +1,15 @@
 "use strict";
 
-function evaluateCriticalPersistence({ oauthSaved, verifyLogSaved, trackingRequired, trackingSaved }) {
+function evaluateCriticalPersistence({ oauthSaved, verifyLogSaved, trackingRequired, trackingSaved, verifyLogDegraded = false }) {
     const persistence = {
         oauthUser: oauthSaved === true,
-        verifyLog: verifyLogSaved === true,
+        verifyLog: verifyLogSaved === true && verifyLogDegraded !== true,
         ipTracking: trackingRequired !== true || trackingSaved === true
     };
     return {
         persistence,
-        ok: Object.values(persistence).every(Boolean)
+        ok: Object.values(persistence).every(Boolean),
+        degraded: verifyLogDegraded === true
     };
 }
 

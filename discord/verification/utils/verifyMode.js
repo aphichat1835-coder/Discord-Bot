@@ -192,12 +192,6 @@ function normalizeVerificationConfig(config = {}) {
   const ruleInput = next.securityRules && typeof next.securityRules === "object"
     ? { ...next.securityRules }
     : {};
-  if (!Object.hasOwn(ruleInput, "vpnProxyTor") && next.blockVPN === true) {
-    ruleInput.vpnProxyTor = { ...DEFAULT_SECURITY_RULES.vpnProxyTor, enabled: true };
-  }
-  if (!Object.hasOwn(ruleInput, "hosting") && next.blockHosting === true) {
-    ruleInput.hosting = { ...DEFAULT_SECURITY_RULES.hosting, enabled: true };
-  }
   next.securityRules = normalizeSecurityRules(ruleInput);
 
   return next;

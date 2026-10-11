@@ -116,15 +116,25 @@ function isPanelRevisionValid(guildConfig, stateObj = {}) {
 function fitVerifyLogBudget(doc, payload) {
     try {
         snapshotBudget.assertSnapshotBudget(doc, { label: "verify_log" });
-        return doc;
+        return { doc, degraded: false };
     } catch (budgetErr) {
+        console.warn(`[VERIFY] VerifyLog size exceeded budget limit for user=${payload.userId}: ${budgetErr.message}. Storing minimal audit document with degraded status.`);
         return {
-            guildId: payload.guildId,
-            userId: payload.userId,
-            roleId: payload.roleId,
-            result: payload.result,
-            reason: payload.reason,
-            verifiedAt: payload.verifiedAt || Date.now()
+            doc: {
+                guildId: payload.guildId,
+                userId: payload.userId,
+                roleId: payload.roleId,
+                result: payload.result,
+                reason: payload.reason,
+                dataQuality: {
+                    degraded: true,
+                    budgetExceeded: true,
+                    errorMessage: budgetErr.message
+                },
+                verifiedAt: payload.verifiedAt || Date.now()
+            },
+            degraded: true,
+            errorMessage: budgetErr.message
         };
     }
 }
@@ -138,8 +148,11 @@ async function saveVerifyLogSafe(payload) {
                 ipHistoryMigratedAt: Date.now()
             } : {})
         };
-        doc = fitVerifyLogBudget(doc, payload);
-        const created = await VerifyLog.create(doc);
+        const fit = fitVerifyLogBudget(doc, payload);
+        const created = await VerifyLog.create(fit.doc);
+        if (created) {
+            created.isBudgetDegraded = fit.degraded;
+        }
         return created;
     }, null);
 }
@@ -559,36 +572,38 @@ async function executeVerification({
             : discord.getGuildMember(accessToken, guildId).then(m => ({ member: m, status: m ? 200 : null }))
     );
     let memberInfo = memberLookup?.member || null;
-
-    const memberRoles = memberInfo?.roles || [];
-    const alreadyHasRole = memberRoles.map(String).includes(String(configuredRoleId));
+    let memberLookupStatus = memberLookup?.status || null;
+    let memberLookupFailure = memberLookup?.failureReason || null;
 
     let joinResult = null;
     let roleAssignResult = null;
     let finalReason = "verified";
+    let isLookupError = false;
 
-    if (alreadyHasRole) {
-        finalReason = "already_verified_has_role";
-        roleAssignResult = { ok: true, alreadyHadRole: true };
+    if (!memberInfo && (memberLookupFailure || (memberLookupStatus && memberLookupStatus !== 200 && memberLookupStatus !== 404))) {
+        // Membership lookup failed due to API / network failure (P1-A, P1-B)
+        isLookupError = true;
+        finalReason = "member_lookup_failed";
+        roleAssignResult = { ok: false, error: "lookup_failed" };
     } else {
-        if (!memberInfo) {
+        const memberRoles = memberInfo?.roles || [];
+        const alreadyHasRole = memberRoles.map(String).includes(String(configuredRoleId));
+
+        if (alreadyHasRole) {
+            finalReason = "already_verified_has_role";
+            roleAssignResult = { ok: true, alreadyHadRole: true };
+        } else if (!memberInfo) {
             joinResult = await safeSideEffect("addMemberToGuild", () =>
                 discord.addMemberToGuild(guildId, profile.id, accessToken, [configuredRoleId]),
                 { ok: false, error: "join_failed" }
             );
 
             if (!joinResult?.ok) {
-                return {
-                    statusCode: 200,
-                    body: {
-                        success: false,
-                        error: "ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณากดเข้าร่วมเซิร์ฟเวอร์ใน Discord ด้วยตนเองก่อน แล้วกดปุ่มยืนยันใหม่อีกครั้ง",
-                        code: "guild_join_failed",
-                        roleName
-                    }
-                };
+                finalReason = "guild_join_failed";
+                roleAssignResult = { ok: false, error: "join_failed" };
+            } else {
+                roleAssignResult = { ok: true, joinedWithRole: true };
             }
-            roleAssignResult = { ok: true, joinedWithRole: true };
         } else {
             roleAssignResult = await safeSideEffect("addRoleToMember", () =>
                 discord.addRoleToMember(guildId, profile.id, configuredRoleId),
@@ -596,20 +611,15 @@ async function executeVerification({
             );
 
             if (!roleAssignResult?.ok) {
-                return {
-                    statusCode: 200,
-                    body: {
-                        success: false,
-                        error: "ระบบไม่สามารถมอบยศให้คุณได้ในขณะนี้ กรุณาแจ้งผู้ดูแลเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ของบอท",
-                        code: "role_assign_failed",
-                        roleName
-                    }
-                };
+                finalReason = "role_assign_failed";
             }
         }
     }
 
-    // --- Step 7: Persistence Updates ---
+    const isSuccess = roleAssignResult?.ok === true;
+    const finalResult = isSuccess ? "success" : "failed";
+
+    // --- Step 7: Persistence Updates (Always records all attempts for audit/forensics) ---
     const trackingSnapshot = await updateIpIdentityTrackingSafe({
         guildId,
         guildName,
@@ -617,7 +627,7 @@ async function executeVerification({
         ipInfo,
         device,
         roleId: configuredRoleId,
-        result: "success",
+        result: finalResult,
         findings: allFindings
     });
 
@@ -628,7 +638,7 @@ async function executeVerification({
         guildSummary,
         guildId,
         roleId: configuredRoleId,
-        result: "success",
+        result: finalResult,
         findings: allFindings,
         trackingSnapshot,
         attemptStartedAt: oauthAttemptStartedAt
@@ -638,7 +648,7 @@ async function executeVerification({
         guildId,
         userId: profile.id,
         roleId: configuredRoleId,
-        result: "success",
+        result: finalResult,
         reason: finalReason,
         findings: allFindings,
         oauthScope: tokenData.scope || "",
@@ -669,10 +679,46 @@ async function executeVerification({
         verifiedAt: Date.now()
     });
 
+    // If role assignment or lookup failed, return user error immediately without dispatching webhook or DM
+    if (!isSuccess) {
+        if (isLookupError) {
+            return {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ระบบไม่สามารถตรวจสอบสถานะสมาชิกใน Discord ได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง",
+                    code: "member_lookup_failed",
+                    roleName
+                }
+            };
+        }
+        if (finalReason === "guild_join_failed") {
+            return {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณากดเข้าร่วมเซิร์ฟเวอร์ใน Discord ด้วยตนเองก่อน แล้วกดปุ่มยืนยันใหม่อีกครั้ง",
+                    code: "guild_join_failed",
+                    roleName
+                }
+            };
+        }
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "ระบบไม่สามารถมอบยศให้คุณได้ในขณะนี้ กรุณาแจ้งผู้ดูแลเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ของบอท",
+                code: "role_assign_failed",
+                roleName
+            }
+        };
+    }
+
     // --- Step 8: Critical Persistence Check ---
     const persistenceResult = evaluateCriticalPersistence({
         oauthSaved: oauthPersistence?.saved === true,
         verifyLogSaved: Boolean(verifyLogSaved),
+        verifyLogDegraded: verifyLogSaved?.isBudgetDegraded === true,
         trackingRequired: Boolean(ipInfo?.ipHash),
         trackingSaved: Boolean(trackingSnapshot)
     });

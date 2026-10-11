@@ -206,7 +206,6 @@ ${navBar("/verification")}
             <h2>ความพร้อมของระบบ</h2>
             <p>ตรวจสอบสถานะก่อนเริ่มส่งข้อมูลไปยังห้อง Discord</p>
           </div>
-          <button id="btn-refresh-webhook-status" class="btn btn-soft btn-sm" type="button">ตรวจใหม่</button>
         </div>
 
         <div id="webhook-checklist-container" class="mt-14" style="display:flex; flex-direction:column; gap:12px;">

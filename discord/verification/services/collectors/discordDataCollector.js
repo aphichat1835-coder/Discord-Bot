@@ -113,6 +113,8 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason) {
         return {
             totalCount: 0,
             ownedCount: 0,
+            totalGuilds: 0,
+            ownerGuildsCount: 0,
             status: "failed",
             attemptedAt: now,
             failureReason: failureReason || "guilds_fetch_failed"
@@ -130,6 +132,8 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason) {
     return {
         totalCount,
         ownedCount,
+        totalGuilds: totalCount,
+        ownerGuildsCount: ownedCount,
         status: totalCount > 0 ? "success" : "empty",
         fetchedAt: now,
         attemptedAt: now,
