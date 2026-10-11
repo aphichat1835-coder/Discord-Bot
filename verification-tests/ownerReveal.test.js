@@ -91,6 +91,31 @@ describe("Owner full member data", () => {
     ]));
   });
 
+  test("ownerService.tokenRecoveryReasons respects process.env.OAUTH_TOKEN_REFRESH_FAIL_MAX", () => {
+    const originalEnv = process.env.OAUTH_TOKEN_REFRESH_FAIL_MAX;
+    try {
+      process.env.OAUTH_TOKEN_REFRESH_FAIL_MAX = "3";
+      const completeScopes = "identify email connections guilds guilds.members.read guilds.join";
+      const tokenAtFailMax = {
+        encryptedAccessToken: cryptoUtils.encryptToken("access-token-value"),
+        encryptedRefreshToken: cryptoUtils.encryptToken("refresh-token-value"),
+        scope: completeScopes,
+        expiresAt: Date.now() + 60_000,
+        refreshFailCount: 3
+      };
+      expect(ownerService.tokenRecoveryReasons(tokenAtFailMax)).toContain("refresh_exhausted");
+
+      const tokenBelowFailMax = { ...tokenAtFailMax, refreshFailCount: 2 };
+      expect(ownerService.tokenRecoveryReasons(tokenBelowFailMax)).not.toContain("refresh_exhausted");
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.OAUTH_TOKEN_REFRESH_FAIL_MAX;
+      } else {
+        process.env.OAUTH_TOKEN_REFRESH_FAIL_MAX = originalEnv;
+      }
+    }
+  });
+
   test("recovery center only returns successful recipients whose stored OAuth is incomplete", async () => {
     const guildId = "12345678901234567";
     const incompleteUserId = "22345678901234567";

@@ -7,7 +7,7 @@
 > privacy, minimization, or UX preferences must not silently override them.
 
 
-Last implementation review: 2026-07-27 (`ttt.1` owner-intent policy alignment).
+Last implementation review: 2026-09-22.
 
 ## Scope
 
@@ -134,8 +134,7 @@ from the minimum information required for the recipient. OAuth access/refresh
 tokens, raw IP addresses, voice account tokens, credentials, and decrypted
 sensitive records must never enter the outbox. A unique server-derived event
 key prevents duplicate side effects; browser-provided recipient IDs are not an
-authority source. Restore results never fall back to a public channel when
-private delivery fails.
+authority source.
 
 Discord error `50007` and unknown-user delivery failures become terminal after
 bounded handling. Transient failures use the persisted retry schedule. Every
@@ -176,6 +175,14 @@ OI-04; unrelated credentials must not be added to an event automatically.
 Historical `adminOAuth` fields remain refresh-compatible. No route creates a new
 admin grant. Configure `LEGACY_ADMIN_OAUTH_REDIRECT_URI` when old tokens require
 the retired origin during refresh.
+
+### Master Token Coordinator & Concurrency Security
+
+The Master Token Coordinator (`discord/core/tokenCoordinator.js`) governs Discord account tokens shared across voice automation, quest sessions, and profile lookups:
+- **Identifier Isolation**: Internal event bus messages, alert webhooks, and Dashboard endpoints reference tokens by their 64-character SHA-256 hash (`tokenHash`), preventing token leakage in diagnostics or transit.
+- **Quarantine Isolation**: When Discord rejects a token with HTTP 401, or fires an invalidation event on the Gateway WebSocket, the Token Coordinator places the token in Quarantine. This triggers coordinated notifications across registered subsystems to immediately stop voice connections and quest tasks, shielding the IP and user account from abusive retry loops or ban triggers.
+- **429 Rate-Limit Mitigation**: Intercepts `429 Too Many Requests` responses and coordinates exponential backoff across all consumers of the token, ensuring compliance with Discord REST rate limits.
+- **Owner Dashboard Access**: Management endpoints (`/api/token-hub/*`) require authenticated Owner PIN and CSRF headers. Per OI-01 and OI-04, alternate account tokens are fully supported without token-owner ID matching, and the authenticated Owner retains direct access without secondary reveal barriers.
 
 ### Raw IP
 

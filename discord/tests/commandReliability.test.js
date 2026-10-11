@@ -30,7 +30,7 @@ test("command registration returns a degraded result after bounded retries", asy
     assert.equal(result.attempts, 2);
 });
 
-test("command registration replaces Discord global commands with the current 19-command registry", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("command registration replaces Discord global commands with the current 18-command registry", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let registeredPayload = null;
     const result = await registerCommandsWithRetry({
         application: { commands: { set: async payload => { registeredPayload = payload; } } },
@@ -143,10 +143,31 @@ test("panel rollback restores the previous panel only after cleanup succeeds", a
 test("command router delegates registered command groups without changing handlers", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(commands._test.delegatedCommandHandler("ping"), information.handle);
     assert.equal(typeof commands._test.delegatedCommandHandler("ban"), "function");
-    assert.equal(typeof commands._test.delegatedCommandHandler("backup"), "function");
+    assert.equal(typeof commands._test.delegatedCommandHandler("say"), "function");
     assert.equal(typeof commands._test.handleSlashCommand, "function");
+    assert.equal(commands._test.delegatedCommandHandler("backup"), null);
+    assert.equal(commands._test.delegatedCommandHandler("restore"), null);
     assert.equal(commands._test.delegatedCommandHandler("voice-online"), null);
     assert.equal(commands._test.delegatedCommandHandler("unknown"), null);
+});
+
+test("handleSlashCommand routes voice-admin strictly and ignores legacy voiceadmin", async () => {
+    const voiceAdmin = require("../features/voiceAdmin");
+    const original = voiceAdmin.handleVoiceAdminCommand;
+    const handled = [];
+    voiceAdmin.handleVoiceAdminCommand = async interaction => {
+        handled.push(interaction.commandName);
+        return "voice_admin_handled";
+    };
+    try {
+        const res1 = await commands._test.handleSlashCommand({ commandName: "voice-admin" });
+        const res2 = await commands._test.handleSlashCommand({ commandName: "voiceadmin" });
+        assert.equal(res1, "voice_admin_handled");
+        assert.equal(res2, null);
+        assert.deepEqual(handled, ["voice-admin"]);
+    } finally {
+        voiceAdmin.handleVoiceAdminCommand = original;
+    }
 });
 
 test("latest setting prefix rejects values that could alter a Mongo query", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

@@ -128,7 +128,7 @@ test("moderation helpers build rich reply embeds with appropriate colors and tit
     const untimeoutEmbed = helpers.buildModerationReplyEmbed(interaction, target, "timeout", "reformed", 102, {
         isUntimeout: true
     }).toJSON();
-    assert.match(untimeoutEmbed.author.name, /ปลดระงับ/);
-    assert.match(untimeoutEmbed.description, /UNTIMEOUT/);
+    assert.match(untimeoutEmbed.author.name, /ปลด Timeout/);
+    assert.match(untimeoutEmbed.description, /Case:.*102/);
 });
 

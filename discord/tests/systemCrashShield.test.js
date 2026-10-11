@@ -3,7 +3,12 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { createCriticalAlertDispatcher, stopRuntimeCleanups } = require("../index/system");
+const {
+    createCriticalAlertDispatcher,
+    stopRuntimeCleanups,
+    isTransientGatewayError,
+    isRecoverableRuntimeError
+} = require("../index/system");
 
 function createHarness(options = {}) {
     const sent = [];
@@ -137,3 +142,84 @@ test("runtime cleanup awaits every healthy timer even when one cleanup fails", a
         console.warn = originalWarn;
     }
 });
+
+test("isTransientGatewayError identifies Cloudflare and Discord gateway transient blips", () => {
+    // Cloudflare 521, 522, 520, etc.
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 521")), true);
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 522")), true);
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 502")), true);
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 503")), true);
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 504")), true);
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 520")), true);
+
+    // WebSocket handshake timeouts and premature closes
+    assert.equal(isTransientGatewayError(new Error("Opening handshake has timed out")), true);
+    assert.equal(isTransientGatewayError(new Error("WebSocket was closed before the connection was established")), true);
+
+    // Socket network errors on gateway/websocket
+    const resetErr = new Error("read ECONNRESET");
+    resetErr.code = "ECONNRESET";
+    resetErr.stack = "Error: read ECONNRESET at TLSWrap.onStreamRead (/app/node_modules/ws/lib/websocket.js:930)";
+    assert.equal(isTransientGatewayError(resetErr), true);
+
+    const timedOutErr = new Error("connect ETIMEDOUT gateway.discord.gg:443");
+    timedOutErr.code = "ETIMEDOUT";
+    assert.equal(isTransientGatewayError(timedOutErr), true);
+
+    // Cause-based network errors (e.g. Node 18+ undici fetch failed)
+    const causeErr = new Error("fetch failed");
+    causeErr.cause = { code: "UND_ERR_CONNECT_TIMEOUT", message: "Connect Timeout Error" };
+    causeErr.stack = "Error: fetch failed at discord.com/api/v10";
+    assert.equal(isTransientGatewayError(causeErr), true);
+
+    const resetCauseErr = new Error("fetch failed");
+    resetCauseErr.cause = { code: "ECONNRESET", message: "other side closed" };
+    resetCauseErr.stack = "Error: fetch failed at gateway.discord.gg";
+    assert.equal(isTransientGatewayError(resetCauseErr), true);
+
+    // Discord REST 5xx transient outages
+    assert.equal(isTransientGatewayError(new Error("DiscordAPIError[500]: Internal Server Error")), true);
+    assert.equal(isTransientGatewayError(new Error("DiscordAPIError[502]: Bad Gateway")), true);
+    assert.equal(isTransientGatewayError(new Error("DiscordAPIError[503]: Service Unavailable")), true);
+
+    // Stream / socket premature close
+    assert.equal(isTransientGatewayError(new Error("Connection reset by peer")), true);
+    assert.equal(isTransientGatewayError(new Error("ERR_STREAM_PREMATURE_CLOSE: premature close")), true);
+
+    // Non-transient normal errors must NOT be ignored
+    assert.equal(isTransientGatewayError(new Error("TypeError: Cannot read properties of undefined")), false);
+    assert.equal(isTransientGatewayError(new Error("MongoDB connection failed")), false);
+    assert.equal(isTransientGatewayError(new Error("Unexpected token < in JSON at position 0")), false);
+    assert.equal(isTransientGatewayError(null), false);
+    assert.equal(isTransientGatewayError(undefined), false);
+});
+
+test("isRecoverableRuntimeError shields DiscordAPIError, messaging issues, and Mongo buffering", () => {
+    // Discord API errors
+    const discordErr = new Error("Unknown interaction");
+    discordErr.name = "DiscordAPIError";
+    assert.equal(isRecoverableRuntimeError(discordErr), true);
+
+    assert.equal(isRecoverableRuntimeError(new Error("DiscordAPIError[10062]: Unknown interaction")), true);
+    assert.equal(isRecoverableRuntimeError(new Error("DiscordAPIError[10008]: Unknown message")), true);
+    assert.equal(isRecoverableRuntimeError(new Error("DiscordAPIError[50007]: Cannot send messages to this user")), true);
+    assert.equal(isRecoverableRuntimeError(new Error("DiscordAPIError[50013]: Missing Permissions")), true);
+    assert.equal(isRecoverableRuntimeError(new Error("Interaction has already been acknowledged")), true);
+
+    // Mongo transient drops
+    const mongoErr = new Error("connection 0 to cluster0.mongodb.net:27017 closed");
+    mongoErr.name = "MongoNetworkError";
+    assert.equal(isRecoverableRuntimeError(mongoErr), true);
+
+    assert.equal(isRecoverableRuntimeError(new Error("MongooseError: Operation buffering timed out after 10000ms")), true);
+
+    // Also inherits transient gateway errors
+    assert.equal(isRecoverableRuntimeError(new Error("Unexpected server response: 521")), true);
+
+    // Truly fatal errors are NOT shielded
+    assert.equal(isRecoverableRuntimeError(new Error("TypeError: Cannot read properties of undefined")), false);
+    assert.equal(isRecoverableRuntimeError(new Error("SyntaxError: Unexpected token")), false);
+    assert.equal(isRecoverableRuntimeError(null), false);
+    assert.equal(isRecoverableRuntimeError(undefined), false);
+});
+

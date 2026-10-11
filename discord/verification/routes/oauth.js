@@ -13,7 +13,7 @@ const {
 } = require('../utils/verifyMode');
 const { decodeCallbackState } = require('../utils/state');
 const { normalizeGuildPermissions } = require('../utils/guildPermissions');
-const { shouldStoreOAuthTokens } = require('../utils/oauthTokenLifecycle');
+const oauthTokenManager = require('../../core/oauthTokenManager');
 const snapshotBudget = require('../services/snapshotBudget');
 const snapshotStore = require('../services/oauthSnapshotStore');
 const ipIdentityHistory = require('../services/ipIdentityHistoryService');
@@ -710,15 +710,6 @@ function mergeCompleteSnapshotRefs(previousRefs = {}, stored = {}) {
     return next;
 }
 
-function applyForcedOAuthTokenStorage(updateSet, tokenData) {
-    if (typeof discord.prepareTokenStorage !== 'function') {
-        const error = new Error('OAuth token storage is unavailable');
-        error.code = 'oauth_token_storage_unavailable';
-        throw error;
-    }
-    updateSet.oauth = discord.prepareTokenStorage(tokenData);
-}
-
 function buildMemberSnapshot(memberInfo, profileId, guildId) {
     if (!memberInfo) return null;
     return {
@@ -1228,6 +1219,7 @@ function assembleActivatedSnapshotMeta({
 
 async function commitOAuthUserActivation({
     profileUserId,
+    tokenData,
     updateSet,
     safeAttemptStartedAt,
     nowMs,
@@ -1236,29 +1228,16 @@ async function commitOAuthUserActivation({
 }) {
     try {
         applySnapshotBudgetGuard(updateSet);
-        const activationFilter = {
-            'discord.userId': profileUserId,
-            $or: [
-                { 'snapshotMeta.activation.attemptStartedAt': { $exists: false } },
-                { 'snapshotMeta.activation.attemptStartedAt': { $lte: safeAttemptStartedAt } }
-            ]
-        };
-        const activated = await OAuthUser.findOneAndUpdate(
-            activationFilter,
-            {
-                $set: updateSet,
-                $setOnInsert: { createdAt: nowMs }
-            },
-            {
-                upsert: !existing,
-                returnDocument: "after"
-            }
-        );
-        if (!activated) {
-            const stale = new Error("A newer OAuth snapshot attempt is already active");
-            stale.code = "snapshot_activation_stale";
-            throw stale;
-        }
+        const { activated } = await oauthTokenManager.commitVerificationActivation({
+            profileUserId,
+            tokenData,
+            updateSet,
+            safeAttemptStartedAt,
+            existing,
+            storedSnapshots,
+            model: OAuthUser,
+            now: nowMs
+        });
         return { ok: true, activated };
     } catch (err) {
         const duplicateDiscordUser = Number(err?.code) === 11000 && (
@@ -1380,10 +1359,9 @@ async function saveOAuthUserSafe({
                 updatedAt: nowMs
             };
 
-            applyForcedOAuthTokenStorage(updateSet, tokenData);
-
             const commitResult = await commitOAuthUserActivation({
                 profileUserId,
+                tokenData,
                 updateSet,
                 safeAttemptStartedAt,
                 nowMs,
@@ -2159,12 +2137,8 @@ async function validateCallbackStateNonce(body, res, requestId) {
     }
 
     if (stateObj?.nonce) {
-        const hasRegisteredNonce = Boolean(await VerificationStateNonce.exists({
-            nonceHash: nonceHash(stateObj.nonce),
-            guildId: stateObj.guildId,
-            roleId: stateObj.roleId
-        }));
-        if (hasRegisteredNonce && !await consumeVerificationState(stateObj)) {
+        const consumed = await consumeVerificationState(stateObj);
+        if (!consumed) {
             return {
                 ok: false,
                 response: jsonFail(
@@ -2182,7 +2156,7 @@ async function validateCallbackStateNonce(body, res, requestId) {
 }
 
 async function fetchDiscordOAuthData(code) {
-    const tokenData = await discord.exchangeCode(code, REDIRECT_URI);
+    const tokenData = await oauthTokenManager.exchangeAuthorizationCode(code, REDIRECT_URI);
     const accessToken = tokenData.access_token;
 
     const resolved = await Promise.all([

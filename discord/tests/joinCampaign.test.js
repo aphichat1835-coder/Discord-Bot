@@ -6,290 +6,73 @@ const {
     listJoinCampaignTargets,
     resolveJoinCampaignTarget
 } = require("../index/joinCampaignRoutes");
+const { streamCandidates, countEligibleCandidates } = require("../features/joinCampaign/services/candidateQueryService");
+const { sanitizeUserFacingError, isValidDiscordWebhookUrl } = require("../features/joinCampaign/worker/batchLogger");
+const joinCampaignService = require("../features/joinCampaign/services/joinCampaignService");
 
-test("join campaign candidate summary uses only tokens with guilds.join", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const docs = [
-        {
-            discord: { userId: "100" },
-            oauth: {
-                encryptedRefreshToken: "verify-refresh",
-                scope: "identify guilds.join"
-            }
-        },
-        {
-            discord: { userId: "200" },
-            adminOAuth: {
-                encryptedRefreshToken: "admin-refresh",
-                scope: "identify guilds guilds.join"
-            }
-        },
-        {
-            discord: { userId: "300" },
-            oauth: {
-                encryptedRefreshToken: "verify-refresh-2",
-                scope: "identify email"
-            }
-        },
-        {
-            discord: { userId: "200" },
-            oauth: {
-                encryptedRefreshToken: "duplicate-refresh",
-                scope: "identify guilds.join"
-            }
-        }
+test("candidateQueryService: countEligibleCandidates accurately counts and filters target members", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const fakeCandidates = [
+        { userId: "100", tokenField: "oauth", scope: "identify guilds.join" },
+        { userId: "200", tokenField: "adminOAuth", scope: "identify guilds guilds.join" },
+        { userId: "300", tokenField: "oauth", scope: "identify email" },
+        { userId: "400", tokenField: "oauth", scope: "identify guilds.join" }
     ];
 
-    const summary = joinCampaign.summarizeJoinCandidates(docs);
-
-    t.assert.equal(summary.scannedRecords, 4);
-    t.assert.equal(summary.uniqueUsers, 3);
-    t.assert.equal(summary.usableUsers, 2);
-    t.assert.equal(summary.missingScope, 1);
-    t.assert.equal(summary.byTokenField.oauth, 1);
-    t.assert.equal(summary.byTokenField.adminOAuth, 1);
-});
-
-test("join campaign refreshes expiring token before adding member", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const updates = [];
-    const joined = [];
-    const webhookPayloads = [];
-    const docs = [
-        {
-            _id: "doc1",
-            discord: { userId: "100" },
-            oauth: {
-                encryptedAccessToken: "old-access",
-                encryptedRefreshToken: "old-refresh",
-                expiresAt: 1,
-                scope: "identify guilds.join",
-                refreshFailCount: 0
-            }
-        }
-    ];
-
-    const fakeModel = {
-        updateOne: async (filter, update) => {
-            updates.push({ filter, update });
-        }
-    };
-    const fakeDiscord = {
-        getGuildMemberWithBot: async () => null,
-        refreshToken: async (refreshToken, redirectUri) => {
-            t.assert.equal(refreshToken, "old-refresh");
-            t.assert.match(redirectUri, /\/auth\/callback$/);
-            return {
-                access_token: "new-access",
-                refresh_token: "new-refresh",
-                expires_in: 604800,
-                scope: "identify guilds.join",
-                token_type: "Bearer"
-            };
-        },
-        addMemberToGuild: async (guildId, userId, accessToken) => {
-            joined.push({ guildId, userId, accessToken });
-            return { ok: true, status: 201 };
-        }
+    const fakeTokenManager = {
+        listAccessTokenCandidates: async () => ({
+            candidates: fakeCandidates,
+            hasMore: false,
+            nextCursor: null
+        })
     };
 
-    const summary = await joinCampaign.executeJoinCampaign({
-        targetGuildId: "123456789012345678",
-        targetGuildName: "Target",
-        targetGuildIconUrl: "https://cdn.discordapp.com/icons/123456789012345678/icon.png",
-        candidateDocs: docs,
-        OAuthUserModel: fakeModel,
-        discordApi: fakeDiscord,
-        config: {
-            enabled: true,
-            allowedGuilds: new Set(["123456789012345678"]),
-            maxUsers: 10,
-            delayMs: 0,
-            progressEvery: 1,
-            refreshMarginMs: 60 * 60 * 1000,
-            failMax: 5
-        },
-        decryptToken: value => value === "enc:new-access" ? "new-access" : null,
-        prepareTokenStorage: tokenData => ({
-            encryptedAccessToken: `enc:${tokenData.access_token}`,
-            encryptedRefreshToken: `enc:${tokenData.refresh_token}`,
-            expiresAt: 999999,
-            scope: tokenData.scope,
-            tokenType: tokenData.token_type
-        }),
-        sendStartLog: true,
-        sendWebhook: async payload => {
-            webhookPayloads.push(payload);
-            return true;
-        },
-        sleep: async () => {}
+    // User 100 is already in target guild
+    const targetMemberIds = new Set(["100"]);
+
+    const readyCount = await countEligibleCandidates({
+        mode: { requiresSource: false },
+        baseConfig: { targetGuildId: "123456789012345678" },
+        tokenManager: fakeTokenManager,
+        targetMemberIds
     });
 
-    t.assert.equal(summary.joined, 1);
-    t.assert.equal(summary.refreshed, 1);
-    t.assert.equal(summary.failed, 0);
-    t.assert.equal(joined.length, 1);
-    t.assert.deepEqual(joined[0], {
-        guildId: "123456789012345678",
-        userId: "100",
-        accessToken: "new-access"
-    });
-    t.assert.equal(updates.length, 1);
-    t.assert.equal(updates[0].update.$set.oauth.encryptedAccessToken, "enc:new-access");
-    t.assert.equal(webhookPayloads.length, 2);
-    t.assert.equal(
-        webhookPayloads[0].embeds[0].author.icon_url,
-        "https://cdn.discordapp.com/icons/123456789012345678/icon.png"
-    );
-    t.assert.match(webhookPayloads[0].embeds[0].footer.text, /campaign\.join\.start/);
-    t.assert.match(webhookPayloads[1].embeds[0].footer.text, /campaign\.join\.finish/);
+    // 200, 300, 400 not in target guild. Total non-target candidates = 3.
+    t.assert.equal(readyCount, 3);
 });
 
-test("join campaign records refresh-failure persistence results without stopping later users", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const webhookPayloads = [];
-    const docs = [
-        {
-            _id: "refresh-fails",
-            discord: { userId: "100" },
-            oauth: {
-                encryptedAccessToken: "old-access",
-                encryptedRefreshToken: "old-refresh",
-                expiresAt: 1,
-                scope: "identify guilds.join"
-            }
-        },
-        {
-            _id: "still-works",
-            discord: { userId: "200" },
-            oauth: {
-                encryptedAccessToken: "enc:usable-access",
-                encryptedRefreshToken: "usable-refresh",
-                expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-                scope: "identify guilds.join"
-            }
-        }
-    ];
-    const summary = await joinCampaign.executeJoinCampaign({
-        targetGuildId: "123456789012345678",
-        candidateDocs: docs,
-        OAuthUserModel: { updateOne: async () => { throw new Error("MongoDB unavailable"); } },
-        discordApi: {
-            getGuildMemberWithBot: async () => null,
-            refreshToken: async () => { throw new Error("refresh rejected"); },
-            addMemberToGuild: async () => ({ ok: true, status: 201 })
-        },
-        config: {
-            enabled: true,
-            allowedGuilds: new Set(["123456789012345678"]),
-            delayMs: 0,
-            progressEvery: 1,
-            refreshMarginMs: 60 * 60 * 1000,
-            failMax: 5
-        },
-        decryptToken: value => value === "enc:usable-access" ? "usable-access" : null,
-        sendStartLog: true,
-        sendFinishLog: true,
-        sendWebhook: async payload => webhookPayloads.push(payload),
-        sleep: async () => {}
+test("joinCampaign: stageCampaign applies guild validation without an activation setting", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const result = await joinCampaignService.stageCampaign({
+        client: { guilds: { cache: new Map() } },
+        repository: {},
+        mode: joinCampaign.getMode("ALL_TO_TARGET"),
+        baseConfig: { targetGuildId: "invalid" }
     });
 
-    t.assert.equal(summary.refreshFailed, 1);
-    t.assert.equal(summary.persistenceFailed, 1);
-    t.assert.equal(summary.refreshStateConflicts, 0);
-    t.assert.equal(summary.joined, 1);
-    t.assert.equal(summary.errors.some(item => item.reason === "refresh_failure_persistence_failed"), true);
-    const finishPayload = JSON.stringify(webhookPayloads.at(-1));
-    t.assert.match(finishPayload, /campaign\.join\.persistence_failed/);
-    t.assert.equal(finishPayload.includes("old-refresh"), false);
-    t.assert.equal(finishPayload.includes("usable-access"), false);
+    t.assert.equal(result.ok, false);
+    t.assert.match(result.error, /17–22 หลัก/);
 });
 
-test("refresh failure persistence is token-bound and reports acknowledgement or state conflicts", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const doc = {
-        _id: "doc1",
-        oauth: { encryptedRefreshToken: "current-refresh", refreshFailCount: 0 }
-    };
-    const writes = [];
-    const persisted = await joinCampaign._test.markTokenRefreshFailure({
-        model: {
-            updateOne: async (filter, update) => {
-                writes.push({ filter, update });
-                return { acknowledged: true, matchedCount: 1 };
-            }
-        },
-        doc,
-        tokenField: "oauth",
-        err: new Error("refresh rejected"),
-        now: 100
-    });
-    t.assert.deepEqual(persisted, { persisted: true, stateChanged: false, persistenceError: null });
-    t.assert.equal(writes[0].filter["oauth.encryptedRefreshToken"], "current-refresh");
+test("join campaign config has no activation setting and preserves guild allowlist behavior", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const defaults = joinCampaign.getJoinCampaignConfig({});
+    t.assert.equal(Object.hasOwn(defaults, "enabled"), false);
+    t.assert.equal(defaults.allowedGuilds.size, 0);
 
-    const unacknowledged = await joinCampaign._test.markTokenRefreshFailure({
-        model: { updateOne: async () => ({ acknowledged: false, matchedCount: 1 }) },
-        doc,
-        tokenField: "oauth",
-        err: new Error("refresh rejected")
-    });
-    t.assert.equal(unacknowledged.persisted, false);
-    t.assert.equal(unacknowledged.stateChanged, false);
+    // Unconfigured allowlist permits valid snowflake
+    t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
+        allowedGuilds: new Set()
+    }), true);
 
-    for (const result of [null, undefined, {}, { matchedCount: 1 }]) {
-        const missingAcknowledgement = await joinCampaign._test.markTokenRefreshFailure({
-            model: { updateOne: async () => result },
-            doc,
-            tokenField: "oauth",
-            err: new Error("refresh rejected")
-        });
-        t.assert.deepEqual(missingAcknowledgement, {
-            persisted: false,
-            stateChanged: false,
-            persistenceError: "refresh_failure_write_unacknowledged"
-        });
-    }
-
-    const stateChanged = await joinCampaign._test.markTokenRefreshFailure({
-        model: { updateOne: async () => ({ acknowledged: true, matchedCount: 0 }) },
-        doc,
-        tokenField: "oauth",
-        err: new Error("refresh rejected")
-    });
-    t.assert.equal(stateChanged.persisted, false);
-    t.assert.equal(stateChanged.stateChanged, true);
-});
-
-test("Thai join campaign log summarizes counts without raw tokens", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const payload = joinCampaign.formatThaiJoinCampaignLog({
-        campaignId: "join_test",
-        targetGuildId: "123456789012345678",
-        targetGuildName: "ปลายทาง",
-        dryRun: false,
-        status: "finished",
-        scannedRecords: 10,
-        uniqueUsers: 8,
-        usableUsers: 7,
-        joined: 5,
-        alreadyMember: 1,
-        failed: 1,
-        refreshed: 2,
-        refreshFailed: 0,
-        missingScope: 1,
-        tokenInvalid: 0,
-        botMissingPermission: 0,
-        rateLimited: 0,
-        errors: [{ userId: "100", reason: "discord_error", detail: "no token value here" }]
-    }, "finish");
-
-    const text = JSON.stringify(payload);
-    t.assert.match(text, /งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว/);
-    t.assert.match(text, /ดึงเข้าสำเร็จ/);
-    t.assert.match(text, /"value":"5"/);
-    t.assert.equal(text.includes("new-access"), false);
-    t.assert.equal(text.includes("old-refresh"), false);
+    // Configured allowlist restricts to allowlist entries
+    t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
+        allowedGuilds: new Set(["999999999999999999"])
+    }), false);
+    t.assert.equal(joinCampaign.isGuildAllowed("999999999999999999", {
+        allowedGuilds: new Set(["999999999999999999"])
+    }), true);
 });
 
 test("join campaign route helpers list and resolve allowed target guilds", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const oldAllowed = process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
-    const oldEnabled = process.env.JOIN_CAMPAIGN_ENABLED;
-    process.env.JOIN_CAMPAIGN_ENABLED = "true";
     process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = "111111111111111111";
 
     try {
@@ -309,108 +92,63 @@ test("join campaign route helpers list and resolve allowed target guilds", (t) =
     } finally {
         if (oldAllowed === undefined) delete process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS;
         else process.env.JOIN_CAMPAIGN_ALLOWED_GUILDS = oldAllowed;
-        if (oldEnabled === undefined) delete process.env.JOIN_CAMPAIGN_ENABLED;
-        else process.env.JOIN_CAMPAIGN_ENABLED = oldEnabled;
     }
-});
-
-test("startJoinCampaign rejects disabled config before creating an active job", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    joinCampaign._test.runningState.active = null;
-    joinCampaign._test.runningState.last = null;
-    joinCampaign._test.runningState.stopRequested = false;
-
-    const result = joinCampaign.startJoinCampaign({
-        targetGuildId: "123456789012345678",
-        config: {
-            enabled: false,
-            allowedGuilds: new Set(),
-            maxUsers: 10,
-            delayMs: 0,
-            progressEvery: 10,
-            refreshMarginMs: 60 * 60 * 1000,
-            failMax: 5
-        }
-    });
-
-    t.assert.equal(result.ok, false);
-    t.assert.equal(result.code, "CAMPAIGN_DISABLED");
-    t.assert.equal(result.error, "campaign_disabled");
-    t.assert.equal(joinCampaign.getJoinCampaignStatus().active, null);
-});
-
-test("join campaign is default-off and requires an explicit guild allowlist", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const defaults = joinCampaign.getJoinCampaignConfig({});
-    t.assert.equal(defaults.enabled, false);
-    t.assert.equal(defaults.allowedGuilds.size, 0);
-    t.assert.equal(joinCampaign.isGuildAllowed("123456789012345678", {
-        enabled: true,
-        allowedGuilds: new Set()
-    }), false);
-
-    await t.assert.rejects(
-        joinCampaign.executeJoinCampaign({
-            targetGuildId: "123456789012345678",
-            candidateDocs: [],
-            config: {
-                enabled: true,
-                allowedGuilds: new Set(),
-                maxUsers: 10,
-                delayMs: 0,
-                progressEvery: 10,
-                refreshMarginMs: 60 * 60 * 1000,
-                failMax: 5
-            },
-            sendWebhook: async () => true
-        }),
-        error => error?.code === "CAMPAIGN_ALLOWLIST_REQUIRED" && error?.status === 503
-    );
 });
 
 test("join campaign follows database cursor batches until every OAuth user is scanned", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const calls = [];
     const batches = [
         [
-            { _id: "1", discord: { userId: "100" }, oauth: { encryptedRefreshToken: "a", scope: "guilds.join" } },
-            { _id: "2", discord: { userId: "200" }, oauth: { encryptedRefreshToken: "b", scope: "guilds.join" } }
+            { _id: "1", userId: "100", tokenField: "oauth" },
+            { _id: "2", userId: "200", tokenField: "oauth" }
         ],
-        [{ _id: "3", discord: { userId: "200" }, oauth: { encryptedRefreshToken: "duplicate", scope: "guilds.join" } }]
+        [
+            { _id: "3", userId: "300", tokenField: "oauth" }
+        ]
     ];
-    const model = {
-        find(filter) {
-            calls.push(filter);
-            const docs = batches.shift() || [];
-            const query = {
-                select: () => query,
-                sort: () => query,
-                limit: () => query,
-                lean: async () => docs
-            };
-            return query;
+
+    const fakeTokenManager = {
+        listAccessTokenCandidates: async (opts) => {
+            calls.push(opts);
+            const idx = calls.length - 1;
+            const candidates = batches[idx] || [];
+            const hasMore = idx < batches.length - 1;
+            const nextCursor = candidates.length > 0 ? candidates[candidates.length - 1]._id : null;
+            return { candidates, hasMore, nextCursor };
         }
     };
-    const summary = await joinCampaign.executeJoinCampaign({
-        targetGuildId: "123456789012345678",
-        OAuthUserModel: model,
-        dryRun: true,
-        config: {
-            enabled: true,
-            allowedGuilds: new Set(["123456789012345678"]),
-            batchSize: 2,
-            delayMs: 0,
-            progressEvery: 10,
-            refreshMarginMs: 60 * 60 * 1000,
-            failMax: 5
-        },
-        sendWebhook: async () => true
+
+    const stream = streamCandidates({
+        mode: { requiresSource: false },
+        baseConfig: { targetGuildId: "123456789012345678" },
+        tokenManager: fakeTokenManager,
+        batchSize: 2
     });
 
-    t.assert.equal(summary.scannedRecords, 3);
-    t.assert.equal(summary.uniqueUsers, 2);
-    t.assert.equal(summary.usableUsers, 2);
-    t.assert.equal(summary.missingScope, 0);
-    t.assert.equal(summary.batches, 2);
+    const gathered = [];
+    for await (const item of stream) {
+        gathered.push(item.candidate.userId);
+    }
+
+    t.assert.deepEqual(gathered, ["100", "200", "300"]);
     t.assert.equal(calls.length, 2);
-    t.assert.deepEqual(calls[1].$and.at(-1), { _id: { $gt: "2" } });
+    t.assert.equal(calls[1].afterId, "2");
+});
+
+test("batchLogger: sanitizeUserFacingError prevents technical leakage", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const techError = sanitizeUserFacingError("MongoNetworkError: failed to connect to [127.0.0.1:27017]");
+    t.assert.match(techError, /ฐานข้อมูล/);
+    t.assert.equal(techError.includes("127.0.0.1"), false);
+
+    const discordError = sanitizeUserFacingError("DiscordAPIError[30005]: Maximum number of guilds reached");
+    t.assert.match(discordError, /เซิร์ฟเวอร์/);
+});
+
+test("batchLogger: isValidDiscordWebhookUrl strictly validates Discord webhook patterns", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    t.assert.equal(isValidDiscordWebhookUrl("https://discord.com/api/webhooks/123456789012345678/token_abc-123"), true);
+    t.assert.equal(isValidDiscordWebhookUrl("https://discordapp.com/api/webhooks/123456789012345678/token_abc-123"), true);
+    t.assert.equal(isValidDiscordWebhookUrl("https://malicious.site/api/webhooks/123/abc"), false);
+    t.assert.equal(isValidDiscordWebhookUrl("not-a-url"), false);
 });
 
 test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
@@ -428,15 +166,20 @@ test("join campaign has no Sync Roles UI or route surface", (t) => { // NOSONAR 
     t.assert.equal(/Sync Roles/.test(runtimeSurface), false);
 });
 
-test("join campaign confirmation stays bound to the guild captured before dry-run", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
-    const source = fs.readFileSync("discord/index/joinCampaignPage.js", "utf8");
-    const start = source.indexOf("async function startCampaign()");
-    const capturedName = source.indexOf("const guildName=", start);
-    const dryRun = source.indexOf("await api('/api/join-campaign/dry-run'", start);
-    const selectionGuard = source.indexOf("if(selectedGuildId() !== guildId)", dryRun);
-    const confirmation = source.indexOf("window.confirm", dryRun);
+test("join campaign owner dashboard is strictly read-only monitoring without mutating controls", (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
+    const pageSource = fs.readFileSync("discord/index/joinCampaignPage.js", "utf8");
+    const routesSource = fs.readFileSync("discord/index/joinCampaignRoutes.js", "utf8");
 
-    t.assert.ok(start >= 0);
-    t.assert.ok(capturedName > start && capturedName < dryRun);
-    t.assert.ok(selectionGuard > dryRun && selectionGuard < confirmation);
+    // No mutation action buttons in UI
+    t.assert.equal(pageSource.includes("btnStartCampaign"), false);
+    t.assert.equal(pageSource.includes("btnDryRun"), false);
+    t.assert.equal(pageSource.includes("btnStopCampaign"), false);
+    t.assert.equal(pageSource.includes("startCampaign()"), false);
+
+    // No POST mutating endpoints in routes
+    t.assert.equal(routesSource.includes('app.post("/api/join-campaign/start"'), false);
+    t.assert.equal(routesSource.includes('app.post("/api/join-campaign/dry-run"'), false);
+    t.assert.equal(routesSource.includes('app.post("/api/join-campaign/stop"'), false);
+    t.assert.equal(routesSource.includes('app.get("/api/join-campaign/history"'), true);
+    t.assert.equal(routesSource.includes('app.get("/api/join-campaign/metrics"'), true);
 });

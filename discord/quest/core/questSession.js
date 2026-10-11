@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const { buildUserHeaders } = require('./clientProfile');
 const { fetchWithRetry } = require('../utils/httpRetry');
 const { abortableDelay, abortFailure } = require('../utils/abortableDelay');
+const tokenCoordinator = require('../../core/tokenCoordinator');
 
 const DISCORD_API = 'https://discord.com/api/v9';
 const QUEST_LIST_PATHS = ['/quests/@me', '/users/@me/quests'];
@@ -28,7 +29,7 @@ class QuestCompatibilityError extends Error {
 }
 
 function isFatalAuthError(error) {
-    return error?.fatalAuth === true;
+    return error?.fatalAuth === true || error?.code === 'TOKEN_QUARANTINED';
 }
 
 function sleep(ms, signal) {
@@ -36,25 +37,27 @@ function sleep(ms, signal) {
 }
 
 async function discordFetch(token, path, options = {}, policy = {}) {
-    const { headers = {}, ...requestOptions } = options;
-    const method = String(requestOptions.method ?? 'GET').toUpperCase();
-    const requestPolicy = method === 'POST'
-        ? { ...policy, retryRateLimits: false }
-        : policy;
+    return tokenCoordinator.executeWithToken(token, 'questRunner', async () => {
+        const { headers = {}, ...requestOptions } = options;
+        const method = String(requestOptions.method ?? 'GET').toUpperCase();
+        const requestPolicy = method === 'POST'
+            ? { ...policy, retryRateLimits: false }
+            : policy;
 
-    const res = await fetchWithRetry(`${DISCORD_API}${path}`, {
-        ...requestOptions,
-        headers: { ...buildUserHeaders(token, path), ...headers }
-    }, requestPolicy);
+        const res = await fetchWithRetry(`${DISCORD_API}${path}`, {
+            ...requestOptions,
+            headers: { ...buildUserHeaders(token, path), ...headers }
+        }, requestPolicy);
 
-    if (res.status === 204) return { ok: true, status: 204 };
-    const text = await res.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = text; }
-    if (!res.ok) {
-        throw new DiscordApiError(res.status, path, data);
-    }
-    return data;
+        if (res.status === 204) return { ok: true, status: 204 };
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch { data = text; }
+        if (!res.ok) {
+            throw new DiscordApiError(res.status, path, data);
+        }
+        return data;
+    });
 }
 
 const VIDEO_EVENTS  = new Set(['WATCH_VIDEO', 'WATCH_VIDEO_ON_MOBILE']);
@@ -412,20 +415,10 @@ async function sendVideoProgress(token, questId, timestamp, signal) {
 async function sendGameHeartbeat(token, quest, terminal, signal) {
     const baseline = quest.progressSecs;
     const perform = async () => {
-        if (quest.applicationId) {
-            try {
-                return await discordFetch(token, `/quests/${quest.id}/heartbeat`, {
-                    method: 'POST',
-                    body: JSON.stringify({ application_id: quest.applicationId, terminal }),
-                    signal
-                });
-            } catch (error) {
-                if (error?.status !== 400) throw error;
-            }
-        }
+        const payload = tokenCoordinator.getSafeQuestHeartbeatPayload(token, quest, terminal);
         return discordFetch(token, `/quests/${quest.id}/heartbeat`, {
             method: 'POST',
-            body: JSON.stringify({ stream_key: `call:${quest.id}:1`, terminal }),
+            body: JSON.stringify(payload),
             signal
         });
     };
@@ -621,6 +614,7 @@ async function fetchUserStatus(token, signal) {
 
 async function restoreUserStatus(token, status, signal) {
     if (!status || !['online', 'idle', 'dnd', 'invisible'].includes(status)) return false;
+    if (tokenCoordinator.isVoiceActive(token)) return false;
     try {
         await discordFetch(token, '/users/@me/settings', {
             method: 'PATCH',

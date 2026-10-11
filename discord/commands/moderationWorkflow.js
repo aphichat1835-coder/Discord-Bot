@@ -19,13 +19,13 @@ async function requireModerationPermission(interaction, _action) {
     return requireMemberPermission(
         interaction,
         PermissionFlagsBits.Administrator,
-        `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
+        `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`
     );
 }
 
 function rejectMissingTarget(interaction, target) {
     if (target) return null;
-    return interaction.reply({ content: `> ${config.emojis.error} ไม่พบสมาชิกเป้าหมายในเซิร์ฟเวอร์`, ephemeral: true });
+    return interaction.reply({ content: `> ${config.emojis?.error || "❌"} ไม่พบสมาชิกเป้าหมายในเซิร์ฟเวอร์`, ephemeral: true });
 }
 
 function rejectHierarchy(interaction, client, target) {
@@ -40,11 +40,11 @@ function rejectUnmanageableTarget(interaction, target, action) {
     // do not use `manageable` as the ban decision.
     if (action === "ban") {
         if (target.bannable === true) return null;
-        return interaction.reply({ content: `> ${config.emojis.error} บอทไม่สามารถแบนสมาชิกท่านนี้ได้`, ephemeral: true });
+        return interaction.reply({ content: `> ${config.emojis?.error || "❌"} บอทไม่สามารถแบนสมาชิกท่านนี้ได้`, ephemeral: true });
     }
 
     if (target.manageable) return null;
-    return interaction.reply({ content: `> ${config.emojis.error} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
+    return interaction.reply({ content: `> ${config.emojis?.error || "❌"} บอทไม่มีสิทธิ์จัดการสมาชิกท่านนี้`, ephemeral: true });
 }
 
 function rejectInvalidDuration(interaction, duration) {
@@ -130,10 +130,10 @@ async function performModeration(interaction, input, deps = {}) {
         if (!failedCase) {
             sendWebhookEvent({
                 severity: "ERROR",
-                category: "DATA",
+                category: "DATABASE",
                 code: "moderation.case.failure_state_missing",
                 state: "OPEN",
-                title: "บันทึกสถานะ ModCase ที่ไม่สำเร็จไม่ได้",
+                title: "MODCASE FAILURE STATE MISSING",
                 description: "การลงโทษไม่สำเร็จ และระบบไม่สามารถเปลี่ยน ModCase เป็นสถานะไม่สำเร็จได้",
                 impact: "สถานะในฐานข้อมูลอาจยังแสดงว่ารอดำเนินการ",
                 action: "ตรวจ ModCase และแก้สถานะให้ตรงกับผลจาก Discord",
@@ -160,10 +160,10 @@ async function performModeration(interaction, input, deps = {}) {
     if (!completedCase) {
         sendWebhookEvent({
             severity: "ERROR",
-            category: "DATA",
+            category: "DATABASE",
             code: "moderation.case.completion_state_missing",
             state: "OPEN",
-            title: "ดำเนินการลงโทษแล้ว แต่ ModCase ยังไม่ปิด",
+            title: "MODCASE COMPLETION STATE MISSING",
             description: "Discord ดำเนินการสำเร็จ แต่ระบบไม่สามารถเปลี่ยน ModCase เป็นสถานะเสร็จสิ้นได้",
             impact: "ประวัติ Moderation แสดงสถานะไม่ตรงกับการดำเนินการจริง",
             action: "ตรวจ ModCase และเปลี่ยนสถานะเป็นเสร็จสิ้น",
@@ -195,15 +195,43 @@ function successReply(interaction, input, result) {
     );
     return interaction.editReply({
         content: result.caseCompleted
-            ? undefined
-            : `> ${config.emojis.warning} ดำเนินการกับสมาชิกแล้ว แต่ฐานข้อมูลยังคง Case #${result.caseDoc.caseNumber} เป็น pending เพื่อให้ตรวจสอบภายหลัง`,
+            ? null
+            : `> ${config.emojis?.warning || "⚠️"} ดำเนินการกับสมาชิกเรียบร้อย แต่บันทึกประวัติไม่สมบูรณ์`,
         embeds: [replyEmbed]
     });
 }
 
 function failureReply(interaction, err) {
     sessionManager.systemMetrics.increment("errors");
+    sendWebhookEvent({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "MODERATION",
+        code: "moderation.execution_failed",
+        state: "OPEN",
+        title: "ACTION FAILED",
+        description: `เกิดข้อผิดพลาดขณะดำเนินการ moderation: ${err.message || err}`,
+        fields: [
+            { name: "สถานะ", value: "OPEN" },
+            { name: "ผลกระทบ", value: "ไม่สามารถลงโทษสมาชิกเป้าหมายได้ตามที่ผู้ใช้ร้องขอ" },
+            { name: "สิ่งที่ควรทำ", value: "ตรวจสอบสิทธิ์ของบอทและตำแหน่ง Role ของบอท" },
+            { name: "เซิร์ฟเวอร์", value: `${interaction.guild?.name || "N/A"} (\`${interaction.guild?.id || "N/A"}\`)` },
+            { name: "รหัสข้อผิดพลาด", value: String(err.code || err.name || "unknown") }
+        ],
+        sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
+    }).catch(() => {});
     return interaction.editReply({ content: moderationErrorReply(err) });
+}
+
+function resolveModerationLoadingText(input) {
+    if (input.action === "ban") return `${config.emojis?.loading || "⏳"} กำลังแบนสมาชิก...`;
+    if (input.action === "kick") return `${config.emojis?.loading || "⏳"} กำลังเตะสมาชิก...`;
+    if (input.action === "timeout") {
+        return input.duration?.isUntimeout || input.duration?.minutes === 0
+            ? `${config.emojis?.loading || "⏳"} กำลังปลด Timeout...`
+            : `${config.emojis?.loading || "⏳"} กำลังตั้ง Timeout...`;
+    }
+    return `${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`;
 }
 
 function readFullModerationInput(interaction) {
@@ -219,8 +247,31 @@ async function handleModerationCommand(interaction, client) {
 
     markCommandAccepted(interaction);
     if (!await safeDefer(interaction)) return null;
+    const loadingText = resolveModerationLoadingText(input);
+    if (loadingText) {
+        await interaction.editReply({ content: loadingText }).catch(() => {});
+    }
     try {
-        return successReply(interaction, input, await performModeration(interaction, input));
+        const result = await performModeration(interaction, input);
+        sendWebhookEvent({
+            target: "LOG",
+            severity: "SUCCESS",
+            category: "MODERATION",
+            code: `moderation.${input.action}`,
+            title: `MEMBER ${input.action.toUpperCase()}`,
+            description: `ดำเนินการคำสั่ง ${input.action} สำเร็จ`,
+            fields: [
+                { name: "ผู้ดำเนินการ", value: `${interaction.user.tag} (\`${interaction.user.id}\`)` },
+                { name: "เซิร์ฟเวอร์", value: `${interaction.guild.name} (\`${interaction.guild.id}\`)` },
+                { name: "เป้าหมาย", value: `${input.target?.user?.tag || input.target?.id || "N/A"} (\`${input.target?.id || "N/A"}\`)` },
+                { name: "การกระทำ", value: input.action },
+                { name: "ผลลัพธ์", value: `สำเร็จ (Case #${result.caseDoc?.caseNumber || "N/A"})` },
+                input.reason ? { name: "รายละเอียด", value: input.reason } : null
+            ].filter(Boolean),
+            sourceIconUrl: getDiscordGuildIconUrl(interaction.guild),
+            thumbnailUrl: getDiscordAvatarUrl(input.target?.user)
+        }).catch(() => {});
+        return successReply(interaction, input, result);
     } catch (err) {
         return failureReply(interaction, err);
     }

@@ -17,6 +17,19 @@ const {
     isFatalAuthError
 } = require('./questSession');
 const { encryptToken, maskToken } = require('./tokenCrypto');
+const tokenCoordinator = require('../../core/tokenCoordinator');
+const config = require('../../config.json');
+
+try {
+    tokenCoordinator.registerSubsystem({
+        name: 'questRunner',
+        onTokenQuarantined: (tokenHash, reason) => {
+            // Quest runner execution detects quarantine on next executeWithToken call and aborts gracefully
+        }
+    });
+} catch {
+    // Safe swallow if already registered
+}
 const { formatRunnerStatusContent, formatRunnerStatusEmbed } = require('./runnerStatusHeader');
 const {
     createOneShotQuestSession,
@@ -58,7 +71,7 @@ const {
     sendQuestSummaryDM,
     sendQuestAuthFailureDM
 } = require('./questDm');
-const QuestLog = require('../models/QuestLog');
+const { getQuestLogRepository } = require('../../../database/repositories/quest');
 const { sendWebhookEvent } = require('../../core/webhooks');
 
 const jobs = new Map(); // key: jobKey -> jobRecord
@@ -131,24 +144,31 @@ function findAnyJobByAccount(accountId) {
     return null;
 }
 
-function stopJob(ownerId, key, { removeSchedule = true } = {}) {
+function stopJob(ownerId, key, { removeSchedule = true, asAdmin = false } = {}) {
     const job = jobs.get(key);
-    if (!job || job.ownerId !== ownerId) return false;
+    if (!job) return false;
+    if (!asAdmin && job.ownerId !== ownerId) return false;
     if (job.lifecycle !== 'stopping') {
         job.lifecycle = 'stopping';
         job.controller.abort();
     }
     if (removeSchedule && job.scheduleId != null) {
-        deleteScheduledRunner(job.scheduleId, ownerId).catch(() => {});
+        deleteScheduledRunner(job.scheduleId, asAdmin ? job.ownerId : ownerId).catch(() => {});
     }
     return true;
 }
 
-function stopScheduledJob(ownerId, scheduleId) {
+function stopScheduledJob(ownerId, scheduleId, { asAdmin = false } = {}) {
     const key = `scheduled:${scheduleId}`;
-    const stopped = stopJob(ownerId, key);
-    deleteScheduledRunner(scheduleId, ownerId).catch(() => {});
+    const stopped = stopJob(ownerId, key, { asAdmin });
+    if (!stopped) {
+        deleteScheduledRunner(scheduleId, asAdmin ? null : ownerId).catch(() => {});
+    }
     return stopped;
+}
+
+function stopScheduledJobAsAdmin(scheduleId) {
+    return stopScheduledJob(null, scheduleId, { asAdmin: true });
 }
 
 function stopAllForUser(ownerId, { mode = null } = {}) {
@@ -206,6 +226,7 @@ async function startRunner({
 
     let liveMsg = null;
     let outputChannel = null;
+    let dmDisabled = false;
     let username = initialUsername ?? '...';
     let accountId = initialAccountId;
     let lastRenderAt = 0;
@@ -225,47 +246,16 @@ async function startRunner({
     }
 
     async function resolveOutputChannel() {
+        if (dmDisabled) return null;
         if (outputChannel?.isTextBased?.()) return outputChannel;
-        if (!client) return null;
+        if (!client || !ownerId) return null;
 
-        // Prefer sending to DM of the owner who started the runner (with timeout guard)
-        if (ownerId) {
-            const dm = await resolveUserDMChannel(client, ownerId);
-            if (dm) {
-                outputChannel = dm;
-                return outputChannel;
-            }
-        }
-
-        // Fallback to guild text channel
-        if (channelId) {
-            const ch = await client.channels.fetch(channelId).catch(() => null);
-            if (ch?.isTextBased?.()) {
-                outputChannel = ch;
-                return outputChannel;
-            }
+        const dm = await resolveUserDMChannel(client, ownerId);
+        if (dm?.isTextBased?.()) {
+            outputChannel = dm;
+            return outputChannel;
         }
         return null;
-    }
-
-    async function sendWithChannelFallback(ch, payload) {
-        const body = typeof payload === 'string' ? { content: payload } : payload;
-        try {
-            return await ch.send(body);
-        } catch (sendErr) {
-            // Fallback to guild channel if DM failed (e.g. user has DMs closed)
-            if (channelId && ch?.id !== channelId) {
-                if (isPermanentDmError(sendErr)) {
-                    console.warn(`[Quest Runner:${jobKey}] Permanent DM error (${sendErr.code || sendErr.message}); falling back to guild channel`);
-                }
-                const fallbackCh = await client.channels.fetch(channelId).catch(() => null);
-                if (fallbackCh?.isTextBased?.()) {
-                    outputChannel = fallbackCh;
-                    return await fallbackCh.send(body);
-                }
-            }
-            throw sendErr;
-        }
     }
 
     async function flush({ silentRollover = false } = {}) {
@@ -287,18 +277,32 @@ async function startRunner({
                 payload.flags = 4096;
             }
 
+            if (dmDisabled) return;
             const editingExisting = Boolean(liveMsg);
             try {
                 if (!liveMsg) {
                     const ch = await resolveOutputChannel();
-                    if (!ch?.isTextBased?.()) return;
-                    liveMsg = await sendWithChannelFallback(ch, payload);
+                    if (!ch?.isTextBased?.()) {
+                        dmDisabled = true;
+                        return;
+                    }
+                    liveMsg = await ch.send(payload);
                 } else {
                     await liveMsg.edit(payload);
                 }
             } catch (err) {
-                if (editingExisting) liveMsg = null;
-                console.warn(`[Quest Runner:${jobKey}] Status message update failed: ${err.message}`);
+                if (editingExisting) {
+                    liveMsg = null;
+                    if (isPermanentDmError(err)) {
+                        dmDisabled = true;
+                        outputChannel = null;
+                    }
+                } else {
+                    dmDisabled = true;
+                    outputChannel = null;
+                    liveMsg = null;
+                }
+                console.warn(`[Quest Runner:${jobKey}] DM message update failed (${err.code || err.message}); continuing runner silently without DM`);
             }
         });
 
@@ -479,17 +483,19 @@ async function startRunner({
             issues = summary.issues;
         }
 
-        await sendQuestSummaryDM({
-            ownerId,
-            accountId,
-            username,
-            mode: 'oneshot',
-            totalQuests: summary.totalSupportedQuests,
-            completedQuests: summary.completedByBotCount,
-            issues,
-            jobKey,
-            targetMessage: liveMsg
-        }).catch(() => {});
+        if (!dmDisabled) {
+            await sendQuestSummaryDM({
+                ownerId,
+                accountId,
+                username,
+                mode: 'oneshot',
+                totalQuests: summary.totalSupportedQuests,
+                completedQuests: summary.completedByBotCount,
+                issues,
+                jobKey,
+                targetMessage: liveMsg
+            }).catch(() => {});
+        }
     }
 
     async function prepareOneShotRound(allQuests) {
@@ -769,6 +775,7 @@ async function startRunner({
     }
 
     async function runRoundSafely() {
+        tokenCoordinator.notifyQuestStart(userToken, { mode, username });
         try {
             const outcome = await runQuestRound();
             persistSchedule({ lastCheckAt: new Date(), lastError: null });
@@ -789,6 +796,8 @@ async function startRunner({
                 supportedCount: 0,
                 transientError: true
             };
+        } finally {
+            tokenCoordinator.notifyQuestEnd(userToken);
         }
     }
 
@@ -911,8 +920,9 @@ async function startRunner({
                 return;
             }
         } else if (isFatalAuthError(err)) {
-            addLog(`🔒 ${username}: AUTH FAILED (Token invalid)`);
-            persistSchedule({ lastError: 'Fatal auth failure (token invalid)' });
+            const authReason = err?.code === 'TOKEN_QUARANTINED' ? 'Token quarantined' : 'Token invalid';
+            addLog(`🔒 ${username}: AUTH FAILED (${authReason})`);
+            persistSchedule({ lastError: `Fatal auth failure (${authReason.toLowerCase()})` });
             if (liveMsg) {
                 const authFailEmbed = buildQuestAuthFailureEmbed({
                     username,
@@ -921,16 +931,36 @@ async function startRunner({
                 });
                 await liveMsg.edit({ embeds: [authFailEmbed] }).catch(() => {});
             }
-            sendQuestAuthFailureDM({
-                ownerId,
-                accountId,
-                username,
-                jobKey
-            }).catch(() => {});
-            return;
+            if (!dmDisabled) {
+                await sendQuestAuthFailureDM({
+                    ownerId,
+                    accountId,
+                    username,
+                    jobKey
+                }).catch(() => {});
+            }
         } else {
             addLog(`❌ ${username}: FATAL ERROR — ${err.message}`);
             persistSchedule({ lastError: err.message });
+            sendWebhookEvent({
+                target: 'ALERT',
+                severity: 'ERROR',
+                category: 'QUEST',
+                code: 'quest.runner_system_error',
+                state: 'OPEN',
+                title: 'QUEST RUNNER CRASH',
+                description: `เกิดข้อผิดพลาดร้ายแรงใน Quest Runner: ${err.message}`,
+                impact: `Quest Runner ของผู้ใช้ ${username} หยุดการทำงานกะทันหัน`,
+                action: 'ตรวจสอบข้อผิดพลาดและ stack trace ในระบบ Quest',
+                context: {
+                    'บัญชี': `${username} (${accountId})`,
+                    'ผู้สั่งการ': ownerId,
+                    'โหมด': mode,
+                    'รหัสข้อผิดพลาด': String(err?.code || err?.name || 'runner_error')
+                },
+                dedupeKey: `quest-runner-error:${accountId}:${err.message}`,
+                dedupeMs: 5 * 60 * 1000
+            }).catch(() => {});
         }
         await flush();
     }
@@ -1032,31 +1062,33 @@ async function startUserQuestSession({
         const results = [];
         let startIndex = Date.now();
 
-        // Create QuestLog document in MongoDB
-        const questLog = new QuestLog({
-            invokerId,
-            invokerTag,
-            guildId,
-            channelId,
-            totalTokens: tokens.length,
-            overallStatus: 'in_progress',
-            accounts: tokens.map((t) => {
-                const encrypted = encryptToken(t, invokerId);
-                return {
-                    maskedToken: maskToken(t),
-                    encryptedToken: encrypted.packed,
-                    status: 'pending'
-                };
-            })
-        });
-        await questLog.save().catch(() => {});
+        // Create QuestLog in SQLite
+        let questLog = null;
+        try {
+            questLog = getQuestLogRepository().create({
+                invokerId,
+                invokerTag,
+                guildId,
+                channelId,
+                totalTokens: tokens.length,
+                overallStatus: 'in_progress',
+                accounts: tokens.map((t) => {
+                    const encrypted = encryptToken(t, invokerId);
+                    return {
+                        maskedToken: maskToken(t),
+                        encryptedToken: encrypted.packed,
+                        status: 'pending'
+                    };
+                })
+            });
+        } catch (_) {}
 
         // Emit startup webhook event
         sendWebhookEvent({
             severity: 'INFO',
-            category: 'COMMAND',
+            category: 'QUEST',
             code: 'quest.session.started',
-            title: '🚀 มีการเริ่มระบบทำ Quest อัตโนมัติ',
+            title: `${config.emojis?.boost || '🚀'} มีการเริ่มระบบทำ Quest อัตโนมัติ`,
             description: `ผู้ใช้ <@${invokerId}> ได้ส่งคำขอทำ Discord Quest (โหมด: ${mode})`,
             context: {
                 'ผู้สั่งการ': `${invokerTag} (${invokerId})`,
@@ -1074,7 +1106,7 @@ async function startUserQuestSession({
                 try {
                     me = await fetchMe(token);
                 } catch (authErr) {
-                    results.push({ started: false, line: `❌ Token ลำดับที่ ${i + 1} ไม่ถูกต้องหรือหมดอายุ` });
+                    results.push({ started: false, line: `${config.emojis?.red_card || config.emojis?.error || '❌'} Token ลำดับที่ ${i + 1} ไม่ถูกต้องหรือหมดอายุ` });
                     continue;
                 }
 
@@ -1083,7 +1115,7 @@ async function startUserQuestSession({
 
                 await withAccountAdmissionLock(accountId, async () => {
                     if (findAnyJobByAccount(accountId)) {
-                        results.push({ started: false, line: `⚠️ **${username}** มี Runner ทำงานอยู่แล้วในระบบ` });
+                        results.push({ started: false, line: `${config.emojis?.warning || '⚠️'} **${username}** มี Runner ทำงานอยู่แล้วในระบบ` });
                         return;
                     }
 
@@ -1121,11 +1153,11 @@ async function startUserQuestSession({
                         username,
                         line: mode === 'scheduled'
                             ? `🤖 เริ่มระบบอัตโนมัติรายวัน: **${username}**\n   ตรวจทันที และตรวจประจำเวลา **00:00 / 08:00 / 16:00 น.**`
-                            : `✅ เริ่ม Quest auto : **${username}**`
+                            : `${config.emojis?.check_alt || config.emojis?.success || '✅'} เริ่ม Quest auto : **${username}**`
                     });
                 });
             } catch (err) {
-                results.push({ started: false, line: `❌ บัญชีลำดับที่ ${i + 1} ไม่สำเร็จ: ${err.message}` });
+                results.push({ started: false, line: `${config.emojis?.red_card || config.emojis?.error || '❌'} บัญชีลำดับที่ ${i + 1} ไม่สำเร็จ: ${err.message}` });
             }
         }
 
@@ -1142,6 +1174,7 @@ module.exports = {
     findAnyJobByAccount,
     stopJob,
     stopScheduledJob,
+    stopScheduledJobAsAdmin,
     stopAllForUser,
     stopRunner,
     shutdownRunners,

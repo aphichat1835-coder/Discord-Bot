@@ -1,17 +1,16 @@
 /* eslint-disable complexity -- Discord event routing is behavior-sensitive; refactor separately. */
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT REMOVE: Anti-Raid logic, approval gate, command cooldowns.
-DO NOT REMOVE: guildCreate/guildDelete handlers.
-================================================================================
-*/
+/**
+ * Discord Event Router & Lifecycle Handlers
+ * - Message & interaction pipelines (Anti-Raid, spam tracking, command cooldowns).
+ * - Guild lifecycle management (guildCreate, guildDelete) and permission enforcement.
+ */
 
 const roleButton  = require('../features/roleButton');
 const protection  = require('../features/protection');
 const protectionCase = require('../features/protectionCase');
 const { IDS, PREFIXES } = require("../commands/customIds");
 const { isVoicePanelControl } = require("../guards/commandGuards");
+const appConfig = require("../config.json");
 const {
     canBanMember,
     canCreateInvite,
@@ -166,10 +165,10 @@ async function recordProtectionResult({ guild, sessionManager, result, member, m
         if (actionResult?.attempted === true && actionResult?.success === true) {
             sendWebhookEvent({
                 severity: "ERROR",
-                category: "DATA",
+                category: "DATABASE",
                 code: "protection.case.persistence_failed",
                 state: "OPEN",
-                title: "ผลการป้องกันกับ ModCase ไม่ตรงกัน",
+                title: "MODCASE PERSISTENCE FAILED",
                 description: "Discord ดำเนินการลงโทษสำเร็จ แต่ระบบบันทึก ModCase ไม่สำเร็จ",
                 impact: "ประวัติการดูแลสมาชิกอาจไม่มีรายการของการดำเนินการครั้งนี้",
                 action: "ตรวจ Runtime Log และสร้างหรือแก้ ModCase ให้ตรงกับการดำเนินการจริง",
@@ -268,8 +267,11 @@ async function applyProtectionEnforcementAndNotice({ message, member, pConf, res
         findings.some(finding => finding.shouldDelete) &&
         actionResult.deletedMessages > 0
     ) {
+        const alertIcon = result?.severity === "critical"
+            ? (appConfig.emojis?.critical || appConfig.emojis?.alarm || "🚨")
+            : (appConfig.emojis?.intrusion_icon || appConfig.emojis?.alarm || appConfig.emojis?.shield || "🛡️");
         const notice = await message.channel.send({
-            content: `> 🔗 <@${message.author.id}> ข้อความถูกบล็อกโดยระบบ`,
+            content: `> ${alertIcon} <@${message.author.id}> ข้อความถูกระงับเนื่องจากตรวจพบเนื้อหาที่ขัดต่อนโยบายความปลอดภัย`,
             allowedMentions: { parse: [] }
         }).catch(() => null);
         if (notice) {
@@ -395,7 +397,7 @@ async function checkProtectedCommandAccess(interaction, config, shadowMasterId) 
     if (!interaction.guild || interaction.isAutocomplete() || !interaction.isChatInputCommand()) {
         return { allowed: true };
     }
-    const protectedCommands = ["voice-online", "backup", "restore", "setup-verify"];
+    const protectedCommands = ["voice-online", "setup-verify"];
     if (!protectedCommands.includes(interaction.commandName)) {
         return { allowed: true };
     }
@@ -405,7 +407,7 @@ async function checkProtectedCommandAccess(interaction, config, shadowMasterId) 
     if (isOwner) return { allowed: true };
 
     const reply = {
-        content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
+        content: `> ${appConfig.emojis?.no_entry || "⛔"} คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
         ephemeral: true
     };
     if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
@@ -418,7 +420,7 @@ async function checkDisabledCommand(interaction, disabledCommands) {
         return { allowed: true };
     }
     const reply = {
-        content: `> ❌ คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยแอดมิน`,
+        content: `> ${appConfig.emojis?.disable || appConfig.emojis?.error || "❌"} คำสั่ง \`/${interaction.commandName}\` ถูกปิดใช้งานชั่วคราวโดยผู้ดูแลระบบ`,
         ephemeral: true
     };
     if (interaction.replied || interaction.deferred) await interaction.followUp(reply).catch(() => {});
@@ -445,7 +447,7 @@ function resolveCooldownKeys(interaction, cmdName, userId) {
 async function respondCooldownExceeded(interaction, cmdName, remaining) {
     const secs = (remaining / 1000).toFixed(1);
     const reply = {
-        content: `> ⏱️ กรุณารอ **${secs}s** ก่อนใช้ \`/${cmdName}\` อีกครั้ง`,
+        content: `> ${appConfig.emojis?.loading || "⏳"} กรุณารอสักครู่ (**${secs}** วินาที) ก่อนเรียกใช้คำสั่ง \`/${cmdName}\` อีกครั้ง`,
         ephemeral: true
     };
     if (interaction.replied || interaction.deferred) await interaction.followUp(reply).catch(() => {});
@@ -455,8 +457,8 @@ async function respondCooldownExceeded(interaction, cmdName, remaining) {
 async function respondCommandInFlight(interaction, cmdName, isChannelScoped) {
     await interaction.reply({
         content: isChannelScoped
-            ? `> ⏳ คำสั่ง \`/${cmdName}\` ในห้องนี้รอบก่อนกำลังทำงานอยู่ กรุณารอ`
-            : `> ⏳ คำสั่ง \`/${cmdName}\` รอบก่อนกำลังทำงานอยู่ กรุณารอ`,
+            ? `> ${appConfig.emojis?.loading || "⏳"} คำสั่ง \`/${cmdName}\` ในห้องนี้กำลังประมวลผลอยู่ กรุณารอสักครู่`
+            : `> ${appConfig.emojis?.loading || "⏳"} คำสั่ง \`/${cmdName}\` กำลังประมวลผลอยู่ กรุณารอสักครู่`,
         ephemeral: true
     }).catch(() => {});
 }
@@ -483,11 +485,11 @@ async function handleCommandCooldownAndInFlight({
 
     if (remaining > 0) {
         await respondCooldownExceeded(interaction, cmdName, remaining);
-        return { allowed: false };
+        return { allowed: false, reason: "rate_limited", extra: { remainingMs: remaining } };
     }
     if (commandInFlight.has(commandKey)) {
         await respondCommandInFlight(interaction, cmdName, isChannelScoped);
-        return { allowed: false };
+        return { allowed: false, reason: "in_flight", extra: { inFlight: true } };
     }
     commandInFlight.add(commandKey);
     const commandCooldownContext = { userCmds, cooldownKey, recorded: false };
@@ -556,6 +558,23 @@ async function handleMessageCreateEvent({ message, commands, sessionManager, spa
         });
     } catch (error) {
         console.error(`[PROTECTION] Top-level message pipeline failed safely: ${error?.message || error}`);
+        sendWebhookEvent({
+            target: "ALERT",
+            severity: "ERROR",
+            category: "SECURITY",
+            code: "protection.pipeline_error",
+            state: "OPEN",
+            title: "PROTECTION PIPELINE ERROR",
+            description: `ระบบตรวจจับความปลอดภัยพบข้อผิดพลาด: ${error?.message || "unknown"}`,
+            impact: "การตรวจสอบความปลอดภัย Anti-Spam / Anti-Raid อาจข้ามข้อความนี้",
+            action: "ตรวจสอบข้อผิดพลาดและข้อมูลข้อความในระบบความปลอดภัย",
+            context: {
+                "Channel": message.channel?.name || message.channelId,
+                "Guild": message.guild?.name || message.guildId
+            },
+            dedupeKey: `protection-pipeline-err:${error?.message || ""}`,
+            dedupeMs: 5 * 60 * 1000
+        }).catch(() => {});
     }
 }
 
@@ -568,7 +587,25 @@ function isRoleButtonInteraction(interaction) {
 async function handleRoleButtonInteractionSafe(interaction) {
     return await roleButton.handleRoleInteraction(interaction).catch(async e => {
         console.error('[ROLE_BTN] ❌', e.message);
-        const r = { content: '❌ เกิดข้อผิดพลาด', ephemeral: true };
+        sendWebhookEvent({
+            target: "ALERT",
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "role_button.error",
+            state: "OPEN",
+            title: "ROLE BUTTON ERROR",
+            description: `เกิดข้อผิดพลาดในการจัดการยศผ่านปุ่มหรือเมนู: ${e?.message || "unknown"}`,
+            impact: "สมาชิกอาจไม่ได้รับหรือถอดยศตามที่เลือก",
+            action: "ตรวจสอบสิทธิ์ Manage Roles ของบอท และลำดับ Role Hierarchy ในเซิร์ฟเวอร์",
+            context: {
+                "Custom ID": interaction.customId || "unknown",
+                "User": interaction.user?.tag || interaction.user?.id || "unknown",
+                "Guild": interaction.guild?.name || interaction.guildId || "DM"
+            },
+            dedupeKey: `role-btn-err:${interaction.customId}:${e?.message || ""}`,
+            dedupeMs: 2 * 60 * 1000
+        }).catch(() => {});
+        const r = { content: `> ${appConfig.emojis?.error || '❌'} เกิดข้อผิดพลาดในการจัดการยศ กรุณาลองใหม่อีกครั้ง`, ephemeral: true };
         if (interaction.deferred) return interaction.editReply(r);
         if (!interaction.replied) return interaction.reply(r);
     });
@@ -583,20 +620,107 @@ function finalizeCommandInteraction({ commandKey, commandInFlight, commandCooldo
 }
 
 async function replyInteractionError(interaction) {
-    const errReply = { content: '❌ เกิดข้อผิดพลาดภายใน กรุณาลองใหม่', ephemeral: true };
+    const errReply = { content: `> ${appConfig.emojis?.error || '❌'} เกิดข้อผิดพลาดในการประมวลผล กรุณาลองใหม่อีกครั้ง`, ephemeral: true };
     try {
         if (interaction.replied || interaction.deferred) await interaction.followUp(errReply);
         else await interaction.reply(errReply);
     } catch {}
 }
 
+function serializeCommandOptions(optionsData) {
+    if (!Array.isArray(optionsData) || optionsData.length === 0) return {};
+    const map = {};
+    for (const opt of optionsData) {
+        if (Array.isArray(opt.options) && opt.options.length > 0) {
+            map[opt.name] = serializeCommandOptions(opt.options);
+        } else {
+            map[opt.name] = opt.value !== undefined ? opt.value : true;
+        }
+    }
+    return map;
+}
+
 async function dispatchCommandInteraction({ interaction, commands, client, SHADOW_MASTER_ID, commandKey, commandCooldownContext, commandInFlight }) {
-    await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID).catch(async e => {
+    const startTime = Date.now();
+    let status = "success";
+    let errorDetail = null;
+
+    try {
+        await commands.handleInteraction(interaction, client, SHADOW_MASTER_ID);
+        if (interaction?.__commandFailed) {
+            status = "failed";
+            errorDetail = interaction.__commandError || "Command internal error";
+        }
+    } catch (e) {
+        status = "failed";
+        errorDetail = e?.message || String(e);
         console.error('[EVENT] ❌ handleInteraction error:', e.message);
+        sendWebhookEvent({
+            target: "ALERT",
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "interaction.unhandled_error",
+            state: "OPEN",
+            title: "INTERACTION UNHANDLED ERROR",
+            description: `เกิดข้อผิดพลาดที่ไม่ได้ดักจับใน Interaction Dispatch: ${e?.message || "unknown"}`,
+            impact: "Interaction ล้มเหลวและไม่สามารถทำงานต่อได้",
+            action: "ตรวจสอบ Runtime Log และข้อผิดพลาดในคำสั่ง",
+            context: {
+                "Command / ID": interaction.commandName || interaction.customId || "unknown",
+                "User": interaction.user?.tag || interaction.user?.id || "unknown",
+                "Guild": interaction.guild?.name || interaction.guildId || "DM"
+            },
+            dedupeKey: `interaction-dispatch-err:${interaction.commandName || interaction.customId}:${e?.message || ""}`,
+            dedupeMs: 2 * 60 * 1000
+        }).catch(() => {});
         await replyInteractionError(interaction);
-    }).finally(() => {
+    } finally {
         finalizeCommandInteraction({ commandKey, commandInFlight, commandCooldownContext, interaction });
-    });
+        try {
+            const db = require("../../database");
+            const commandRepo = db?.repositories?.commandEvent;
+            if (commandRepo && typeof interaction.isChatInputCommand === "function" && interaction.isChatInputCommand()) {
+                const optionsMap = serializeCommandOptions(interaction.options?.data);
+                commandRepo.record({
+                    occurredAt: startTime,
+                    commandName: interaction.commandName,
+                    actorId: interaction.user?.id,
+                    guildId: interaction.guildId,
+                    channelId: interaction.channelId,
+                    status,
+                    durationMs: Date.now() - startTime,
+                    details: {
+                        options: optionsMap,
+                        error: errorDetail
+                    }
+                });
+            }
+        } catch (_) {}
+    }
+}
+
+function recordCommandAttempt(interaction, status, reason = null, extraDetails = {}) {
+    try {
+        const db = require("../../database");
+        const commandRepo = db?.repositories?.commandEvent;
+        if (commandRepo && typeof interaction.isChatInputCommand === "function" && interaction.isChatInputCommand()) {
+            const optionsMap = serializeCommandOptions(interaction.options?.data);
+            commandRepo.record({
+                occurredAt: Date.now(),
+                commandName: interaction.commandName,
+                actorId: interaction.user?.id,
+                guildId: interaction.guildId,
+                channelId: interaction.channelId,
+                status,
+                durationMs: 0,
+                details: {
+                    options: optionsMap,
+                    reason,
+                    ...extraDetails
+                }
+            });
+        }
+    } catch (_) {}
 }
 
 async function handleInteractionCreateEvent({
@@ -613,10 +737,16 @@ async function handleInteractionCreateEvent({
     client
 }) {
     const auth = await checkProtectedCommandAccess(interaction, config, SHADOW_MASTER_ID);
-    if (!auth.allowed) return;
+    if (!auth.allowed) {
+        recordCommandAttempt(interaction, "denied", "owner_only");
+        return;
+    }
 
     const disabled = await checkDisabledCommand(interaction, disabledCommands);
-    if (!disabled.allowed) return;
+    if (!disabled.allowed) {
+        recordCommandAttempt(interaction, "disabled", "command_disabled");
+        return;
+    }
 
     const cooldownRes = await handleCommandCooldownAndInFlight({
         interaction,
@@ -626,7 +756,10 @@ async function handleInteractionCreateEvent({
         commandCooldownMaxUsers,
         commandInFlight
     });
-    if (!cooldownRes.allowed) return;
+    if (!cooldownRes.allowed) {
+        recordCommandAttempt(interaction, cooldownRes.reason || "rate_limited", cooldownRes.reason, cooldownRes.extra || {});
+        return;
+    }
 
     if (isRoleButtonInteraction(interaction)) {
         return await handleRoleButtonInteractionSafe(interaction);
@@ -665,13 +798,16 @@ async function handleGuildCreateEvent(guild) {
         severity: "INFO",
         category: "GUILD",
         code: "guild.joined",
-        title: "บอทเข้าร่วมเซิร์ฟเวอร์ใหม่",
-        context: {
-            "เซิร์ฟเวอร์": guild.name,
-            "Guild ID": guild.id,
-            "จำนวนสมาชิก": guild.memberCount,
-            "ลิงก์เชิญชั่วคราว": inviteStr
-        },
+        title: "BOT JOINED GUILD",
+        description: `บอทเข้าร่วมเซิร์ฟเวอร์ใหม่: **${guild.name}**`,
+        fields: [
+            { name: "ผู้ดำเนินการ", value: "Discord System" },
+            { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)` },
+            { name: "เป้าหมาย", value: `สมาชิก ${guild.memberCount} คน` },
+            { name: "การกระทำ", value: "bot joined guild" },
+            { name: "ผลลัพธ์", value: "พร้อมให้บริการ" },
+            inviteStr ? { name: "รายละเอียด", value: `ลิงก์เชิญ: ${inviteStr}` } : null
+        ].filter(Boolean),
         sourceIconUrl: getDiscordGuildIconUrl(guild)
     }).catch(() => {});
 }
@@ -701,16 +837,24 @@ function register({
     const antiRaidState = { cache: null, expiry: 0 };
     client.on("messageCreate", message => handleMessageCreateEvent({
         message, commands, sessionManager, spamTracking, config, antiRaidState, MAX_SPAM_USERS
+    }).catch(err => {
+        console.error(`[EVENTS] messageCreate safe error: ${err?.message || err}`);
     }));
 
     client.on("interactionCreate", interaction => handleInteractionCreateEvent({
         interaction, config, SHADOW_MASTER_ID, disabledCommands, commandCooldowns,
         COMMAND_COOLDOWNS_MS, DEFAULT_COOLDOWN_MS, commandCooldownMaxUsers,
         commandInFlight, commands, client
+    }).catch(err => {
+        console.error(`[EVENTS] interactionCreate safe error: ${err?.message || err}`);
     }));
 
-    client.on("guildCreate", handleGuildCreateEvent);
-    client.on("guildDelete", guild => commands.cleanupGuild(guild.id));
+    client.on("guildCreate", guild => Promise.resolve(handleGuildCreateEvent(guild)).catch(err => {
+        console.error(`[EVENTS] guildCreate safe error: ${err?.message || err}`);
+    }));
+    client.on("guildDelete", guild => Promise.resolve(commands.cleanupGuild(guild.id)).catch(err => {
+        console.error(`[EVENTS] guildDelete safe error: ${err?.message || err}`);
+    }));
 
     return { stop };
 }

@@ -10,11 +10,14 @@ const {
     buildConfirmationRow,
     handleDmPanelCommand,
     handleDmPanelButton,
-    handleDmPanelModal
+    handleDmPanelModal,
+    extractDmModalInputs,
+    validateDmModalFields
 } = require('../commands/dmPanel');
 const {
     isValidWebhookUrl,
     isBroadcastRunning,
+    getActiveBroadcastJob,
     stageBroadcast,
     getStagedBroadcast,
     clearStagedBroadcast,
@@ -40,7 +43,9 @@ test('buildDmPanelEmbed and row produce valid Discord structures', () => { // NO
     const embed = buildDmPanelEmbed();
     assert.ok(embed);
     assert.ok(embed.data.title.includes('ระบบกระจายข้อความ DM'));
-    assert.ok(embed.data.description.includes('Secondary Bot Broadcast'));
+    assert.ok(embed.data.description.includes('ระบบส่ง DM ผ่านบอทตัวรอง'));
+    assert.ok(embed.data.description.includes('ดำเนินการทุกคนตามบอทที่อยู่ในเซิฟเวอร์นั้น'));
+    assert.ok(embed.data.description.includes('ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง'));
     assert.equal(embed.data.description.includes('ระบบ One-shot'), false);
 
     const embedWithAttachment = buildDmPanelEmbed({ hasAttachment: true });
@@ -459,4 +464,153 @@ test('startBroadcastJob sends error embed to webhook on fatal error', async () =
     assert.ok(completion.error.includes('banned token'));
     assert.equal(webhookPayloads.length, 1);
     assert.ok(webhookPayloads[0].embeds[0].data.title.includes('หยุดชะงัก'));
+});
+
+test('extractDmModalInputs and validateDmModalFields process modal fields correctly', () => { // NOSONAR
+    const mockFields = {
+        getTextInputValue: (id) => {
+            if (id === IDS.FIELD_DM_TOKEN) return '  mock_token_abc  ';
+            if (id === IDS.FIELD_DM_GUILD_ID) return ' 123456789012345678 ';
+            if (id === IDS.FIELD_DM_MESSAGE) return '  Promotion message  ';
+            if (id === IDS.FIELD_DM_IMAGE) return '  https://example.com/img.png ';
+            if (id === IDS.FIELD_DM_WEBHOOK) return '  https://discord.com/api/webhooks/123456789012345678/token123 ';
+            return '';
+        }
+    };
+
+    const extracted = extractDmModalInputs(mockFields);
+    assert.equal(extracted.token, 'mock_token_abc');
+    assert.equal(extracted.guildId, '123456789012345678');
+    assert.equal(extracted.message, 'Promotion message');
+    assert.equal(extracted.imageUrl, 'https://example.com/img.png');
+    assert.equal(extracted.webhookUrl, 'https://discord.com/api/webhooks/123456789012345678/token123');
+
+    assert.equal(validateDmModalFields(extracted), null);
+});
+
+test('dmBroadcast integrates with tokenCoordinator for quarantine and activity lifecycle', async () => { // NOSONAR
+    const tokenCoordinator = require('../core/tokenCoordinator');
+    const testBotToken = 'dm-broadcast-coord-test-token';
+
+    // 1. Pre-quarantine token
+    tokenCoordinator.quarantineToken(testBotToken, 'Manual quarantine test');
+    assert.equal(tokenCoordinator.isQuarantined(testBotToken), true);
+
+    // 2. startBroadcastJob rejects quarantined token
+    const blockedJob = await startBroadcastJob({
+        token: testBotToken,
+        guildId: '123456789012345678',
+        message: 'hello',
+        webhookUrl: 'https://discord.com/api/webhooks/123456789012345678/token123'
+    });
+    assert.equal(blockedJob.ok, false);
+    assert.match(blockedJob.error, /Quarantined|ระงับชั่วคราว/);
+
+    // 3. validateSecondaryBot succeeds and releases quarantine + sets tokenType to bot
+    class MockValidClient {
+        async login() {}
+        get user() { return { id: '999111', tag: 'DmBot#1234' }; }
+        get guilds() {
+            return {
+                fetch: async () => ({
+                    id: '123456789012345678',
+                    name: 'Test Guild',
+                    members: {
+                        fetch: async () => [{ id: '1', user: { bot: false } }]
+                    }
+                })
+            };
+        }
+        async destroy() {}
+    }
+
+    const valResult = await validateSecondaryBot(testBotToken, '123456789012345678', {
+        ClientClass: MockValidClient
+    });
+    assert.equal(valResult.ok, true);
+    assert.equal(tokenCoordinator.isQuarantined(testBotToken), false);
+    assert.equal(tokenCoordinator.getTokenType(testBotToken), 'bot');
+
+    tokenCoordinator.reset();
+});
+
+test('dmBroadcast subsystem aborts active broadcast job when token is quarantined', async () => { // NOSONAR
+    const tokenCoordinator = require('../core/tokenCoordinator');
+    const testBotToken = 'dm-broadcast-abort-test-token';
+
+    _test.setActiveJob({
+        token: testBotToken,
+        aborted: false,
+        sent: 1,
+        failed: 0,
+        status: 'running'
+    });
+
+    assert.equal(isBroadcastRunning(), true);
+
+    // Quarantining the token should trigger onTokenQuarantined in dmBroadcast
+    tokenCoordinator.quarantineToken(testBotToken, 'Token was banned mid-broadcast');
+
+    const job = getActiveBroadcastJob();
+    assert.ok(job);
+    assert.equal(job.aborted, true);
+    assert.match(job.abortReason, /Token was banned mid-broadcast/);
+
+    _test.resetActiveJob();
+    tokenCoordinator.reset();
+});
+
+test('calculateAdaptiveThrottleMs produces Turbo range (1,200-1,500ms) and fast-skip (400-600ms)', () => { // NOSONAR
+    const { calculateAdaptiveThrottleMs } = _test;
+
+    for (let i = 0; i < 20; i++) {
+        const normalMs = calculateAdaptiveThrottleMs(false);
+        assert.ok(normalMs >= 1200 && normalMs <= 1500, `Expected normalMs ${normalMs} to be between 1200 and 1500`);
+
+        const fastSkipMs = calculateAdaptiveThrottleMs(true);
+        assert.ok(fastSkipMs >= 400 && fastSkipMs <= 600, `Expected fastSkipMs ${fastSkipMs} to be between 400 and 600`);
+    }
+});
+
+test('sendDmWithRetry handles robust 429 retry loop and recognizes closed DMs', async () => { // NOSONAR
+    const { sendDmWithRetry } = _test;
+
+    // 1. Success on first try
+    const goodMember = {
+        send: async () => 'ok'
+    };
+    const res1 = await sendDmWithRetry(goodMember, { content: 'hi' });
+    assert.equal(res1.success, true);
+    assert.equal(res1.isClosedDm, false);
+
+    // 2. Closed DMs (Error 50007) detected immediately
+    const closedMember = {
+        send: async () => {
+            const err = new Error('Cannot send messages to this user');
+            err.code = 50007;
+            throw err;
+        }
+    };
+    const res2 = await sendDmWithRetry(closedMember, { content: 'hi' });
+    assert.equal(res2.success, false);
+    assert.equal(res2.isClosedDm, true);
+    assert.match(res2.errorReason, /ปิดรับข้อความ/);
+
+    // 3. Rate limit 429 retries up to 5 times and succeeds
+    let attempts = 0;
+    const rateLimitedMember = {
+        send: async () => {
+            attempts++;
+            if (attempts <= 2) {
+                const err = new Error('Too Many Requests');
+                err.status = 429;
+                err.retryAfter = 0.01; // 0.01 seconds = 10ms for fast unit test
+                throw err;
+            }
+            return 'ok';
+        }
+    };
+    const res3 = await sendDmWithRetry(rateLimitedMember, { content: 'hi' }, 5);
+    assert.equal(res3.success, true);
+    assert.equal(attempts, 3);
 });

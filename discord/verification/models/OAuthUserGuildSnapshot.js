@@ -1,5 +1,3 @@
 "use strict";
 
-const { registerChunkSnapshotModel } = require("../utils/chunkSnapshotSchema");
-
-module.exports = registerChunkSnapshotModel("OAuthUserGuildSnapshot");
+module.exports = require("../../../database/mongo/models/identity/OAuthUserGuildSnapshot");

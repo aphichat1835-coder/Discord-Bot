@@ -34,6 +34,10 @@ function validateOption(option, commandName, index) {
             }
         }
     }
+    if (option.options !== undefined) {
+        if (!Array.isArray(option.options)) throw new Error(`${label} options must be an array`);
+        option.options.forEach((nestedOption, nestedIndex) => validateOption(nestedOption, `${commandName} ${option.name}`, nestedIndex));
+    }
 }
 
 function validateSlashCommandsData(commands) {
@@ -75,10 +79,31 @@ const slashCommandsData = [
     },
 
     {
-        name: "clear",
-        description: "ลบข้อความในช่องปัจจุบัน รวมข้อความเกิน 14 วัน (สูงสุด 1,000)",
+        name: "user",
+        description: "ดูรูปโปรไฟล์ของสมาชิก",
         options: [
-            { type: 4, name: "amount", description: "จำนวนข้อความ (1-1000)", required: true, min_value: 1, max_value: 1000 }
+            {
+                type: 1,
+                name: "avatar",
+                description: "แสดงรูปโปรไฟล์ของสมาชิก",
+                required: false,
+                options: [
+                    {
+                        type: 6,
+                        name: "member",
+                        description: "สมาชิกที่ต้องการดูรูปโปรไฟล์",
+                        required: false
+                    }
+                ]
+            }
+        ]
+    },
+
+    {
+        name: "clear",
+        description: "ลบข้อความในช่องนี้ สูงสุด 1,000 ข้อความ",
+        options: [
+            { type: 4, name: "amount", description: "จำนวนข้อความที่ต้องการลบ (1-1,000)", required: true, min_value: 1, max_value: 1000 }
         ]
     },
 
@@ -91,57 +116,51 @@ const slashCommandsData = [
     },
 
     {
-        name: "announce",
-        description: "ส่งข้อความประกาศแบบ Embed ปรับแต่งได้อิสระ",
+        name: "embed",
+        description: "ระบบสร้างข้อความประกาศแบบ Embed",
         options: [
-            { type: 3, name: "message", description: String.raw`เนื้อหาประกาศใน Embed (รองรับ Markdown และ \n)`, required: true, min_length: 1, max_length: 4096 },
-            { type: 3, name: "title",   description: "หัวข้อประกาศ", required: false, max_length: 256 },
-            { type: 7, name: "channel", description: "ห้องที่จะส่งประกาศ (ถ้าไม่ระบุจะส่งห้องนี้)", required: false },
-            { type: 3, name: "content", description: "ข้อความดิบนอก Embed (รองรับ @everyone / @here / user / role)", required: false, max_length: 2000 },
-            { type: 3, name: "color", description: "สีขอบ Embed แบบ HEX เช่น #5865F2 หรือ FF0000", required: false },
-            { type: 3, name: "image", description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed", required: false, max_length: 2048 },
-            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed", required: false, max_length: 2048 },
-            { type: 3, name: "footer", description: "ข้อความท้าย Embed", required: false, max_length: 2048 },
-            { type: 3, name: "footer_icon", description: "ลิงก์ไอคอนท้าย Embed", required: false, max_length: 2048 },
-            { type: 3, name: "author_name", description: "ชื่อผู้เขียนด้านบน Embed", required: false, max_length: 256 },
-            { type: 3, name: "author_icon", description: "ลิงก์ไอคอนผู้เขียนด้านบน Embed", required: false, max_length: 2048 },
-            { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false, max_length: 2048 },
-            { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
-            { type: 3, name: "button_text", description: "ข้อความบนปุ่มลิงก์แนบประกาศ", required: false, max_length: 80 },
-            { type: 3, name: "button_url", description: "ลิงก์ URL ปลายทางของปุ่ม (ต้องขึ้นต้นด้วย http:// หรือ https://)", required: false, max_length: 2048 }
+            {
+                type: 1,
+                name: "create",
+                description: "สร้างและส่งข้อความ Embed สำหรับประกาศ",
+                required: false,
+                options: [
+                    { type: 3, name: "description", description: "เนื้อหาหลักของ Embed รองรับ Markdown และขึ้นบรรทัดใหม่", required: true, min_length: 1, max_length: 4096 },
+                    { type: 3, name: "title", description: "หัวข้อของ Embed", required: false, max_length: 256 },
+                    { type: 7, name: "channel", description: "ช่องที่จะส่ง Embed นี้", required: false },
+                    { type: 3, name: "content", description: "ข้อความปกตินอก Embed รองรับ @everyone, @here, ผู้ใช้ และยศ", required: false, max_length: 2000 },
+                    { type: 3, name: "color", description: "สีขอบด้านซ้ายของ Embed แบบ HEX เช่น #5865F2 หรือ FF0000", required: false },
+                    { type: 3, name: "image", description: "URL ของรูปภาพหลักขนาดใหญ่ใน Embed", required: false, max_length: 2048 },
+                    { type: 3, name: "thumbnail", description: "URL ของรูปภาพขนาดเล็กบริเวณมุมขวาบน", required: false, max_length: 2048 },
+                    { type: 3, name: "footer", description: "ข้อความที่แสดงด้านล่างของ Embed", required: false, max_length: 2048 },
+                    { type: 3, name: "url", description: "URL ที่จะเปิดเมื่อกดหัวข้อของ Embed", required: false, max_length: 2048 },
+                    { type: 5, name: "timestamp", description: "เพิ่มเวลาปัจจุบันลงใน Embed", required: false },
+                    { type: 3, name: "button_label", description: "ข้อความที่แสดงบนปุ่มลิงก์", required: false, max_length: 80 },
+                    { type: 3, name: "button_url", description: "URL ที่ปุ่มจะเปิดเมื่อกด", required: false, max_length: 2048 }
+                ]
+            }
         ]
     },
 
     {
         name: "copy-emojis",
-        description: "ดึงอิโมจิเข้าเซิร์ฟเวอร์ (สูงสุด 50 ตัว)",
+        description: "คัดลอกอิโมจิเข้าเซิร์ฟเวอร์ สูงสุด 50 ตัว",
         options: [
-            { type: 3, name: "emojis", description: "วางอิโมจิที่ต้องการดึง", required: true }
+            { type: 3, name: "emojis", description: "อิโมจิที่ต้องการคัดลอก", required: true }
         ]
     },
 
-    { name: "backup", description: "บันทึกโครงสร้างเซิร์ฟเวอร์ (เฉพาะเจ้าของ)" },
-
-    {
-        name: "restore",
-        description: "กู้คืนโครงสร้างเซิร์ฟเวอร์",
-        options: [
-            { type: 3, name: "server_id", description: "ไอดีเซิร์ฟเวอร์ต้นทาง", required: true },
-            { type: 5, name: "dry_run", description: "ดูแผนกู้คืนก่อน โดยยังไม่สร้างอะไร", required: false }
-        ]
-    },
-
-    { name: "voiceadmin", description: "เปิดแผงจัดการสมาชิกในห้องเสียงนี้ (เฉพาะผู้ดูแล)" },
+    { name: "voice-admin", description: "เปิดแผงจัดการห้องเสียง (เฉพาะผู้ดูแล)" },
 
     {
         name: "ban",
-        description: "แบนสมาชิกออกจากเซิร์ฟเวอร์ พร้อมเก็บบันทึกประวัติ",
+        description: "แบนสมาชิกออกจากเซิร์ฟเวอร์",
         options: [
-            { type: 6, name: "target", description: "สมาชิกเป้าหมายที่ต้องการแบน", required: true },
+            { type: 6, name: "target", description: "สมาชิกที่ต้องการแบน", required: true },
             {
                 type: 4,
                 name: "delete_messages",
-                description: "เลือกลบประวัติข้อความย้อนหลังของสมาชิก",
+                description: "ข้อความย้อนหลังที่จะลบ",
                 required: false,
                 choices: [
                     { name: "ไม่ลบข้อความ", value: 0 },
@@ -158,69 +177,69 @@ const slashCommandsData = [
 
     {
         name: "kick",
-        description: "เตะสมาชิกออกจากเซิร์ฟเวอร์ พร้อมเก็บบันทึกประวัติ",
+        description: "เตะสมาชิกออกจากเซิร์ฟเวอร์",
         options: [
-            { type: 6, name: "target", description: "สมาชิกเป้าหมายที่ต้องการเตะ", required: true },
+            { type: 6, name: "target", description: "สมาชิกที่ต้องการเตะ", required: true },
             { type: 3, name: "reason", description: "เหตุผลในการเตะ", required: false, max_length: 500 }
         ]
     },
 
     {
         name: "timeout",
-        description: "ระงับการใช้งานสมาชิกชั่วคราว หรือระบุ 0 เพื่อปลด",
+        description: "ตั้ง Timeout ให้สมาชิก หรือใส่ 0 เพื่อปลด",
         options: [
-            { type: 6, name: "target", description: "สมาชิกเป้าหมายที่ต้องการระงับการใช้งาน", required: true },
-            { type: 4, name: "duration", description: "จำนวนระยะเวลา (ใส่ 0 เพื่อปลด Timeout)", required: true, min_value: 0 },
+            { type: 6, name: "target", description: "สมาชิกที่ต้องการ Timeout", required: true },
+            { type: 4, name: "duration", description: "ระยะเวลา Timeout (ใส่ 0 เพื่อปลด)", required: true, min_value: 0 },
             {
                 type: 3,
                 name: "unit",
-                description: "หน่วยของระยะเวลา (ค่าเริ่มต้น: นาที)",
+                description: "หน่วยเวลา",
                 required: false,
                 choices: [
-                    { name: "นาที (Minutes)", value: "minutes" },
-                    { name: "ชั่วโมง (Hours)", value: "hours" },
-                    { name: "วัน (Days)", value: "days" },
-                    { name: "วินาที (Seconds)", value: "seconds" }
+                    { name: "นาที", value: "minutes" },
+                    { name: "ชั่วโมง", value: "hours" },
+                    { name: "วัน", value: "days" },
+                    { name: "วินาที", value: "seconds" }
                 ]
             },
-            { type: 3, name: "reason", description: "เหตุผลในการระงับการใช้งาน", required: false, max_length: 500 }
+            { type: 3, name: "reason", description: "เหตุผลในการ Timeout", required: false, max_length: 500 }
         ]
     },
 
     {
         name: "setup-verify",
-        description: "ติดตั้งแผงยืนยันตัวตน พร้อมระบบให้ยศอัตโนมัติ",
+        description: "ติดตั้งแผงยืนยันตัวตนและมอบยศอัตโนมัติ",
         options: [
-            { type: 7, name: "channel", description: "ห้องข้อความที่จะให้บอทส่งแผงยืนยันตัวตน", required: true },
-            { type: 8, name: "role", description: "ยศที่จะมอบให้สมาชิกหลังยืนยันตัวตนสำเร็จ", required: true },
-            { type: 5, name: "verify_type", description: "เปิด = OAuth2 | ปิด = กดรับยศทันที | ไม่กรอก = OAuth2", required: false },
-            { type: 3, name: "content", description: "ข้อความนอก Embed เช่น @everyone หรือข้อความประกาศ", required: false, max_length: 2000 },
-            { type: 3, name: "title", description: "หัวข้อหลักของ Embed ถ้าไม่กรอกจะใช้ค่าเริ่มต้น", required: false, max_length: 256 },
-            { type: 3, name: "description", description: String.raw`คำอธิบายใน Embed ใช้ \n เพื่อขึ้นบรรทัดใหม่ได้`, required: false, max_length: 4096 },
-            { type: 3, name: "button_text", description: "ข้อความปุ่ม เช่น ✅ ยืนยันตัวตน ✅ หรือ <:verify:id> ยืนยันตัวตน ✅", required: false, max_length: 80 },
-            { type: 3, name: "color", description: "สีขอบ Embed แบบ HEX เช่น #5865F2 หรือ FF0000", required: false },
-            { type: 3, name: "image", description: "ลิงก์รูปภาพหลักขนาดใหญ่ใน Embed", required: false, max_length: 2048 },
-            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพเล็กมุมขวาของ Embed", required: false, max_length: 2048 },
-            { type: 3, name: "footer", description: "ข้อความท้าย Embed เช่น Verification System", required: false, max_length: 2048 },
-            { type: 5, name: "timestamp", description: "เปิดหรือปิดเวลาใต้ Embed", required: false },
-            { type: 3, name: "url", description: "ลิงก์ที่หัวข้อ Embed จะกดเข้าไปได้", required: false, max_length: 2048 }
+            { type: 7, name: "channel", description: "ห้องที่จะส่งแผงยืนยันตัวตน", required: true },
+            { type: 8, name: "role", description: "ยศที่จะมอบหลังยืนยันตัวตนสำเร็จ", required: true },
+            { type: 5, name: "verify_type", description: "เปิดเพื่อใช้ OAuth2 หรือปิดเพื่อให้กดรับยศทันที", required: false },
+            { type: 3, name: "content", description: "ข้อความที่จะส่งพร้อมแผง", required: false, max_length: 2000 },
+            { type: 3, name: "title", description: "หัวข้อของ Embed", required: false, max_length: 256 },
+            { type: 3, name: "description", description: "รายละเอียดของ Embed", required: false, max_length: 4096 },
+            { type: 3, name: "button_text", description: "ข้อความบนปุ่มยืนยัน", required: false, max_length: 80 },
+            { type: 3, name: "color", description: "สีของ Embed แบบ HEX", required: false },
+            { type: 3, name: "image", description: "ลิงก์รูปภาพหลัก", required: false, max_length: 2048 },
+            { type: 3, name: "thumbnail", description: "ลิงก์รูปภาพขนาดเล็ก", required: false, max_length: 2048 },
+            { type: 3, name: "footer", description: "ข้อความท้าย Embed", required: false, max_length: 2048 },
+            { type: 5, name: "timestamp", description: "แสดงเวลาที่ท้าย Embed", required: false },
+            { type: 3, name: "url", description: "ลิงก์เมื่อกดหัวข้อ Embed", required: false, max_length: 2048 }
         ]
     },
 
     {
-        name: "rerole",
-        description: "คำนวณและกวาดยศสมาชิก โดยเว้นยศที่เลือกไว้ หรือระบุยศเป้าหมายเพื่อถอดยศเฉพาะ",
+        name: "re-role",
+        description: "ถอดยศสมาชิกทั้งหมด หรือเลือกยศที่ต้องการถอดได้",
         options: [
             {
                 type: 8,
                 name: "target_role",
-                description: "ยศเป้าหมายที่ต้องการถอดออก (หากไม่ระบุ จะกวาดยศทั้งหมด)",
+                description: "ยศที่ต้องการถอด หากไม่เลือกจะถอดยศที่บอทจัดการได้ทั้งหมด",
                 required: false
             },
             ...[1, 2, 3, 4, 5].map(index => ({
                 type: 8,
                 name: `role_${index}`,
-                description: `ยศที่ ${index} ที่ต้องการเว้นไว้ (ไม่ให้ถูกลบ)`,
+                description: "ยศที่ต้องการเว้นไว้",
                 required: false
             }))
         ]
@@ -233,20 +252,37 @@ const slashCommandsData = [
             {
                 type: 1,
                 name: "panel",
-                description: "เปิดแผงควบคุม NeverDie Auto Quest (เฉพาะเจ้าของบอท)",
-                required: false
+                description: "เปิดแผงควบคุมระบบ Quest อัตโนมัติ (เฉพาะเจ้าของบอท)",
+                required: false,
+                options: [
+                    {
+                        type: 5,
+                        name: "auto_daily",
+                        description: "แสดงปุ่ม AUTO DAILY บนแผงควบคุม (ค่าเริ่มต้น: ปิด)",
+                        required: false
+                    }
+                ]
             }
         ]
     },
 
     {
         name: "token-check",
-        description: "เปิดแผงตรวจสอบ Discord Token (เฉพาะเจ้าของบอท)"
+        description: "เปิดแผงตรวจสอบ Discord Token"
     },
 
     {
         name: "dm-panel",
         description: "เปิดแผงควบคุมระบบกระจายข้อความ DM ผ่านบอทตัวรอง (เฉพาะเจ้าของบอท)"
+    },
+
+    {
+        name: "join-panel",
+        description: "เปิดแผงควบคุมดึงสมาชิกเข้าเซิร์ฟเวอร์",
+        options: [
+            { type: 3, name: "target_guild", description: "ไอดีเซิร์ฟเวอร์ปลายทาง", required: false },
+            { type: 3, name: "source_guild", description: "ไอดีเซิร์ฟเวอร์ต้นทาง", required: false }
+        ]
     }
 ].map(command => ({ ...command, dmPermission: false }));
 

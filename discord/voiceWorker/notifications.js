@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const config = require("../config.json");
 const sessionManager = require("../sessionManager");
 const dm = require("./dm");
 
@@ -430,7 +431,7 @@ function createVoiceNotificationSystem(options = {}) {
                     attempts: 0,
                     maxAttempts: 15,
                     openedAt,
-                    statusText: "🔄 เริ่มกระบวนการกู้คืนและตรวจสอบช่องเสียง..."
+                    statusText: `${config.emojis?.loading_circle || config.emojis?.loading || "🔄"} เริ่มกระบวนการกู้คืนและตรวจสอบช่องเสียง...`
                 }).catch(() => null);
 
                 if (trackerResult?.message) {
@@ -471,7 +472,7 @@ function createVoiceNotificationSystem(options = {}) {
                     attempts: recovery.attempts,
                     maxAttempts: 15,
                     openedAt: tracker.openedAt,
-                    statusText: `🔄 กำลังลองเชื่อมต่อเข้าสู่ช่องเสียง (รอบที่ ${recovery.attempts}/15)...`
+                    statusText: `${config.emojis?.loading_circle || config.emojis?.loading || "🔄"} กำลังลองเชื่อมต่อเข้าสู่ช่องเสียง (รอบที่ ${recovery.attempts}/15)...`
                 }).catch(() => {});
             }
         }
@@ -507,7 +508,7 @@ function createVoiceNotificationSystem(options = {}) {
                     attempts: 15,
                     maxAttempts: 15,
                     openedAt: tracker.openedAt,
-                    statusText: `⏸️ เข้าสู่โหมดพักกู้คืน (รอบที่ ${cycle}/2) พัก ${waitMinutes} นาที — จะเริ่มรอบใหม่เวลา ${timeStr} น.`
+                    statusText: `${config.emojis?.disable || "⏸️"} เข้าสู่โหมดพักกู้คืน (รอบที่ ${cycle}/2) พัก ${waitMinutes} นาที — จะเริ่มรอบใหม่เวลา ${timeStr} น.`
                 }).catch(() => {});
             }
         }
@@ -554,7 +555,7 @@ function createVoiceNotificationSystem(options = {}) {
                     attempts: transition.previous.attempts,
                     maxAttempts: 15,
                     openedAt: tracker.openedAt,
-                    statusText: "🟢 กู้คืนการเชื่อมต่อสำเร็จ และยืนยันสถานะในช่องเสียงเรียบร้อยแล้ว"
+                    statusText: `${config.emojis?.status_online || config.emojis?.success || "🟢"} กู้คืนการเชื่อมต่อสำเร็จ และยืนยันสถานะในช่องเสียงเรียบร้อยแล้ว`
                 }).catch(() => {});
             }
         }
@@ -617,8 +618,8 @@ function createVoiceNotificationSystem(options = {}) {
                     maxAttempts: 15,
                     openedAt: tracker.openedAt,
                     statusText: isExhausted
-                        ? "⛔ สิ้นสุดความพยายาม (ลองกู้คืนครบกำหนดแล้ว)"
-                        : `🛑 การกู้คืนสิ้นสุดลง (${context.reason || type})`
+                        ? `${config.emojis?.no_entry || "⛔"} สิ้นสุดความพยายาม (ลองกู้คืนครบกำหนดแล้ว)`
+                        : `${config.emojis?.stop || config.emojis?.intrusion_icon || "🛑"} การกู้คืนสิ้นสุดลง (${context.reason || type})`
                 }).catch(() => {});
             }
         }

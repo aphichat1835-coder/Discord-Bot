@@ -7,6 +7,7 @@
 */
 
 const v8 = require("node:v8");
+const { sendWebhookEvent } = require("../core/webhooks");
 
 let memoryTimer = null;
 let lastHeapUsed = 0;
@@ -14,6 +15,18 @@ let criticalCount = 0;
 let emergencyCleanupRunning = false;
 let lastSnapshot = null;
 const memoryTrend = [];
+
+function requestGarbageCollection() {
+    if (typeof global.gc === "function") {
+        try {
+            global.gc();
+            return true;
+        } catch {
+            return false;
+        }
+    }
+    return false;
+}
 
 function mb(bytes) {
     return Math.round((Number(bytes || 0) / 1024 / 1024) * 10) / 10;
@@ -119,12 +132,12 @@ function numberEnv(name, fallback, min = 0) {
 }
 
 function getMemoryMonitorConfig() {
-    const criticalModeRaw = String(process.env.MEMORY_CRITICAL_MODE || "graceful_exit").trim().toLowerCase();
-    const criticalMode = criticalModeRaw === "cleanup_only" ? "cleanup_only" : "graceful_exit";
+    const criticalModeRaw = String(process.env.MEMORY_CRITICAL_MODE || "cleanup_only").trim().toLowerCase();
+    const criticalMode = criticalModeRaw === "graceful_exit" ? "graceful_exit" : "cleanup_only";
 
     return {
-        warnMb: numberEnv("MEMORY_WARN_MB", 180, 1),
-        criticalMb: numberEnv("MEMORY_CRITICAL_MB", 220, 1),
+        warnMb: numberEnv("MEMORY_WARN_MB", 500, 1),
+        criticalMb: numberEnv("MEMORY_CRITICAL_MB", 750, 1),
         criticalRounds: Math.max(1, Math.floor(numberEnv("MEMORY_CRITICAL_ROUNDS", 3, 1))),
         trendMax: Math.max(2, Math.floor(numberEnv("MEMORY_TREND_MAX", 24, 2))),
         criticalMode
@@ -247,7 +260,37 @@ async function runEmergencyCleanup({ monitorConfig, voiceWorker, sessionManager,
     emergencyCleanupRunning = true;
     console.error(`[MEMORY] 🚨 Critical memory sustained. Mode=${monitorConfig.criticalMode}`);
 
-    const shouldExit = monitorConfig.criticalMode !== "cleanup_only";
+    const shouldExit = monitorConfig.criticalMode === "graceful_exit";
+    const currentHeap = lastHeapUsed || monitorConfig.criticalMb;
+
+    if (shouldExit) {
+        await sendWebhookEvent({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "RUNTIME",
+            code: "runtime.memory.critical_exit",
+            state: "OPEN",
+            title: "MEMORY CRITICAL (SHUTTING DOWN)",
+            description: `หน่วยความจำ Heap สูงเกินกำหนดอย่างต่อเนื่อง (${currentHeap}MB / Limit: ${monitorConfig.criticalMb}MB) ระบบกำลังดำเนินการบันทึกข้อมูลและปิดการทำงาน`,
+            impact: "Process กำลังจะปิดตัวลงเพื่อความปลอดภัยของระบบ",
+            action: "ตรวจสอบการใช้งานหน่วยความจำ หรือขยาย RAM ของโฮสติ้ง"
+        }).catch(() => {});
+    } else {
+        await sendWebhookEvent({
+            target: "ALERT",
+            severity: "WARNING",
+            category: "RUNTIME",
+            code: "runtime.memory.emergency_cleanup",
+            state: "UPDATE",
+            title: "MEMORY EMERGENCY CLEANUP",
+            description: `หน่วยความจำ Heap สูง (${currentHeap}MB / Limit: ${monitorConfig.criticalMb}MB) ระบบได้ทำการล้างแคชและคืนหน่วยความจำเรียบร้อยแล้วโดยคงสถานะทำงานต่อเนื่อง`,
+            impact: "ระบบยังคงทำงานต่อเนื่อง แคชและหน่วยความจำส่วนเกินถูกล้างแล้ว",
+            action: "ไม่ต้องดำเนินการใดๆ ระบบจัดการทรัพยากรให้อัตโนมัติ",
+            dedupeKey: "memory-emergency-cleanup",
+            dedupeMs: 15 * 60 * 1000
+        }).catch(() => {});
+    }
+
     const forceExitTimeout = setTimeout(() => {
         if (shouldExit) {
             console.error("[MEMORY] 💀 Force-exit timeout reached. Exiting immediately.");
@@ -257,15 +300,20 @@ async function runEmergencyCleanup({ monitorConfig, voiceWorker, sessionManager,
     }, 10000);
 
     try {
-        if (shouldExit) system?.markAppShuttingDown?.();
-        voiceWorker?.setShuttingDown?.(true);
-        await voiceWorker?.pauseAll?.();
+        if (shouldExit) {
+            system?.markAppShuttingDown?.();
+            voiceWorker?.setShuttingDown?.(true);
+            await voiceWorker?.pauseAll?.();
+        } else {
+            voiceWorker?.cleanupVolatileState?.(Date.now(), { cleanupSelfClientCaches: true, forceLeanCleanup: true });
+            requestGarbageCollection();
+        }
         await sessionManager?.saveDatabase?.();
     } catch (e) {
         console.error(`[MEMORY] Emergency cleanup failed: ${e.message}`);
     } finally {
         clearTimeout(forceExitTimeout);
-        if (monitorConfig.criticalMode === "cleanup_only") {
+        if (!shouldExit) {
             emergencyCleanupRunning = false;
             criticalCount = 0;
             voiceWorker?.setShuttingDown?.(false);
@@ -298,6 +346,7 @@ function startMemoryMonitor({
             if (lastSnapshot.heapUsed > lastSnapshot.config.warnMb) {
                 console.warn(`[MEMORY] ⚠️ Heap high: ${lastSnapshot.heapUsed}MB`);
                 voiceWorker?.cleanupVolatileState?.(Date.now(), { cleanupSelfClientCaches: true });
+                requestGarbageCollection();
             }
 
             updateCriticalCount(lastSnapshot.heapUsed, lastSnapshot.config);
@@ -351,5 +400,6 @@ module.exports = {
     captureMemorySnapshot,
     stopMemoryMonitor,
     getMemoryMonitorConfig,
-    getMemoryMonitorState
+    getMemoryMonitorState,
+    requestGarbageCollection
 };

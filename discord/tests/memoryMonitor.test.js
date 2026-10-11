@@ -93,3 +93,29 @@ test("memory monitor trend stays bounded and compact", () => { // NOSONAR -- nod
         restore();
     }
 });
+
+test("memory monitor defaults are tuned for 1GB+ hosting with cleanup_only mode", () => {
+    const { monitor, restore } = freshMemoryMonitor({});
+
+    try {
+        const config = monitor.getMemoryMonitorConfig();
+        assert.equal(config.criticalMode, "cleanup_only");
+        assert.equal(config.warnMb, 500);
+        assert.equal(config.criticalMb, 750);
+        assert.equal(config.criticalRounds, 3);
+        assert.equal(config.trendMax, 24);
+    } finally {
+        restore();
+    }
+});
+
+test("requestGarbageCollection safely executes or no-ops without error", () => {
+    const { monitor, restore } = freshMemoryMonitor({});
+
+    try {
+        const result = monitor.requestGarbageCollection();
+        assert.equal(typeof result, "boolean");
+    } finally {
+        restore();
+    }
+});

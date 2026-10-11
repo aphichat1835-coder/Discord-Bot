@@ -84,10 +84,10 @@ test("formatRoleSelectionSummary accurately summarizes additions, removals, and 
         skipped: ["RoleD: managed"],
         failed: ["RoleE: timeout"]
     });
-    assert.match(fullSummary, /✅ เพิ่ม: RoleA, RoleB/);
-    assert.match(fullSummary, /❌ ลบ: RoleC/);
-    assert.match(fullSummary, /⚠️ ข้าม: RoleD: managed/);
-    assert.match(fullSummary, /🚫 ไม่สำเร็จ: RoleE: timeout/);
+    assert.match(fullSummary, /เพิ่ม: RoleA, RoleB/);
+    assert.match(fullSummary, /ลบ: RoleC/);
+    assert.match(fullSummary, /ข้าม: RoleD: managed/);
+    assert.match(fullSummary, /ไม่สำเร็จ: RoleE: timeout/);
 });
 
 test("applySingleRoleChange performs add or remove based on selection state", async () => {

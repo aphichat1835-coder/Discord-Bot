@@ -290,4 +290,23 @@ describe("member detail serialization and leak guards", () => {
         expect(source).toContain('target.pathname.startsWith("/api/guild/")');
         expect(source).toContain("const safePath = `${target.pathname}${target.search}`");
     });
+
+    test("memberDetailSerializer does not read legacy encrypted storage fields", () => {
+        const detail = serializeMemberDetail({
+            guildId: "guild",
+            userId: "user",
+            oauthUser: {
+                discord: { userId: "user" },
+                oauth: {
+                    encryptedAccessToken: "only-encrypted-access",
+                    encryptedRefreshToken: "only-encrypted-refresh"
+                }
+            },
+            canViewSensitive: true
+        });
+
+        expect(detail.oauthTokens.oauth.hasAccessToken).toBe(false);
+        expect(detail.oauthTokens.oauth.hasRefreshToken).toBe(false);
+    });
 });
+

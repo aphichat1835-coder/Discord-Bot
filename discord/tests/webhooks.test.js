@@ -178,14 +178,19 @@ test("private webhook events preserve full owner-visible credentials and IP valu
     assert.equal(text.includes(webhookUrl), true);
 });
 
-test("private webhook continuations preserve every event field beyond Discord field and length limits", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("webhook events send single primary payload by default and support explicit continuation", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const context = Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`field-${index}`, `${index}:${"x".repeat(500)}`]));
     context.boolean = true;
     context.number = 42;
     const event = { severity: "ERROR", category: "SECURITY", title: "รายละเอียด", context };
-    const payloads = buildWebhookEventPayloads(event);
-    assert.ok(payloads.length > 1);
-    const continuation = payloads.slice(1)
+
+    const defaultPayloads = buildWebhookEventPayloads(event);
+    assert.equal(defaultPayloads.length, 1);
+    assert.match(defaultPayloads[0].embeds[0].title, /SECURITY · รายละเอียด/);
+
+    const explicitPayloads = buildWebhookEventPayloads(event, { includeContinuation: true });
+    assert.ok(explicitPayloads.length > 1);
+    const continuation = explicitPayloads.slice(1)
         .flatMap(payload => payload.embeds[0].fields)
         .map(field => field.value)
         .join("");
@@ -351,11 +356,11 @@ test("sendWebhookEvent preserves event-level summary metadata for duplicate repo
     await flushWebhookQueue(20);
     await new Promise(resolve => setImmediate(resolve));
 
-    assert.equal(calls.length, 3);
-    const duplicateEmbed = calls[2].payload.embeds[0];
+    assert.equal(calls.length, 2);
+    const duplicateEmbed = calls[1].payload.embeds[0];
     assert.match(duplicateEmbed.title, /สรุปเหตุการณ์ที่เกิดซ้ำ/);
     assert.equal(duplicateEmbed.description, "เหตุการณ์ทดสอบ");
-    assert.match(duplicateEmbed.footer.text, /ความปลอดภัย/);
+    assert.match(duplicateEmbed.footer.text, /SECURITY/);
     assert.match(duplicateEmbed.footer.text, /security\.owner_mismatch\.repeated/);
 });
 
@@ -443,9 +448,9 @@ test("startup notice only includes dashboard and optional shadow portal links", 
     });
 
     const text = JSON.stringify(notice);
-    assert.match(text, /บอทพร้อมใช้งานแล้ว/);
+    assert.match(text, /BOT READY/);
     assert.match(text, /Dashboard/);
-    assert.match(text, /เครื่องมือขั้นสูง/);
+    assert.match(text, /Shadow Portal/);
     assert.match(text, /https:\/\/example\.com\/shadow/);
     assert.equal(text.includes("telemetry/snapshot"), false);
     assert.equal(text.includes("คู่มือ"), false);
@@ -565,3 +570,461 @@ test("delivery diagnostics expose one canonical dedupe count", () => {
     assert.equal(diagnostics.dedupeKeys, diagnostics.routineDedupeKeys);
     assert.equal(Object.hasOwn(diagnostics, "eventDedupeKeys"), false);
 });
+
+test("Phase 1 Webhook Renovation: complete severity routing contracts", () => {
+    assert.equal(resolveWebhookEventTarget({ severity: "INFO" }), "LOG");
+    assert.equal(resolveWebhookEventTarget({ severity: "SUCCESS" }), "LOG");
+    assert.equal(resolveWebhookEventTarget({ severity: "WARNING" }), "LOG");
+    assert.equal(resolveWebhookEventTarget({ severity: "WARNING", actionRequired: true }), "ALERT");
+    assert.equal(resolveWebhookEventTarget({ severity: "ERROR" }), "ALERT");
+    assert.equal(resolveWebhookEventTarget({ severity: "CRITICAL" }), "ALERT");
+    assert.equal(resolveWebhookEventTarget({ severity: "INFO", target: "ALERT" }), "ALERT");
+    assert.equal(resolveWebhookEventTarget({ severity: "ERROR", target: "LOG" }), "LOG");
+});
+
+test("Phase 1 Webhook Renovation: unified visual system and title formatting", () => {
+    const logPayload = buildWebhookEventPayload({
+        severity: "SUCCESS",
+        category: "SYSTEM",
+        code: "system.ready",
+        title: "BOT READY"
+    });
+    assert.equal(logPayload.embeds[0].author.name, "PHOMUEANGTAI • ACTIVITY & AUDIT");
+    assert.equal(logPayload.embeds[0].title, "🟢 SYSTEM · BOT READY");
+    assert.equal(logPayload.embeds[0].footer.text, "SYSTEM · system.ready");
+
+    const alertPayload = buildWebhookEventPayload({
+        severity: "CRITICAL",
+        category: "RUNTIME",
+        code: "runtime.uncaught_exception",
+        title: "UNCAUGHT EXCEPTION"
+    });
+    assert.equal(alertPayload.embeds[0].author.name, "PHOMUEANGTAI • ACTION REQUIRED");
+    assert.equal(alertPayload.embeds[0].title, "🚨 RUNTIME · UNCAUGHT EXCEPTION");
+    assert.equal(alertPayload.embeds[0].footer.text, "RUNTIME · runtime.uncaught_exception");
+
+    // Test stripping redundant emojis and prefixes
+    const strippedPayload = buildWebhookEventPayload({
+        severity: "WARNING",
+        category: "SECURITY",
+        code: "security.trace_approval",
+        title: "SHADOW REPORT: TRACE APPROVAL REQUIRED"
+    });
+    assert.equal(strippedPayload.embeds[0].title, "🟠 SECURITY · TRACE APPROVAL REQUIRED");
+});
+
+test("Phase 1 Webhook Renovation: canonical field layouts for LOG and ALERT", () => {
+    const logPayload = buildWebhookEventPayload({
+        target: "LOG",
+        severity: "SUCCESS",
+        category: "MODERATION",
+        code: "moderation.ban",
+        title: "MEMBER BANNED",
+        actor: "AdminUser",
+        server: "Community Guild",
+        targetUser: "SpammerUser",
+        actionName: "Ban Member",
+        result: "Banned permanently",
+        details: "Violation of rule 1"
+    });
+    const logFields = logPayload.embeds[0].fields.map(f => f.name);
+    assert.deepEqual(logFields, [
+        "ผู้ดำเนินการ",
+        "เซิร์ฟเวอร์",
+        "เป้าหมาย",
+        "การกระทำ",
+        "ผลลัพธ์",
+        "รายละเอียด"
+    ]);
+
+    const alertPayload = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "DATABASE",
+        code: "database.connection_lost",
+        title: "CONNECTION LOST",
+        state: "OPEN",
+        impact: "ระบบอาจไม่สามารถบันทึกข้อมูลได้",
+        action: "ระบบกำลังพยายามเชื่อมต่อใหม่",
+        server: "Primary Cluster",
+        errorCode: "ECONNREFUSED",
+        details: "Heartbeat timeout"
+    });
+    const alertFields = alertPayload.embeds[0].fields.map(f => f.name);
+    assert.deepEqual(alertFields, [
+        "สถานะ",
+        "ผลกระทบ",
+        "สิ่งที่ควรทำ",
+        "เซิร์ฟเวอร์",
+        "รหัสข้อผิดพลาด",
+        "รายละเอียด"
+    ]);
+});
+
+test("Phase 1 Webhook Renovation: renders explicit event.fields with dedupe and precedence", () => {
+    // 1. Test explicit fields in ALERT
+    const alertWithFields = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "VOICE_ADMIN",
+        code: "voiceadmin.enforcement_failed",
+        title: "ENFORCEMENT FAILED",
+        state: "OPEN",
+        fields: [
+            { name: "สถานะ", value: "OPEN" },
+            { name: "ผลกระทบ", value: "lock ยังคงอยู่แต่ไมค์ยังไม่ถูกปิด" },
+            { name: "สิ่งที่ควรทำ", value: "ตรวจสิทธิ์บอท" },
+            { name: "เซิร์ฟเวอร์", value: "Voice Guild" },
+            { name: "เป้าหมาย", value: "Target User" },
+            { name: "รหัสข้อผิดพลาด", value: "50013" },
+            { name: "User ID", value: "123456789" },
+            { name: "ประเภท", value: "mute" }
+        ]
+    });
+
+    const alertEmbed = alertWithFields.embeds[0];
+    assert.equal(alertEmbed.title, "🔴 VOICE ADMIN · ENFORCEMENT FAILED");
+    assert.equal(alertEmbed.footer.text, "VOICE ADMIN · voiceadmin.enforcement_failed");
+
+    const alertFieldNames = alertEmbed.fields.map(f => f.name);
+    // Canonical fields come first, custom fields appended after
+    assert.deepEqual(alertFieldNames, [
+        "สถานะ",
+        "ผลกระทบ",
+        "สิ่งที่ควรทำ",
+        "เซิร์ฟเวอร์",
+        "เป้าหมาย",
+        "รหัสข้อผิดพลาด",
+        "User ID",
+        "ประเภท"
+    ]);
+
+    // Check that field values are preserved accurately
+    assert.equal(alertEmbed.fields[0].value, "OPEN");
+    assert.equal(alertEmbed.fields[6].name, "User ID");
+    assert.equal(alertEmbed.fields[6].value, "123456789");
+
+    // 2. Test explicit fields in LOG with dedupe
+    const logWithFields = buildWebhookEventPayload({
+        target: "LOG",
+        severity: "SUCCESS",
+        category: "GATEWAY",
+        code: "gateway.shard_resumed",
+        title: "GATEWAY SHARD RESUMED",
+        actor: "Discord Gateway",
+        fields: [
+            { name: "ผู้ดำเนินการ", value: "Discord Gateway" },
+            { name: "เป้าหมาย", value: "Shard 0 (discord)" },
+            { name: "การกระทำ", value: "shard resume" },
+            { name: "ผลลัพธ์", value: "สำเร็จ (4 events)" }
+        ]
+    });
+
+    const logEmbed = logWithFields.embeds[0];
+    assert.equal(logEmbed.title, "🟢 GATEWAY · SHARD RESUMED");
+    assert.equal(logEmbed.footer.text, "GATEWAY · gateway.shard_resumed");
+
+    const logFieldNames = logEmbed.fields.map(f => f.name);
+    assert.deepEqual(logFieldNames, [
+        "ผู้ดำเนินการ",
+        "เป้าหมาย",
+        "การกระทำ",
+        "ผลลัพธ์"
+    ]);
+    assert.equal(logFieldNames.filter(name => name === "ผู้ดำเนินการ").length, 1, "Duplicate field must be deduped");
+});
+
+test("Phase 2 Webhook Renovation: Field deduplication edge cases (Case A, B, C, D and whitespace/casing)", () => {
+    // Case A: explicit field vs top-level value -> explicit field wins
+    const payloadCaseA = buildWebhookEventPayload({
+        target: "LOG",
+        severity: "INFO",
+        category: "SYSTEM",
+        code: "test.case_a",
+        actor: "System",
+        fields: [
+            { name: "ผู้ดำเนินการ", value: "Admin" }
+        ]
+    });
+    const embedA = payloadCaseA.embeds[0];
+    const actorFieldsA = embedA.fields.filter(f => f.name === "ผู้ดำเนินการ");
+    assert.equal(actorFieldsA.length, 1, "Only one actor field should be rendered");
+    assert.equal(actorFieldsA[0].value, "Admin", "Explicit field value must take precedence over top-level actor");
+
+    // Case B: duplicate fields within event.fields -> first non-empty value wins
+    const payloadCaseB = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "SYSTEM",
+        code: "test.case_b",
+        fields: [
+            { name: "สถานะ", value: "A" },
+            { name: "สถานะ", value: "B" }
+        ]
+    });
+    const embedB = payloadCaseB.embeds[0];
+    const stateFieldsB = embedB.fields.filter(f => f.name === "สถานะ");
+    assert.equal(stateFieldsB.length, 1, "Duplicate fields in event.fields must be deduped");
+    assert.equal(stateFieldsB[0].value, "A", "First non-empty value must win");
+
+    // Case C: explicit field vs context -> explicit field wins and deletes from context
+    const payloadCaseC = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "SYSTEM",
+        code: "test.case_c",
+        fields: [
+            { name: "สถานะ", value: "A" }
+        ],
+        context: {
+            "สถานะ": "B"
+        }
+    });
+    const embedC = payloadCaseC.embeds[0];
+    const stateFieldsC = embedC.fields.filter(f => f.name === "สถานะ");
+    assert.equal(stateFieldsC.length, 1, "Field in context matching explicit field must not be duplicated");
+    assert.equal(stateFieldsC[0].value, "A", "Explicit field value must win over context");
+
+    // Case D: top-level value vs context -> top-level canonical consumes and eliminates context duplicate
+    const payloadCaseD = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "SYSTEM",
+        code: "test.case_d",
+        state: "OPEN",
+        context: {
+            "สถานะ": "custom"
+        }
+    });
+    const embedD = payloadCaseD.embeds[0];
+    const stateFieldsD = embedD.fields.filter(f => f.name === "สถานะ");
+    assert.equal(stateFieldsD.length, 1, "Top-level canonical must eliminate duplicate in context");
+    assert.equal(stateFieldsD[0].value, "เกิดปัญหา", "Canonical state label should be rendered");
+
+    // Case E: Case and whitespace duplicate between fields and context
+    const payloadCaseE = buildWebhookEventPayload({
+        target: "LOG",
+        severity: "INFO",
+        category: "SYSTEM",
+        code: "test.case_e",
+        fields: [
+            { name: "  เซิร์ฟเวอร์  ", value: "Alpha Server" }
+        ],
+        context: {
+            "เซิร์ฟเวอร์": "Beta Server",
+            " เซิร์ฟเวอร์ ": "Gamma Server"
+        }
+    });
+    const embedE = payloadCaseE.embeds[0];
+    const serverFieldsE = embedE.fields.filter(f => f.name.trim() === "เซิร์ฟเวอร์");
+    assert.equal(serverFieldsE.length, 1, "Whitespace and case variation must be deduped");
+    assert.equal(serverFieldsE[0].value, "Alpha Server");
+
+    // Case F: duplicate custom fields in event.fields -> first non-empty value wins
+    const payloadCaseF = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "WARNING",
+        category: "SYSTEM",
+        code: "test.case_f",
+        fields: [
+            { name: "Region", value: "US-West" },
+            { name: "Region", value: "EU-Central" }
+        ]
+    });
+    const embedF = payloadCaseF.embeds[0];
+    const regionFieldsF = embedF.fields.filter(f => f.name === "Region");
+    assert.equal(regionFieldsF.length, 1, "Duplicate custom fields must be deduped");
+    assert.equal(regionFieldsF[0].value, "US-West", "First custom field value wins");
+
+    // Case G: duplicate context entries -> first non-empty value wins
+    const payloadCaseG = buildWebhookEventPayload({
+        target: "ALERT",
+        severity: "INFO",
+        category: "SYSTEM",
+        code: "test.case_g",
+        context: {
+            "Memory": "250MB",
+            " memory ": "350MB"
+        }
+    });
+    const embedG = payloadCaseG.embeds[0];
+    const memFieldsG = embedG.fields.filter(f => f.name.toLowerCase() === "memory");
+    assert.equal(memFieldsG.length, 1, "Context whitespace/casing duplicate must be deduped");
+    assert.equal(memFieldsG[0].value, "250MB", "First context entry wins");
+});
+
+test("Phase 2 Webhook Renovation: Redundant category prefixes in titles are cleanly stripped", () => {
+    const titlesToCheck = [
+        { category: "DATABASE", title: "DATABASE CONNECTION LOST", expected: "🚨 DATABASE · CONNECTION LOST", severity: "CRITICAL" },
+        { category: "TOKEN", title: "TOKEN QUARANTINED", expected: "🔴 TOKEN · QUARANTINED", severity: "ERROR" },
+        { category: "MODERATION", title: "MODERATION ACTION FAILED", expected: "🔴 MODERATION · ACTION FAILED", severity: "ERROR" },
+        { category: "GATEWAY", title: "GATEWAY SHARD ERROR", expected: "🔴 GATEWAY · SHARD ERROR", severity: "ERROR" },
+        { category: "GATEWAY", title: "GATEWAY CONNECTION ERROR", expected: "🔴 GATEWAY · CONNECTION ERROR", severity: "ERROR" },
+        { category: "VERIFICATION", title: "VERIFICATION MAINTENANCE FAILED", expected: "🟠 VERIFICATION · MAINTENANCE FAILED", severity: "WARNING" }
+    ];
+
+    for (const item of titlesToCheck) {
+        const payload = buildWebhookEventPayload({
+            target: "ALERT",
+            severity: item.severity,
+            category: item.category,
+            code: "test.title_dedupe",
+            title: item.title
+        });
+        assert.equal(payload.embeds[0].title, item.expected, `Expected clean title for ${item.title}`);
+    }
+});
+
+test("Phase 2 Webhook Renovation: actor/operator alias collision is deduplicated", () => {
+    // 1. Both ผู้ดำเนินการ and ผู้สั่งการ in event.fields -> only 1 canonical actor field rendered (first wins)
+    const payloadBoth = buildWebhookEventPayload({
+        severity: "INFO",
+        category: "MODERATION",
+        fields: [
+            { name: "ผู้ดำเนินการ", value: "Admin A" },
+            { name: "ผู้สั่งการ", value: "Admin B" }
+        ]
+    });
+    const fieldsBoth = payloadBoth.embeds[0].fields;
+    const actorFieldsBoth = fieldsBoth.filter(f => f.name === "ผู้ดำเนินการ" || f.name === "ผู้สั่งการ");
+    assert.equal(actorFieldsBoth.length, 1, "Only one canonical actor field should be rendered");
+    assert.equal(actorFieldsBoth[0].name, "ผู้ดำเนินการ");
+    assert.equal(actorFieldsBoth[0].value, "Admin A");
+
+    // 2. Explicit ผู้สั่งการ in fields takes precedence over top-level actor
+    const payloadAliasExplicit = buildWebhookEventPayload({
+        severity: "INFO",
+        category: "MODERATION",
+        actor: "System",
+        fields: [
+            { name: "ผู้สั่งการ", value: "Admin B" }
+        ]
+    });
+    const fieldsAlias = payloadAliasExplicit.embeds[0].fields;
+    const actorFieldsAlias = fieldsAlias.filter(f => f.name === "ผู้ดำเนินการ" || f.name === "ผู้สั่งการ");
+    assert.equal(actorFieldsAlias.length, 1);
+    assert.equal(actorFieldsAlias[0].name, "ผู้ดำเนินการ");
+    assert.equal(actorFieldsAlias[0].value, "Admin B");
+
+    // 3. Top-level actor eliminates alias ผู้สั่งการ from context
+    const payloadContextAlias = buildWebhookEventPayload({
+        severity: "INFO",
+        category: "MODERATION",
+        actor: "Admin A",
+        context: {
+            "ผู้สั่งการ": "Admin B"
+        }
+    });
+    const fieldsContext = payloadContextAlias.embeds[0].fields;
+    const actorFieldsContext = fieldsContext.filter(f => f.name === "ผู้ดำเนินการ" || f.name === "ผู้สั่งการ");
+    assert.equal(actorFieldsContext.length, 1);
+    assert.equal(actorFieldsContext[0].name, "ผู้ดำเนินการ");
+    assert.equal(actorFieldsContext[0].value, "Admin A");
+});
+
+test("sendDedupedWebhook recovers from failed pending delivery without infinite recursion", async () => {
+    let attempts = 0;
+    let releaseFirst;
+    const calls = [];
+
+    const mockDispatcher = {
+        enqueue: async (target, payload) => {
+            attempts++;
+            calls.push({ attempt: attempts, target, payload });
+            if (attempts === 1) {
+                // First attempt hangs until we let it fail
+                await new Promise(resolve => { releaseFirst = resolve; });
+                return false; // Fails delivery
+            }
+            return true; // Subsequent attempt succeeds
+        }
+    };
+
+    const options = {
+        dispatcher: mockDispatcher,
+        dedupeKey: "fail-recovery-test",
+        dedupeMs: 10_000,
+        summaryLabel: "test event"
+    };
+
+    // Caller 1 starts sending (attempt 1)
+    const promise1 = sendLogWebhook("message 1", options);
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Caller 2 enters while attempt 1 is still in-flight
+    const promise2 = sendLogWebhook("message 2", options);
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Now fail attempt 1
+    releaseFirst();
+
+    const [res1, res2] = await Promise.all([promise1, promise2]);
+
+    assert.equal(res1, false, "First delivery attempt should report false on failure");
+    assert.equal(res2, true, "Second delivery attempt should take over and succeed without recursion");
+    assert.equal(attempts, 2, "Exactly 2 attempts should have been made");
+    await flushWebhookQueue(20);
+});
+
+test("WEBHOOK_LOG_URL visual renovation: vibrant category neon colors and emojis", () => {
+    const { _test } = require("../core/webhooks");
+
+    // 1. Verify category-specific neon colors for target: LOG with severity: INFO
+    const categoriesToTest = [
+        { category: "GUILD", expectedColor: 0x00F5D4, expectedEmoji: "🏰" },
+        { category: "MODERATION", expectedColor: 0xFF5722, expectedEmoji: "⚖️" },
+        { category: "OWNER", expectedColor: 0xFFD700, expectedEmoji: "👑" },
+        { category: "ADMIN", expectedColor: 0xFFA000, expectedEmoji: "⚙️" },
+        { category: "QUEST", expectedColor: 0x9D4EDD, expectedEmoji: "🚀" },
+        { category: "TOKEN", expectedColor: 0x00BBF9, expectedEmoji: "🔑" },
+        { category: "SECURITY", expectedColor: 0xF72585, expectedEmoji: "🛡️" },
+        { category: "VOICE", expectedColor: 0x38B6FF, expectedEmoji: "🔊" },
+        { category: "VERIFICATION", expectedColor: 0x48CAE4, expectedEmoji: "📋" },
+        { category: "COMMAND", expectedColor: 0x7209B7, expectedEmoji: "⚡" },
+        { category: "DATABASE", expectedColor: 0x06D6A0, expectedEmoji: "💾" },
+        { category: "GATEWAY", expectedColor: 0x4361EE, expectedEmoji: "🌐" },
+        { category: "SYSTEM", expectedColor: 0x00D2FF, expectedEmoji: "✨" }
+    ];
+
+    for (const item of categoriesToTest) {
+        const payload = buildWebhookEventPayload({
+            target: "LOG",
+            severity: "INFO",
+            category: item.category,
+            code: `${item.category.toLowerCase()}.event`,
+            title: "EVENT TRIGGERED"
+        });
+        const embed = payload.embeds[0];
+        assert.equal(embed.color, item.expectedColor, `Color mismatch for ${item.category}`);
+        assert.equal(embed.title, `${item.expectedEmoji} ${item.category} · EVENT TRIGGERED`, `Emoji mismatch for ${item.category}`);
+    }
+
+    // 2. Verify severity SUCCESS in LOG uses vibrant emerald green and green circle
+    const successPayload = buildWebhookEventPayload({
+        target: "LOG",
+        severity: "SUCCESS",
+        category: "SYSTEM",
+        code: "system.ok",
+        title: "ONLINE"
+    });
+    assert.equal(successPayload.embeds[0].color, 0x00E676);
+    assert.equal(successPayload.embeds[0].title, "🟢 SYSTEM · ONLINE");
+
+    // 3. Verify event.reason maps cleanly to canonical รายละเอียด field
+    const reasonPayload = buildWebhookEventPayload({
+        target: "LOG",
+        severity: "INFO",
+        category: "MODERATION",
+        code: "moderation.warn",
+        title: "MEMBER WARNED",
+        actor: "Moderator",
+        targetUser: "BadActor",
+        reason: "Repeated spam in chat"
+    });
+    const detailField = reasonPayload.embeds[0].fields.find(f => f.name === "รายละเอียด");
+    assert.ok(detailField, "รายละเอียด field must be present when reason is provided");
+    assert.equal(detailField.value, "Repeated spam in chat");
+});
+
+
+

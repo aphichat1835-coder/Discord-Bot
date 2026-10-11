@@ -1,5 +1,4 @@
-const joinCampaign = require("../features/joinCampaign");
-const { getDiscordGuildIconUrl } = require("../core/webhooks");
+const joinCampaign = require("../features/joinCampaign/index");
 
 function listJoinCampaignTargets(client, campaignConfig = joinCampaign.getJoinCampaignConfig()) {
     const guilds = Array.from(client?.guilds?.cache?.values?.() || []);
@@ -18,12 +17,6 @@ function listJoinCampaignTargets(client, campaignConfig = joinCampaign.getJoinCa
 function resolveJoinCampaignTarget(client, guildId, campaignConfig = joinCampaign.getJoinCampaignConfig()) {
     const safeGuildId = String(guildId || "").trim();
 
-    if (!campaignConfig.enabled) {
-        return { ok: false, status: 503, code: "CAMPAIGN_DISABLED", error: "ระบบ Join Campaign ถูกปิด" };
-    }
-    if (!(campaignConfig.allowedGuilds instanceof Set) || campaignConfig.allowedGuilds.size === 0) {
-        return { ok: false, status: 503, code: "CAMPAIGN_ALLOWLIST_REQUIRED", error: "ยังไม่ได้ตั้งค่ารายการเซิร์ฟเวอร์ที่อนุญาต" };
-    }
     if (!/^\d{17,22}$/.test(safeGuildId)) {
         return { ok: false, status: 400, code: "INVALID_GUILD_ID", error: "Guild ID ไม่ถูกต้อง" };
     }
@@ -54,9 +47,6 @@ function resolveJoinCampaignTarget(client, guildId, campaignConfig = joinCampaig
 
 function resolveJoinCampaignStartStatus(code) {
     switch (code) {
-        case "CAMPAIGN_DISABLED":
-        case "CAMPAIGN_ALLOWLIST_REQUIRED":
-            return 503;
         case "INVALID_GUILD_ID":
             return 400;
         case "TARGET_GUILD_NOT_ALLOWED":
@@ -73,7 +63,7 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
             const config = joinCampaign.getJoinCampaignConfig();
             res.json({
                 success: true,
-                enabled: config.enabled,
+                enabled: true,
                 allowlistConfigured: config.allowedGuilds.size > 0,
                 targets: listJoinCampaignTargets(client, config)
             });
@@ -94,86 +84,22 @@ function registerJoinCampaignRoutes({ app, express, client, checkAuth }) {
         }
     });
 
-    app.post("/api/join-campaign/dry-run", express.json({ limit: "8kb" }), async (req, res) => {
+    app.get("/api/join-campaign/history", (req, res) => {
         if (!checkAuth(req, res)) return;
-
         try {
-            const target = resolveJoinCampaignTarget(client, req.body?.guildId);
-            if (!target.ok) {
-                return res.status(target.status).json({
-                    success: false,
-                    code: target.code || null,
-                    error: target.error
-                });
-            }
-
-            const summary = await joinCampaign.executeJoinCampaign({
-                targetGuildId: target.guild.id,
-                targetGuildName: target.guild.name,
-                targetGuildIconUrl: getDiscordGuildIconUrl(target.guild),
-                dryRun: true,
-                sendFinishLog: false,
-                startedBy: "owner-dashboard"
-            });
-
-            res.json({ success: true, summary });
-        } catch (e) {
-            res.status(Number(e?.status) || 500).json({
-                success: false,
-                code: e?.code || "CAMPAIGN_DRY_RUN_FAILED",
-                error: e.message
-            });
-        }
-    });
-
-    app.post("/api/join-campaign/start", express.json({ limit: "8kb" }), async (req, res) => {
-        if (!checkAuth(req, res)) return;
-
-        try {
-            const target = resolveJoinCampaignTarget(client, req.body?.guildId);
-            if (!target.ok) {
-                return res.status(target.status).json({
-                    success: false,
-                    code: target.code || null,
-                    error: target.error
-                });
-            }
-
-            const started = joinCampaign.startJoinCampaign({
-                targetGuildId: target.guild.id,
-                targetGuildName: target.guild.name,
-                targetGuildIconUrl: getDiscordGuildIconUrl(target.guild),
-                startedBy: "owner-dashboard"
-            });
-
-            if (!started.ok) {
-                const status = resolveJoinCampaignStartStatus(started.code);
-                return res.status(status).json({
-                    success: false,
-                    code: started.code || "CAMPAIGN_ALREADY_RUNNING",
-                    error: started.error,
-                    campaign: started.campaign
-                });
-            }
-
-            res.json({
-                success: true,
-                campaign: started.campaign
-            });
+            const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+            const history = joinCampaign.listRecentCampaigns({ limit });
+            res.json({ success: true, history });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }
     });
 
-    app.post("/api/join-campaign/stop", express.json({ limit: "2kb" }), (req, res) => {
+    app.get("/api/join-campaign/metrics", (req, res) => {
         if (!checkAuth(req, res)) return;
-
         try {
-            const stopped = joinCampaign.stopJoinCampaign();
-            res.status(stopped.ok ? 200 : 409).json({
-                success: stopped.ok,
-                error: stopped.error || null
-            });
+            const metrics = joinCampaign.getCampaignMetrics();
+            res.json({ success: true, metrics });
         } catch (e) {
             res.status(500).json({ success: false, error: e.message });
         }

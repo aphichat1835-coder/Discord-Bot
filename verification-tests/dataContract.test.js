@@ -235,7 +235,7 @@ describe("unified verification data contract", () => {
                     username: "test",
                     discriminator: "0"
                 },
-                tokenData: {},
+                tokenData: { access_token: "mock-access", refresh_token: "mock-refresh", expires_in: 3600 },
                 connections: [],
                 guilds: [],
                 memberInfo: null,
@@ -333,7 +333,8 @@ describe("unified verification data contract", () => {
         try {
             const result = await saveOAuthUserSafe({
                 profile: { id: "12345678901234567", username: "old", discriminator: "0" },
-                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                tokenData: { access_token: "mock-access", refresh_token: "mock-refresh", expires_in: 3600 },
+                connections: [], guilds: [], memberInfo: null,
                 guildId: "76543210987654321", roleId: "76543210987654322",
                 result: "success", findings: [], trackingSnapshot: null,
                 fetchMetadata: {}, attemptStartedAt: 100
@@ -374,6 +375,7 @@ describe("unified verification data contract", () => {
         };
         jest.spyOn(OAuthUser, "findOne")
             .mockReturnValueOnce(firstQuery)
+            .mockReturnValueOnce(firstQuery)
             .mockReturnValueOnce(secondQuery);
         const duplicate = Object.assign(new Error("duplicate key"), {
             code: 11000,
@@ -395,7 +397,8 @@ describe("unified verification data contract", () => {
         try {
             const result = await saveOAuthUserSafe({
                 profile: { id: "12345678901234567", username: "old", discriminator: "0" },
-                tokenData: {}, connections: [], guilds: [], memberInfo: null,
+                tokenData: { access_token: "mock-access", refresh_token: "mock-refresh", expires_in: 3600 },
+                connections: [], guilds: [], memberInfo: null,
                 guildId: "76543210987654321", roleId: "76543210987654322",
                 result: "success", findings: [], trackingSnapshot: null,
                 fetchMetadata: {}, attemptStartedAt: 100
@@ -463,7 +466,7 @@ describe("unified verification data contract", () => {
         try {
             const result = await saveOAuthUserSafe({
                 profile: { id: "12345678901234567", username: "test", discriminator: "0" },
-                tokenData: {},
+                tokenData: { access_token: "mock-access", refresh_token: "mock-refresh", expires_in: 3600 },
                 connections: [{ type: "github", id: "1" }],
                 guilds: [{ id: "76543210987654321", name: "Guild", permissions: "8" }],
                 memberInfo: null,

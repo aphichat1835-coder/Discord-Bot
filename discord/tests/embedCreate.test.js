@@ -6,14 +6,14 @@ const { PermissionFlagsBits, PermissionsBitField } = require("discord.js");
 const utility = require("../commands/utility");
 
 const {
-    handleAnnounce,
-    buildAnnouncementEmbed,
-    buildAnnouncementComponents,
+    handleEmbedCreate,
+    buildEmbedCreateEmbed,
+    buildEmbedComponents,
     isValidHttpUrl,
     resolveEmbedColor
 } = utility._test;
 
-test("announce isValidHttpUrl validates protocols properly", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("embed create isValidHttpUrl validates protocols properly", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(isValidHttpUrl("https://example.com"), true);
     assert.equal(isValidHttpUrl("http://example.com/path?q=1"), true);
     assert.equal(isValidHttpUrl("ftp://example.com"), false);
@@ -23,43 +23,39 @@ test("announce isValidHttpUrl validates protocols properly", () => { // NOSONAR 
     assert.equal(isValidHttpUrl(""), false);
 });
 
-test("announce resolveEmbedColor resolves hex and fallbacks", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("embed create resolveEmbedColor resolves hex and fallbacks", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(resolveEmbedColor("#FF5500", "#5865F2"), "#FF5500");
     assert.equal(resolveEmbedColor("00FFAA", "#5865F2"), "#00FFAA");
     assert.equal(resolveEmbedColor("invalid", "#5865F2"), "#5865F2");
     assert.equal(resolveEmbedColor(null, "#5865F2"), "#5865F2");
 });
 
-test("announce buildAnnouncementEmbed constructs rich embed matching all options", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const embed = buildAnnouncementEmbed({
-        messageText: "Hello world\nSecond line",
-        title: "Announcement Title",
+test("embed create buildEmbedCreateEmbed constructs rich embed matching all options", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const embed = buildEmbedCreateEmbed({
+        description: "Hello world\nSecond line",
+        title: "Embed Title",
         colorHex: "#123456",
         url: "https://example.com/news",
-        authorName: "Staff Team",
-        authorIcon: "https://example.com/author.png",
         thumbnailUrl: "https://example.com/thumb.png",
         imageUrl: "https://example.com/banner.png",
         footerText: "Community Server",
-        footerIcon: "https://example.com/footer.png",
         timestamp: true
     }).toJSON();
 
     assert.equal(embed.description, "Hello world\nSecond line");
-    assert.equal(embed.title, "Announcement Title");
+    assert.equal(embed.title, "Embed Title");
     assert.equal(embed.url, "https://example.com/news");
     assert.equal(embed.color, 0x123456);
-    assert.equal(embed.author.name, "Staff Team");
-    assert.equal(embed.author.icon_url, "https://example.com/author.png");
     assert.equal(embed.thumbnail.url, "https://example.com/thumb.png");
     assert.equal(embed.image.url, "https://example.com/banner.png");
     assert.equal(embed.footer.text, "Community Server");
-    assert.equal(embed.footer.icon_url, "https://example.com/footer.png");
     assert.ok(embed.timestamp);
+    // author and footer_icon are intentionally removed from /embed create
+    assert.equal(embed.author, undefined);
 });
 
-test("announce buildAnnouncementComponents returns link button when valid", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const rows = buildAnnouncementComponents("Click Here", "https://discord.gg/test");
+test("embed create buildEmbedComponents returns link button when valid", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const rows = buildEmbedComponents("Click Here", "https://discord.gg/test");
     assert.equal(rows.length, 1);
     const json = rows[0].toJSON();
     assert.equal(json.components.length, 1);
@@ -67,11 +63,11 @@ test("announce buildAnnouncementComponents returns link button when valid", () =
     assert.equal(json.components[0].style, 5); // Link button
     assert.equal(json.components[0].url, "https://discord.gg/test");
 
-    assert.deepEqual(buildAnnouncementComponents(null, "https://example.com"), []);
-    assert.deepEqual(buildAnnouncementComponents("Click", "invalid"), []);
+    assert.deepEqual(buildEmbedComponents(null, "https://example.com"), []);
+    assert.deepEqual(buildEmbedComponents("Click", "invalid"), []);
 });
 
-test("announce handleAnnounce sends announcement to specified target channel", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("embed create handleEmbedCreate sends embed to specified target channel", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const sentMessages = [];
     const targetChannel = {
         id: "channel999",
@@ -84,7 +80,7 @@ test("announce handleAnnounce sends announcement to specified target channel", a
     const replies = [];
     const editReplies = [];
     const interaction = {
-        commandName: "announce",
+        commandName: "embed",
         channel: { id: "channelCurrent" },
         member: { permissions: new PermissionsBitField([PermissionFlagsBits.Administrator, PermissionFlagsBits.MentionEveryone]) },
         guild: {
@@ -105,10 +101,10 @@ test("announce handleAnnounce sends announcement to specified target channel", a
             getChannel: name => (name === "channel" ? targetChannel : null),
             getString: name => {
                 const map = {
-                    message: "Custom Announcement Message",
+                    description: "Custom Embed Description",
                     title: "Special Update",
                     content: "@everyone Check this out",
-                    button_text: "Join Now",
+                    button_label: "Join Now",
                     button_url: "https://discord.gg/join"
                 };
                 return map[name] || null;
@@ -120,7 +116,7 @@ test("announce handleAnnounce sends announcement to specified target channel", a
         editReply: async body => editReplies.push(body)
     };
 
-    await handleAnnounce(interaction);
+    await handleEmbedCreate(interaction);
 
     assert.equal(sentMessages.length, 1);
     assert.equal(sentMessages[0].content, "@everyone Check this out");
@@ -131,10 +127,10 @@ test("announce handleAnnounce sends announcement to specified target channel", a
     assert.match(editReplies[0].content, /เปิดดูข้อความ/);
 });
 
-test("announce handleAnnounce rejects caller without Administrator", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("embed create handleEmbedCreate rejects caller without Administrator", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const replies = [];
     const interaction = {
-        commandName: "announce",
+        commandName: "embed",
         channel: { id: "c1" },
         member: { permissions: new PermissionsBitField([PermissionFlagsBits.ManageMessages]) },
         guild: {
@@ -143,12 +139,12 @@ test("announce handleAnnounce rejects caller without Administrator", async () =>
         },
         options: {
             getChannel: () => null,
-            getString: () => "message"
+            getString: () => "description"
         },
         reply: async body => replies.push(body)
     };
 
-    await handleAnnounce(interaction);
+    await handleEmbedCreate(interaction);
     assert.equal(replies.length, 1);
     assert.match(replies[0].content, /Administrator/);
 });

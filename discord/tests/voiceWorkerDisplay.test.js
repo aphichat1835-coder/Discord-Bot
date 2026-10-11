@@ -127,12 +127,14 @@ test("getUptimeString: shows days for long uptime", () => {
 
 test("getConnectionStatusText: returns green for Ready", () => {
     const session = { connection: { state: { status: VoiceConnectionStatus.Ready } } };
-    assert.ok(getConnectionStatusText(session).includes("🟢"));
+    const statusText = getConnectionStatusText(session);
+    assert.ok(statusText.includes("กำลังออน"));
 });
 
 test("getConnectionStatusText: returns red for Destroyed", () => {
     const session = { connection: { state: { status: VoiceConnectionStatus.Destroyed } } };
-    assert.ok(getConnectionStatusText(session).includes("🔴"));
+    const statusText = getConnectionStatusText(session);
+    assert.ok(statusText.includes("หยุดแล้ว"));
 });
 
 test("getConnectionStatusText: returns yellow for Connecting", () => {

@@ -61,7 +61,8 @@ const {
 const {
     handleQuestCommand,
     handleQuestButton,
-    handleQuestSelect
+    handleQuestSelect,
+    buildQuestPanelRow
 } = require('../commands/quest');
 const {
     questSummaryTone,
@@ -263,6 +264,53 @@ test('handleQuestCommand enforces bot owner check for panel', async () => {
     assert.ok(ownerReply.components && ownerReply.components.length > 0);
     assert.ok(ownerReply.files && ownerReply.files.length > 0);
     assert.equal(ownerReply.embeds[0].data.image.url, 'attachment://quest-banner.gif');
+    const defaultButtons = ownerReply.components[0].components;
+    assert.equal(defaultButtons.length, 2);
+    assert.equal(defaultButtons[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(defaultButtons[1].data.custom_id, 'quest_panel:stop');
+});
+
+test('handleQuestCommand renders AUTO DAILY button when auto_daily option is true', async () => {
+    const ownerId = process.env.OWNER_ID || require('../config.json').system?.ownerId || '661415152146710558';
+    let ownerReply = null;
+    const ownerInteraction = {
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: (name) => (name === 'auto_daily' ? true : null)
+        },
+        reply: (payload) => { ownerReply = payload; return Promise.resolve(payload); },
+        isRepliable: () => true,
+        deferred: false,
+        replied: false
+    };
+
+    await handleQuestCommand(ownerInteraction);
+    assert.ok(ownerReply);
+    assert.ok(ownerReply.components && ownerReply.components.length > 0);
+    const buttons = ownerReply.components[0].components;
+    assert.equal(buttons.length, 3);
+    assert.equal(buttons[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(buttons[1].data.custom_id, 'quest_panel:run_daily');
+    assert.equal(buttons[2].data.custom_id, 'quest_panel:stop');
+});
+
+test('buildQuestPanelRow respects showDaily option', () => {
+    const defaultRow = buildQuestPanelRow();
+    assert.equal(defaultRow.components.length, 2);
+    assert.equal(defaultRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(defaultRow.components[1].data.custom_id, 'quest_panel:stop');
+
+    const dailyRow = buildQuestPanelRow({ showDaily: true });
+    assert.equal(dailyRow.components.length, 3);
+    assert.equal(dailyRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(dailyRow.components[1].data.custom_id, 'quest_panel:run_daily');
+    assert.equal(dailyRow.components[2].data.custom_id, 'quest_panel:stop');
+
+    const explicitFalseRow = buildQuestPanelRow({ showDaily: false });
+    assert.equal(explicitFalseRow.components.length, 2);
+    assert.equal(explicitFalseRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(explicitFalseRow.components[1].data.custom_id, 'quest_panel:stop');
 });
 
 test('handleQuestButton allows users to open modal and view stop controls', async () => {
@@ -286,7 +334,7 @@ test('handleQuestButton allows users to open modal and view stop controls', asyn
     assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
 });
 
-test('runnerManager routes status updates to DM and falls back to channel when DM fails', async () => {
+test('runnerManager routes status updates to DM and continues silently without channel fallback when DM fails', async () => {
     const dmDeliveries = [];
     const mockDm = {
         id: 'dm_12345',
@@ -327,7 +375,7 @@ test('runnerManager routes status updates to DM and falls back to channel when D
     assert.ok(dmDeliveries[0].embeds && dmDeliveries[0].embeds.length > 0);
     assert.match(dmDeliveries[0].embeds[0].data.fields[0].value, /TestUserDM/);
 
-    // Test fallback when DM sending fails (e.g. DMs closed)
+    // Test that when DM sending fails (e.g. DMs closed), it never falls back to guild channel and continues silently
     const channelDeliveries = [];
     const mockClosedDm = {
         id: 'dm_closed',
@@ -372,9 +420,38 @@ test('runnerManager routes status updates to DM and falls back to channel when D
     fallbackRunner.controller.abort();
     await fallbackRunner.task.catch(() => {});
 
-    assert.ok(channelDeliveries.length > 0, 'Status message should fall back to guild channel when DM fails');
-    assert.ok(channelDeliveries[0].embeds && channelDeliveries[0].embeds.length > 0);
-    assert.match(channelDeliveries[0].embeds[0].data.fields[0].value, /TestUserClosed/);
+    assert.equal(channelDeliveries.length, 0, 'Status message must never fall back to guild channel when DM fails');
+
+    // Test runner without resolvable DM channel never sends to guild channel
+    const noDmChannelDeliveries = [];
+    const mockChannelOnlyClient = {
+        users: {
+            fetch: async () => null
+        },
+        channels: {
+            fetch: async () => ({
+                id: 'guild_channel_only',
+                isTextBased: () => true,
+                send: async (p) => {
+                    noDmChannelDeliveries.push(p);
+                    return { edit: async () => {} };
+                }
+            })
+        }
+    };
+    const silentRunner = await startRunner({
+        jobKey: 'test:dm:routing:3',
+        ownerId: 'user_unknown',
+        userToken: 'invalid_dummy_token_for_test_3',
+        channelId: 'guild_channel_only',
+        client: mockChannelOnlyClient,
+        mode: 'oneshot',
+        username: 'TestUserSilent'
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    silentRunner.controller.abort();
+    await silentRunner.task.catch(() => {});
+    assert.equal(noDmChannelDeliveries.length, 0, 'Status message must never be sent to guild channel when DM is unresolvable');
 });
 
 test('questDm builds correct tones and embeds for success, partial, danger, and auth failure', () => {
@@ -495,7 +572,7 @@ test('questDm buildQuestStoppedEmbed creates danger embed with abort reason', ()
     });
 
     assert.ok(embed);
-    assert.equal(embed.data.title, '🛑 สั่งหยุดการทำงานของ Quest แล้ว');
+    assert.match(embed.data.title, /สั่งหยุดการทำงานของ Quest แล้ว/);
     assert.equal(embed.data.color, parseInt('ED4245', 16));
     assert.ok(embed.data.fields.some((f) => f.name.includes('บัญชีที่หยุดทำงาน') && f.value.includes('OperatorUser')));
     assert.ok(embed.data.fields.some((f) => f.name.includes('เหตุผลที่หยุด') && f.value.includes('/quest panel')));

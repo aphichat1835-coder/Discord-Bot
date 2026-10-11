@@ -2,7 +2,6 @@ const DEFAULT_FLAGS = {
     voice: true,
     verification: true,
     protection: true,
-    backup: true,
     roleButton: true,
     sensitiveAccess: true,
     memoryMonitor: true

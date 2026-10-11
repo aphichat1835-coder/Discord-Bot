@@ -1,7 +1,6 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const mongoose = require("mongoose");
 const DmNotification = require("./model");
 const { profileFromUser, safeText } = require("./design");
 const { withTimeoutValue } = require("../core/timers");
@@ -63,9 +62,19 @@ function isRetiredCategory(category) {
     return RETIRED_CATEGORIES.has(normalizeCategory(category));
 }
 
+function resolveDmRetentionMs() {
+    const days = parseInt(process.env.SQLITE_DM_RETENTION_DAYS, 10);
+    return (!isNaN(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000;
+}
+
 function databaseReady() {
     if (typeof databaseReadyOverride === "boolean") return databaseReadyOverride;
-    return mongoose.connection.readyState === 1;
+    try {
+        const database = require("../../database");
+        return Boolean(database?.sqlite?.isReady?.());
+    } catch (_) {
+        return false;
+    }
 }
 
 function rememberVolatile(key) {
@@ -220,7 +229,7 @@ async function reserve(input) {
         nextAttemptAt: Date.now(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        expiresAt: new Date(Date.now() + resolveDmRetentionMs())
     };
 
     if (volatileDedupe.has(eventKey) || volatileOutbox.has(eventKey) || volatileDelivered.has(eventKey)) {
@@ -433,6 +442,7 @@ module.exports = {
     _test: {
         attempt, reserve, claimRecord, failureCode, safeFailure, withTimeout,
         volatileDedupe, volatileDelivered, volatileOutbox, persistVolatileOutbox, purgeRetiredQueue,
-        backfillPriorityRanks, queueVolatileRecord, resetTestState, setDatabaseReadyForTest
+        backfillPriorityRanks, queueVolatileRecord, resetTestState, setDatabaseReadyForTest,
+        setDatabaseReadyOverride: setDatabaseReadyForTest, databaseReady, resolveDmRetentionMs
     }
 };

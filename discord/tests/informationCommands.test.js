@@ -263,9 +263,13 @@ test("userinfo presents age as context rather than declaring a person high risk"
     assert.equal(information._test.userTypeDetailLabel({ bot: false }), "ผู้ใช้งานทั่วไป (User)");
 
     // Test Staff Label
-    assert.equal(information._test.memberStaffLabel({ guild: { ownerId: "999" }, id: "999" }), "👑 เจ้าของเซิร์ฟเวอร์ (Server Owner)");
-    assert.equal(information._test.memberStaffLabel({ guild: { ownerId: "999" }, id: "111", permissions: { has: p => p === PermissionFlagsBits.Administrator } }), "🛡️ ทีมงานดูแลเซิร์ฟเวอร์ (Staff / Mod)");
-    assert.equal(information._test.memberStaffLabel({ guild: { ownerId: "999" }, id: "222", permissions: { has: () => false } }), "👤 สมาชิกทั่วไป (Member)");
+    const config = require("../config.json");
+    const ownerEmoji = config.emojis?.owner || "👑";
+    const shieldEmoji = config.emojis?.shield || "🛡️";
+    const userEmoji = config.emojis?.user || "👤";
+    assert.equal(information._test.memberStaffLabel({ guild: { ownerId: "999" }, id: "999" }), `${ownerEmoji} เจ้าของเซิร์ฟเวอร์ (Server Owner)`);
+    assert.equal(information._test.memberStaffLabel({ guild: { ownerId: "999" }, id: "111", permissions: { has: p => p === PermissionFlagsBits.Administrator } }), `${shieldEmoji} ทีมงานดูแลเซิร์ฟเวอร์ (Staff / Mod)`);
+    assert.equal(information._test.memberStaffLabel({ guild: { ownerId: "999" }, id: "222", permissions: { has: () => false } }), `${userEmoji} สมาชิกทั่วไป (Member)`);
 
     // Test Highest Role Label
     const memberRoles = new Collection([

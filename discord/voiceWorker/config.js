@@ -1,12 +1,9 @@
 /* eslint-disable complexity -- Voice/session lifecycle is behavior-sensitive; refactor separately. */
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT MODIFY: MAX_RECONNECT_ATTEMPTS, CONNECTION_TIMEOUT, LOGIN_TIMEOUT.
-DO NOT REMOVE: isShuttingDown flag — critical for SIGTERM safety (เฟส 8+18).
-DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
-================================================================================
-*/
+/**
+ * Voice Worker Configuration
+ * - Network timeouts, retry thresholds, and operation queue concurrency limits.
+ * - Client cache memory limits and Voice Lean mode configuration.
+ */
 
 const crypto = require("node:crypto");
 const { delay, withTimeoutValue, withTimeoutReject } = require("../core/timers");

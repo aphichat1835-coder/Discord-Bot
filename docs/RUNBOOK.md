@@ -1,6 +1,6 @@
 # Unified Runtime Runbook
 
-Updated: 2026-07-23 (`ttt`).
+Updated: 2026-10-05 (`main`).
 
 ## Start and health
 
@@ -61,16 +61,22 @@ voice, slash-command, and verification readiness.
    `ENCRYPTION_KEY` and `API_SECRET` stable for IP/device correlation unless a
    coordinated correlation migration or re-verification is planned. Rotating
    `API_SECRET` invalidates existing Owner sessions.
-7. Deploy.
-8. Run the single-port smoke helper:
+7. Mount persistent volume storage for the local SQLite operational database
+   (e.g. `/persistent`) and set `SQLITE_DB_PATH=/persistent/discordbot.sqlite`,
+   `SQLITE_BACKUP_DIR=/persistent/backups`,
+   `SQLITE_ASSET_DIR=/persistent/cache-assets`, and
+   `SQLITE_PERSISTENCE_CONFIRMED=true`. Run `npm run check:storage`
+   to verify filesystem write permissions, path isolation, and persistence confirmation before deployment.
+8. Deploy.
+9. Run the single-port smoke helper:
 
    ```bash
    SMOKE_ALLOWED_HOSTS=DOMAIN npm run smoke:unified -- https://DOMAIN
    ```
 
-9. Test Owner Dashboard, `/verification`, a target guild page, and a complete
+10. Test Owner Dashboard, `/verification`, a target guild page, and a complete
    member verification.
-10. If a legacy standalone service still exists, stop it only after all checks
+11. If a legacy standalone service still exists, stop it only after all checks
    pass. New/current installations have only the root service.
 
 ## Verification smoke test

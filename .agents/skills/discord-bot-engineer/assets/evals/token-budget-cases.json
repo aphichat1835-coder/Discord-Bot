@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cases": [
+    {"id": "micro-copy", "request": "เปลี่ยนคำสะกดในข้อความตอบกลับคำสั่ง Discord", "expect_level": "micro", "max_initial_references": 1},
+    {"id": "standard-command", "request": "เพิ่ม slash command แสดงข้อมูลเซิร์ฟเวอร์ด้วย discord.js", "expect_level": "standard", "max_initial_references": 3},
+    {"id": "deep-reopened", "request": "แก้บัค moderation เดิมที่ยังพังหลังแก้ครั้งก่อน", "expect_level": "deep", "required_profiles": ["defect", "moderation"]},
+    {"id": "incident-economy", "request": "เพิ่มระบบ economy transfer และ ledger", "expect_level": "incident", "required_profiles": ["economy"]},
+    {"id": "incident-oauth", "request": "แก้ OAuth dashboard authorization bypass", "expect_level": "incident", "required_profiles": ["dashboard"]},
+    {"id": "deep-voice", "request": "แก้ voice worker reconnect และ cleanup", "expect_level": "deep", "required_profiles": ["music"]},
+    {"id": "deep-ci", "request": "แก้ GitHub Actions CI ที่ล้มเหลว", "expect_level": "deep", "required_profiles": ["github_ci"]},
+    {"id": "incident-security", "request": "ตรวจ CodeQL secret scanning และ branch protection", "expect_level": "incident", "required_profiles": ["github_security"]}
+  ]
+}

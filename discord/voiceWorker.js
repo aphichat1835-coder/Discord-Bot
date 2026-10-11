@@ -1,11 +1,8 @@
 /* eslint-disable complexity -- Voice/session lifecycle is behavior-sensitive; refactor separately. */
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT MODIFY: MAX_RECONNECT_ATTEMPTS, CONNECTION_TIMEOUT, LOGIN_TIMEOUT.
-DO NOT REMOVE: isShuttingDown flag — critical for SIGTERM safety (เฟส 8+18).
-DO NOT SIMPLIFY: OperationQueue concurrency — prevents IP ban from Discord.
-================================================================================
-*/
+/**
+ * Voice Worker Compatibility Entry Point
+ * - Network timeouts, retry thresholds, and operation queue concurrency limits.
+ * - SIGTERM graceful shutdown coordination and forward export to voiceWorker/index.
+ */
 
 module.exports = require("./voiceWorker/index");

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "baseline": {"skill_words": 1655, "skill_bytes": 15242},
+  "limits": {"skill_words": 1200, "skill_bytes": 11000},
+  "required_anchors": [
+    "Micro, Standard, Deep, or Incident",
+    "Automatically escalate",
+    "defect contract|neighborhood|gate",
+    "semantic --changed",
+    "domain plan|analyze|gate",
+    "ux decide|plan|compose|compare|compile|payload|audit|gate",
+    "github inspect|history|workflow-audit|normalize|log-triage|contract|evidence|gate|release-plan",
+    "production-proof.md",
+    "Completion Gate",
+    "--full",
+    "--output <path>",
+    "evidence compact",
+    "ledger init|record|invalidate|summary"
+  ],
+  "policy": "Token reduction passes only when all deterministic behavior, safety, workflow, example, and production-proof tests also pass."
+}

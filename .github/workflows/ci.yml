@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - ttt
   pull_request:
 
 permissions:
@@ -46,6 +45,9 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Rebuild native SQLite addon
+        run: npm rebuild better-sqlite3
+
       - name: Verify Discord runtime dependencies
         run: node -e "require('discord.js'); require('@discordjs/voice'); console.log('discord runtime ok')"
 
@@ -79,6 +81,9 @@ jobs:
       - name: Mongoose 9 compatibility check
         run: npm run check:mongoose9
 
+      - name: SQLite check
+        run: npm run check:sqlite
+
       - name: Discord tests with LCOV coverage
         shell: bash
         run: |
@@ -108,6 +113,9 @@ jobs:
       - name: Verification tests with LCOV coverage
         run: npm run test:coverage:verification
 
+      - name: Database tests
+        run: npm run test:database
+
       - name: Verify LCOV reports and thresholds
         run: npm run check:coverage
 
@@ -127,4 +135,4 @@ jobs:
           fi
 
       - name: Root audit
-        run: npm audit --audit-level=high
+        run: node scripts/checkAudit.js
