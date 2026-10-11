@@ -7,8 +7,6 @@ const schema = new mongoose.Schema({
     userId:  { type: String, required: true },
     roleId:  String,
 
-    requestId: String,
-
     result: { type: String, enum: ['success', 'failed', 'blocked'], required: true },
     reason: String,
 
@@ -18,8 +16,7 @@ const schema = new mongoose.Schema({
 
     policySnapshot: mixed,
     discordSnapshot: mixed,
-    guildSnapshot: mixed,
-    memberSnapshot: mixed,
+    guildSummary: mixed,
     joinResult: mixed,
     roleAssignResult: mixed,
 
@@ -136,7 +133,6 @@ schema.index({ guildId: 1, result: 1, verifiedAt: -1 });
 schema.index({ 'ipInfo.ipHash': 1 });
 schema.index({ 'device.fingerprintHash': 1 });
 schema.index({ stateMode: 1 });
-schema.index({ requestId: 1 });
 schema.index({ 'trackingSnapshot.uniqueUsers': -1 });
 schema.index({ ipHistoryMigrationVersion: 1, _id: 1 });
 

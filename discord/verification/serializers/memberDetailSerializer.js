@@ -105,16 +105,14 @@ function buildVerification(oauth = {}, logSummary = null) {
 }
 
 function buildOAuthTokenStatuses(oauth = {}, canViewSensitive = false, tokenStatuses = null) {
-    if (!canViewSensitive) return { oauth: null, adminOAuth: null };
+    if (!canViewSensitive) return { oauth: null };
     if (tokenStatuses && typeof tokenStatuses === "object") {
         return {
-            oauth: tokenStatuses.oauth || null,
-            adminOAuth: tokenStatuses.adminOAuth || null
+            oauth: tokenStatuses.oauth || null
         };
     }
     return {
-        oauth: tokenStatus(oauth.oauth || {}),
-        adminOAuth: tokenStatus(oauth.adminOAuth || {})
+        oauth: tokenStatus(oauth.oauth || {})
     };
 }
 

@@ -296,7 +296,7 @@ class CampaignWorker {
 
                 // Strict tokenField validation (fail-closed, no fallback)
                 const tokenField = String(candidate.tokenField || "").trim();
-                if (tokenField !== "oauth" && tokenField !== "adminOAuth") {
+                if (tokenField !== "oauth") {
                     console.warn(`[JoinCampaign] Candidate ${userId} has invalid tokenField "${tokenField}". Skipping.`);
                     continue;
                 }
@@ -497,7 +497,7 @@ class CampaignWorker {
                         }
 
                         const itemTokenField = String(item.tokenField || "").trim();
-                        if (itemTokenField !== "oauth" && itemTokenField !== "adminOAuth") {
+                        if (itemTokenField !== "oauth") {
                             await recordItemOutcome({ userId, status: "failed", error: "invalid_token_field" });
                             return;
                         }

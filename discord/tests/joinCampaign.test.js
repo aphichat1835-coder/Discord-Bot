@@ -13,7 +13,7 @@ const joinCampaignService = require("../features/joinCampaign/services/joinCampa
 test("candidateQueryService: countEligibleCandidates accurately counts and filters target members", async (t) => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const fakeCandidates = [
         { userId: "100", tokenField: "oauth", scope: "identify guilds.join" },
-        { userId: "200", tokenField: "adminOAuth", scope: "identify guilds guilds.join" },
+        { userId: "200", tokenField: "oauth", scope: "identify guilds guilds.join" },
         { userId: "300", tokenField: "oauth", scope: "identify email" },
         { userId: "400", tokenField: "oauth", scope: "identify guilds.join" }
     ];

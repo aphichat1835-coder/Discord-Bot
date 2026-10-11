@@ -19,10 +19,6 @@ const userSchema = new mongoose.Schema({
 
     lastResult: String,
     lastRoleId: String,
-    lastRoles: [String],
-    lastJoinedAt: String,
-    lastMemberPending: Boolean,
-    lastCommunicationDisabledUntil: String,
 
     lastDeviceFingerprintHash: String,
     lastFindings: [String]
@@ -43,14 +39,6 @@ const deviceSchema = new mongoose.Schema({
     language: String,
     timezone: String,
     screenSize: String
-}, { _id: false, minimize: false });
-
-const roleSnapshotSchema = new mongoose.Schema({
-    userId: String,
-    roleId: String,
-    roles: [String],
-    result: String,
-    at: Number
 }, { _id: false, minimize: false });
 
 const schema = new mongoose.Schema({
@@ -93,7 +81,6 @@ const schema = new mongoose.Schema({
 
     users: [userSchema],
     deviceFingerprints: [deviceSchema],
-    roleSnapshots: [roleSnapshotSchema],
 
     lastIpInfo: mixed,
     lastDevice: mixed,

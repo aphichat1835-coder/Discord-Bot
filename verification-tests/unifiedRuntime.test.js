@@ -125,8 +125,8 @@ describe("single-process verification runtime contract", () => {
             "policy",
             "data"
         ]);
-        expect(page).toContain("สมาชิกและข้อมูลฉบับเต็ม");
-        expect(page).toContain("ข้อมูลบัญชี เซิร์ฟเวอร์ อุปกรณ์ เครือข่าย ประวัติ และ OAuth");
+        expect(page).toContain("ส่งบันทึกการยืนยันตัวตน (Webhook Log)");
+        expect(page).toContain("Discord Webhook Log");
         expect(page).not.toContain("VERIFY CONTROL");
         expect(fs.existsSync("discord/verification/views/guild.html")).toBe(false);
     });
@@ -170,7 +170,7 @@ describe("single-process verification runtime contract", () => {
         const guildView = verificationGuildPage();
         const guildScript = fs.readFileSync("discord/verification/public/js/guild-dashboard.js", "utf8");
         expect(`${guildView}\n${guildScript}`).not.toMatch(/owner approval|อนุมัติ sensitive|approval หมดอายุ/i);
-        expect(guildView).toContain("สมาชิกและข้อมูลฉบับเต็ม");
+        expect(guildView).toContain("ส่งบันทึกการยืนยันตัวตน (Webhook Log)");
         expect(guildView).not.toMatch(/Audit|บันทึก audit|ข้อมูลและความเป็นส่วนตัว/i);
     });
 

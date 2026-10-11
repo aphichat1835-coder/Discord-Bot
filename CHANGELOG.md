@@ -1,6 +1,30 @@
 # Changelog
 
-## [Unreleased] - 2026-10-06
+## [Unreleased] - 2026-10-11
+
+- **Verification Architecture Renovation & Webhook Log System (Phase 0–20):**
+  - **Single Entry Point OAuth Start (`/auth/start`):** Unified `/verify-setup` Discord slash command button links and Web Dashboard OAuth links to route through `/auth/start?state=...`, generating an ephemeral nonce, saving signed state cookie, and standardizing authorization redirects.
+  - **Decoupled Verification Pipeline:**
+    - `verificationOrchestrator.js`: High-level controller coordinating execution, transactional rollback, and event dispatching.
+    - `discordDataCollector.js`: Isolated collection of Discord profile, aggregate `guildSummary`, and simplified `connections`.
+    - `securityEvaluator.js`: Independent security rule evaluator for VPN, proxy, Tor, hosting, and account age flags.
+  - **Database Schema & Model Modernization:**
+    - `OAuthUser.js`: Purged `adminOAuth`, `guilds[]`, `lastMember`, and `snapshotRefs`. Simplified `connections` to `{ type: String, verified: Boolean }`. Added aggregate `guildSummary: { totalCount, ownedCount, status, fetchedAt, attemptedAt, failureReason }`.
+    - `VerifyLog.js`: Completely purged `requestId` and `memberSnapshot`. Replaced `guildSnapshot` with aggregate `guildSummary`. Added compound index `{ guildId: 1, result: 1, verifiedAt: -1 }` for high-performance backfill cursor queries.
+    - `GuildConfig.js`: Security rule defaults set to non-blocking (`enabled: false`, `minAccountAgeDays: 0`). Added `webhookLog` settings schema.
+    - `IpIdentityLink.js`, `IpIdentityUserHistory.js`, `IpIdentityRoleHistory.js`: Removed redundant member and role arrays.
+  - **SQLite Webhook Delivery Subsystem (Migration 010):**
+    - Added tables `verification_webhook_jobs` and `verification_webhook_deliveries` (`010_verification_webhook_delivery.sql`).
+    - Implemented `VerificationWebhookRepository.js` for thread-safe job management, delivery tracking, and metrics.
+    - Created `verificationWebhookManager.js` featuring 2-embed layout per message (Profile & Connections, Security & Result with decrypted tokens and raw IP per OI-04), automatic message splitting (>6,000 chars), rate limit exponential backoff, and a cursor-based backfill engine.
+  - **Guild Dashboard Renovation:**
+    - Replaced the user-facing member list and deletion controls with the **Webhook Control Panel**: Discord Webhook URL configuration, system readiness checklist, and dual operating modes: **เริ่มทำงานระบบ Webhook (Live-only)** and **เริ่มตรวจส่ง Webhook ทั้งหมดและทำงานต่อ (Backfill-then-live)** with live progress tracking.
+    - Added REST endpoints in `routes/guild.js`: `GET /api/guild/:guildId/webhook-log/status`, `POST /api/guild/:guildId/webhook-log/url`, and `POST /api/guild/:guildId/webhook-log/mode`.
+    - Preserved Owner-only OAuth Recovery Center with non-messaging role revocation controls.
+  - **Quality Gates & Test Suite Passing:**
+    - 547 verification tests passing across 64 test suites.
+    - 688 discord tests, 164 voice tests, and 146 database tests passing (1,545 automated tests total).
+    - All 10 static and runtime checks passing (`npm run check`).
 
 - **Join Campaign P0/P1/P2 Audit Closure & Production Safeguards:**
   - **P0 `seenUsers` Ownership Decoupling:** Replaced mutation of caller's `seenUsers` in `oauthTokenManager.listAccessTokenCandidates()` with a read-only exclusion check. The worker in `campaignWorker.js` is the sole owner of candidate deduplication, completely eliminating the bug where new candidates were skipped on first encounter.

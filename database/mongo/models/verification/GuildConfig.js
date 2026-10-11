@@ -70,28 +70,38 @@ const schema = new mongoose.Schema({
         legacyOauthMode:      String,
         directStateMode:      String,
 
-        blockVPN:             { type: Boolean, default: true },
+        blockVPN:             { type: Boolean, default: false },
         blockHosting:         { type: Boolean, default: false },
-        minAccountAgeDays:    { type: Number,  default: 7 },
+        minAccountAgeDays:    { type: Number,  default: 0 },
 
         requireEmail:         { type: Boolean, default: false },
         requireEmailVerified: { type: Boolean, default: false },
 
         requireConnections:   { type: Boolean, default: false },
-        minConnections:       { type: Number,  default: 1 },
-
-        allowedCountries:     { type: [String], default: [] },
-        blockedCountries:     { type: [String], default: [] },
 
         // แต่ละกฎเปิด/ปิดและเลือกการทำงานได้อย่างอิสระ
         securityRules: {
-            vpnProxyTor:        { type: securityRuleSchema({ enabled: true }), default: undefined },
+            vpnProxyTor:        { type: securityRuleSchema({ enabled: false }), default: undefined },
             hosting:            { type: securityRuleSchema(), default: undefined },
             ipDuplicate:        { type: securityRuleSchema({ action: 'allow', threshold: 3 }), default: undefined },
             deviceDuplicate:    { type: securityRuleSchema({ action: 'allow', threshold: 2 }), default: undefined },
             previouslyBlockedIp:{ type: securityRuleSchema(), default: undefined },
             spoofedHeader:      { type: securityRuleSchema(), default: undefined },
             unknownLookup:      { type: securityRuleSchema(), default: undefined }
+        },
+
+        webhookLog: {
+            enabled:             { type: Boolean, default: false },
+            mode:                { type: String, enum: ['off', 'live', 'backfill_live'], default: 'off' },
+            url:                 { type: String, default: '' },
+            validatedAt:         Number,
+            channelId:           String,
+            guildId:             String,
+            applicationId:       String,
+            lastDeliveryAt:      Number,
+            lastStatus:          { type: String, default: 'idle' },
+            lastError:           String,
+            backfillCompletedAt: Number
         },
 
         panel:                { type: panelSchema, default: () => ({}) },

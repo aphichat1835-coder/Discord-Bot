@@ -415,8 +415,7 @@
     closeSidebar();
 
     if (tab === "data") {
-      loadMembers(state.membersPage);
-      loadOAuthRecovery();
+      loadWebhookStatus();
     }
     if (tab === "panel") renderEmbedPreview();
   }
@@ -2564,6 +2563,157 @@
     });
   }
 
+  let webhookPollInterval = null;
+
+  async function loadWebhookStatus() {
+    if (!state.guildId) return;
+    try {
+      const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/status`);
+      const input = $("webhook-url-input");
+      if (input && data.urlMasked && !input.dataset.userEditing) {
+        input.value = data.urlMasked;
+      }
+
+      const badge = $("webhook-badge-status");
+      if (badge) {
+        if (data.activeJob) {
+          badge.className = "badge badge-warn";
+          badge.textContent = "กำลังส่งข้อมูล";
+        } else if (data.enabled && data.urlValid) {
+          badge.className = "badge badge-success";
+          badge.textContent = "พร้อมทำงาน";
+        } else if (data.urlConfigured && !data.urlValid) {
+          badge.className = "badge badge-danger";
+          badge.textContent = "URL ไม่ถูกต้อง";
+        } else {
+          badge.className = "badge badge-muted";
+          badge.textContent = "รอตั้งค่า";
+        }
+      }
+
+      const checkUrlDot = $("check-icon-url");
+      const checkUrlText = $("check-text-url");
+      const checkUrlBadge = $("check-badge-url");
+      if (checkUrlText && checkUrlBadge && checkUrlDot) {
+        checkUrlText.textContent = data.checklist?.urlFormat?.text || (data.urlValid ? "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล" : "ยังไม่ได้ระบุ Webhook URL");
+        if (data.urlValid) {
+          checkUrlDot.style.background = "var(--green2)";
+          checkUrlBadge.className = "badge badge-success";
+          checkUrlBadge.textContent = "พร้อมใช้งาน";
+        } else if (data.urlConfigured) {
+          checkUrlDot.style.background = "var(--red2)";
+          checkUrlBadge.className = "badge badge-danger";
+          checkUrlBadge.textContent = "ไม่ถูกต้อง";
+        } else {
+          checkUrlDot.style.background = "var(--muted)";
+          checkUrlBadge.className = "badge badge-muted";
+          checkUrlBadge.textContent = "ยังไม่พร้อม";
+        }
+      }
+
+      const checkWorkerDot = $("check-icon-worker");
+      const checkWorkerText = $("check-text-worker");
+      const checkWorkerBadge = $("check-badge-worker");
+      if (checkWorkerText && checkWorkerBadge && checkWorkerDot) {
+        checkWorkerText.textContent = data.checklist?.workerReady?.text || "ระบบพร้อมทำงาน";
+        if (data.activeJob) {
+          checkWorkerDot.style.background = "var(--yellow2)";
+          checkWorkerBadge.className = "badge badge-warn";
+          checkWorkerBadge.textContent = "กำลังส่งข้อมูล";
+        } else if (data.enabled && data.urlValid) {
+          checkWorkerDot.style.background = "var(--green2)";
+          checkWorkerBadge.className = "badge badge-success";
+          checkWorkerBadge.textContent = "ทำงานอยู่";
+        } else {
+          checkWorkerDot.style.background = "var(--muted)";
+          checkWorkerBadge.className = "badge badge-muted";
+          checkWorkerBadge.textContent = "รอเริ่มงาน";
+        }
+      }
+
+      const progressBox = $("webhook-progress-box");
+      const progressCount = $("webhook-progress-count");
+      const progressBar = $("webhook-progress-bar");
+      if (progressBox && progressCount && progressBar) {
+        if (data.activeJob) {
+          progressBox.classList.remove("hidden");
+          const processed = Number(data.activeJob.processedCount || 0);
+          const total = Number(data.activeJob.totalEligible || 0);
+          progressCount.textContent = `${processed} จาก ${total} รายการ`;
+          const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+          progressBar.style.width = `${pct}%`;
+
+          if (!webhookPollInterval) {
+            webhookPollInterval = setInterval(loadWebhookStatus, 3000);
+          }
+        } else {
+          progressBox.classList.add("hidden");
+          if (webhookPollInterval) {
+            clearInterval(webhookPollInterval);
+            webhookPollInterval = null;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load webhook status:", err);
+    }
+  }
+
+  async function saveWebhookUrl() {
+    const input = $("webhook-url-input");
+    const url = String(input?.value || "").trim();
+    if (!url) {
+      showToast("กรุณาระบุ Discord Webhook URL", "err");
+      return;
+    }
+    const btn = $("btn-save-webhook-url");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/url`, {
+        method: "POST",
+        body: JSON.stringify({ url })
+      });
+      showToast(res.message || "บันทึก Webhook URL สำเร็จ", "ok");
+      if (input) input.dataset.userEditing = "";
+      await loadWebhookStatus();
+    } catch (err) {
+      showToast(err.message || "บันทึก Webhook URL ไม่สำเร็จ", "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function startWebhookMode(mode) {
+    const btn = mode === "live" ? $("btn-start-live-only") : $("btn-start-backfill-all");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/mode`, {
+        method: "POST",
+        body: JSON.stringify({ mode })
+      });
+      showToast(res.message || "เริ่มทำงานเรียบร้อยแล้ว", "ok");
+      await loadWebhookStatus();
+    } catch (err) {
+      showToast(err.message || "เกิดข้อผิดพลาดในการเริ่มทำงาน", "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function bindWebhookControls() {
+    const input = $("webhook-url-input");
+    input?.addEventListener("focus", () => {
+      if (input) input.dataset.userEditing = "true";
+    });
+    input?.addEventListener("blur", () => {
+      if (input && !input.value) delete input.dataset.userEditing;
+    });
+    $("btn-save-webhook-url")?.addEventListener("click", saveWebhookUrl);
+    $("btn-refresh-webhook-status")?.addEventListener("click", loadWebhookStatus);
+    $("btn-start-live-only")?.addEventListener("click", () => startWebhookMode("live"));
+    $("btn-start-backfill-all")?.addEventListener("click", () => startWebhookMode("backfill"));
+  }
+
   function bindLogsControls() {
     const prev = $("btn-logs-prev");
     const next = $("btn-logs-next");
@@ -2763,6 +2913,7 @@
     bindVerificationActions();
 
     bindMembersControls();
+    bindWebhookControls();
 
     bindModal();
     bindUtilityActions();

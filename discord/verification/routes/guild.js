@@ -61,6 +61,22 @@ const verifiedMemberService = require("../services/verifiedMemberService");
 const verificationOwnerService = require("../ownerService");
 const { runMemberPrivacyDeletion } = require("../services/privacyDeletion");
 const { runGuildPreflight } = require("../services/guildPreflightService");
+const { verificationWebhookManager } = require("../services/webhook/verificationWebhookManager");
+
+function maskWebhookUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length >= 4) {
+      const id = parts[2];
+      return `https://${parsed.host}/api/webhooks/${id}/••••••••••••`;
+    }
+    return `https://${parsed.host}${parsed.pathname.slice(0, 20)}••••••••••••`;
+  } catch {
+    return "••••••••••••";
+  }
+}
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 const OBJECT_ID_RE = /^[a-fA-F0-9]{24}$/;
@@ -1496,6 +1512,127 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
     return sendServerError(res, "logs", err, "โหลด logs ไม่สำเร็จ");
   }
 });
+
+router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    const { guildId } = req.params;
+    const readiness = await verificationWebhookManager.getReadiness(guildId);
+    const config = await GuildConfig.findOne().where("guildId").equals(String(guildId)).lean();
+    const rawUrl = config?.verification?.webhookLog?.url || null;
+    const urlMasked = rawUrl ? maskWebhookUrl(rawUrl) : null;
+
+    res.json({
+      success: true,
+      ...readiness,
+      urlMasked,
+      checklist: {
+        urlFormat: {
+          ok: readiness.urlValid,
+          text: readiness.urlValid ? "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล" : (readiness.urlConfigured ? "รูปแบบ Webhook URL ไม่ถูกต้อง" : "ยังไม่ได้ระบุ Webhook URL")
+        },
+        databaseReady: {
+          ok: true,
+          text: "ระบบฐานข้อมูลเชื่อมต่อเรียบร้อย"
+        },
+        queueReady: {
+          ok: true,
+          text: "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน"
+        },
+        workerReady: {
+          ok: readiness.enabled && readiness.urlValid,
+          text: readiness.enabled && readiness.urlValid
+            ? (readiness.activeJob ? "ระบบกำลังส่งข้อมูลประวัติย้อนหลัง" : "ระบบพร้อมส่งข้อมูลตามเวลาจริง")
+            : "ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน"
+        }
+      }
+    });
+  } catch (err) {
+    return sendServerError(res, "webhook-log.status", err, "โหลดสถานะ Webhook ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/webhook-log/url", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { url } = req.body || {};
+
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({
+        success: false,
+        code: "invalid_url",
+        error: "กรุณาระบุ Discord Webhook URL"
+      });
+    }
+
+    const validation = verificationWebhookManager.validateUrl(url);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        code: validation.code || "invalid_webhook_url",
+        error: "ลิงก์ที่ระบุไม่ใช่ Discord Webhook URL ที่ถูกต้อง กรุณาตรวจสอบลิงก์อีกครั้ง"
+      });
+    }
+
+    await GuildConfig.updateOne(
+      { guildId: String(guildId) },
+      {
+        $set: {
+          "verification.webhookLog.url": url.trim(),
+          "verification.webhookLog.valid": true,
+          "verification.updatedAt": Date.now()
+        }
+      },
+      { upsert: true }
+    );
+
+    return res.json({
+      success: true,
+      message: "บันทึกและตรวจสอบ Discord Webhook URL เรียบร้อยแล้ว",
+      urlMasked: maskWebhookUrl(url)
+    });
+  } catch (err) {
+    return sendServerError(res, "webhook-log.url", err, "บันทึก Webhook URL ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/webhook-log/mode", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { mode } = req.body || {};
+
+    if (mode === "live") {
+      const result = await verificationWebhookManager.startLiveMode(guildId);
+      return res.json({
+        success: true,
+        mode: "live",
+        message: "ระบบเริ่มส่งข้อมูลแบบเรียลไทม์เรียบร้อยแล้ว",
+        ...result
+      });
+    } else if (mode === "backfill") {
+      const result = await verificationWebhookManager.startBackfillMode(guildId);
+      return res.json({
+        success: true,
+        mode: "backfill",
+        message: "เริ่มการส่งข้อมูลประวัติทั้งหมดและจะทำงานต่อแบบเรียลไทม์",
+        ...result
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        code: "invalid_mode",
+        error: "กรุณาเลือกโหมดการทำงานที่ถูกต้อง"
+      });
+    }
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      code: "mode_change_failed",
+      error: err.message || "ไม่สามารถเปลี่ยนโหมดการทำงานได้"
+    });
+  }
+});
+
 router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     res.set("Cache-Control", "no-store");

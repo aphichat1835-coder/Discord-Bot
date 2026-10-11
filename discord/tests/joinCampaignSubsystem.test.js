@@ -2865,22 +2865,21 @@ test("P2 regression: strict tokenField validation rejects invalid values fail-cl
         selectedAmount: 10
     });
 
-    // 1. JoinCampaignRepository.createItems rejects items with invalid tokenField
     const badItems = [
         { userId: "bad_user_1", tokenField: "bearer" },
         { userId: "bad_user_2", tokenField: "" },
         { userId: "bad_user_3", tokenField: null },
         { userId: "bad_user_4" }, // missing tokenField
-        { userId: "good_user_1", tokenField: "oauth" },
-        { userId: "good_user_2", tokenField: "adminOAuth" }
+        { userId: "bad_user_5", tokenField: "adminOAuth" }, // adminOAuth is retired
+        { userId: "good_user_1", tokenField: "oauth" }
     ];
 
     const inserted = repo.createItems(testJobId, badItems);
-    assert.equal(inserted, 2, "Only items with strict oauth or adminOAuth tokenField should be inserted");
+    assert.equal(inserted, 1, "Only items with strict oauth tokenField should be inserted");
 
     const inDb = repo.db.prepare("SELECT user_id, token_field FROM join_campaign_items WHERE campaign_id = ?").all(testJobId);
-    assert.equal(inDb.length, 2);
-    assert.deepEqual(inDb.map(r => r.user_id).sort(), ["good_user_1", "good_user_2"]);
+    assert.equal(inDb.length, 1);
+    assert.deepEqual(inDb.map(r => r.user_id), ["good_user_1"]);
 });
 
 test("P2 regression: batchLogger sendFinalSummaryEmbed with INTERRUPTED status uses valid refresh emoji and never outputs undefined", async () => {

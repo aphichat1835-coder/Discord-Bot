@@ -19,18 +19,8 @@ function oauthTokenFields() {
     };
 }
 const connectionSchema = new mongoose.Schema({
-    type:         String,
-    id:           String,
-    name:         String,
-    verified:     Boolean,
-    visibility:   Number,
-    friendSync:   Boolean,
-    showActivity: Boolean,
-    twoWayLink:   Boolean,
-    revoked:      Boolean,
-    integrations: mixed,
-    metadata:     mixed,
-    raw:          mixed
+    type:     String,
+    verified: { type: Boolean, default: false }
 }, { _id: false, minimize: false });
 
 function normalizeStoredConnections(value) {
@@ -40,12 +30,18 @@ function normalizeStoredConnections(value) {
         .map(item => {
             if (typeof item === 'string') {
                 const type = item.trim();
-                return type ? { type } : null;
+                return type ? { type, verified: false } : null;
             }
 
-            return item && typeof item === 'object' && !Array.isArray(item)
-                ? item
-                : null;
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+                const type = typeof item.type === 'string' ? item.type.trim() : '';
+                if (!type) return null;
+                return {
+                    type,
+                    verified: Boolean(item.verified)
+                };
+            }
+            return null;
         })
         .filter(Boolean);
 }
@@ -82,49 +78,19 @@ const schema = new mongoose.Schema({
 
     oauth: oauthTokenFields(),
 
-    adminOAuth: oauthTokenFields(),
-
     connections: {
         type: [connectionSchema],
         default: [],
         set: normalizeStoredConnections
     },
 
-    guilds: [{
-        id:                       String,
-        name:                     String,
-        icon:                     String,
-        iconUrl:                  String,
-
-        owner:                    Boolean,
-        permissions:              String,
-
-        isOwner:                  Boolean,
-        isAdmin:                  Boolean,
-        canManageGuild:           Boolean,
-        canManageRoles:           Boolean,
-        canBanMembers:            Boolean,
-        permissionFlags:          [String],
-
-        features:                 [String],
-        approximateMemberCount:   Number,
-        approximatePresenceCount: Number,
-
-        snapshot:                 mixed
-    }],
-
-    lastMember: {
-        guildId:                    String,
-        nick:                       String,
-        roles:                      [String],
-        roleCount:                  Number,
-        joinedAt:                   String,
-        pending:                    Boolean,
-        avatar:                     String,
-        avatarUrl:                  String,
-        flags:                      Number,
-        communicationDisabledUntil: String,
-        snapshot:                   mixed
+    guildSummary: {
+        totalCount:    { type: Number, default: 0 },
+        ownedCount:    { type: Number, default: 0 },
+        status:        { type: String, default: 'unknown' },
+        fetchedAt:     Number,
+        attemptedAt:   Number,
+        failureReason: String
     },
 
     lastVerify: {
@@ -145,7 +111,6 @@ const schema = new mongoose.Schema({
     },
 
     snapshotMeta: mixed,
-    snapshotRefs: mixed,
 
     deletedAt: Number,
     deletedBy: String,

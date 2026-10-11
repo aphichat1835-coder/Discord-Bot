@@ -47,7 +47,7 @@ ${navBar("/verification")}
   <button id="tab-system" class="verify-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-system" data-tab="system">ตั้งค่าระบบ</button>
   <button id="tab-panel" class="verify-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-panel" data-tab="panel">ตั้งค่าแผง</button>
   <button id="tab-policy" class="verify-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-policy" data-tab="policy">เงื่อนไขและยศ</button>
-  <button id="tab-data" class="verify-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-data" data-tab="data">ข้อมูลผู้ยืนยัน</button>
+  <button id="tab-data" class="verify-tab" type="button" role="tab" aria-selected="false" aria-controls="panel-data" data-tab="data">ส่งบันทึก Webhook</button>
 </nav>
 
 <div id="overview-error"></div>
@@ -179,14 +179,113 @@ ${navBar("/verification")}
         <div class="flex gap-8 flex-wrap mt-14"><button id="btn-oauth-recovery-refresh" class="btn btn-soft btn-inline" type="button">ตรวจใหม่</button><button id="btn-oauth-recovery-revoke-all" class="btn btn-danger btn-inline" type="button" disabled>ถอนยศทั้งหมดในรายการ</button></div>
         <div id="oauth-recovery-list" class="recovery-list mt-14"><div class="empty">ยังไม่ได้โหลดข้อมูล</div></div>
       </article>
-      <article class="verify-panel member-directory">
-        <div class="data-heading"><div><h2>สมาชิกและข้อมูลฉบับเต็ม</h2><p class="muted small">ข้อมูลบัญชี เซิร์ฟเวอร์ อุปกรณ์ เครือข่าย ประวัติ และ OAuth อยู่ในโปรไฟล์เดียว</p></div></div>
-        <div class="form-row form-row-2">
-          <div><label for="members-search">ค้นหา</label><input id="members-search" type="search" placeholder="User ID / username / IP / email"></div>
-          <div><label for="members-result">ผลการยืนยัน</label><select id="members-result"><option value="">ทั้งหมด</option><option value="success">สำเร็จ</option><option value="failed">ไม่สำเร็จ</option><option value="blocked">ไม่ผ่านเงื่อนไข</option></select></div>
+
+      <article class="verify-panel">
+        <div class="data-heading">
+          <div>
+            <p class="verify-kicker">Discord Webhook Log</p>
+            <h2>ส่งบันทึกการยืนยันตัวตน (Webhook Log)</h2>
+            <p class="muted small">ส่งข้อมูลบัญชี เครือข่าย อุปกรณ์ และผลการยืนยันตัวตนไปยังห้อง Discord ที่กำหนดโดยอัตโนมัติ</p>
+          </div>
+          <div>
+            <span id="webhook-badge-status" class="badge badge-muted">รอตั้งค่า</span>
+          </div>
         </div>
-        <div class="flex justify-between items-center gap-8 flex-wrap mt-14"><span class="muted small">แตะสมาชิกเพื่อเปิดหน้าข้อมูลแบบเต็มโดยไม่ออกจาก Dashboard</span><div class="flex gap-8"><button id="btn-members-prev" class="btn btn-soft btn-sm btn-inline" type="button">← ก่อนหน้า</button><span id="members-page" class="badge badge-muted">หน้า 1</span><button id="btn-members-next" class="btn btn-soft btn-sm btn-inline" type="button">ถัดไป →</button><button id="btn-members-refresh" class="btn btn-soft btn-sm btn-inline" type="button">รีเฟรช</button></div></div>
-        <div id="members-body" class="member-card-grid mt-14"><div class="loading-box"><div class="spinner"></div>กำลังโหลดสมาชิก…</div></div>
+
+        <div class="mt-14">
+          <label for="webhook-url-input" style="display:block; margin-bottom:6px; font-weight:600;">Discord Webhook URL</label>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <input id="webhook-url-input" type="url" placeholder="https://discord.com/api/webhooks/..." style="flex:1; padding:10px 14px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:rgba(0,0,0,0.2); color:#fff;">
+            <button id="btn-save-webhook-url" class="btn btn-primary" type="button" style="white-space:nowrap; padding:10px 20px;">ตรวจสอบและบันทึก URL</button>
+          </div>
+          <p class="muted small mt-10">วิธีสร้าง Webhook: ไปที่การตั้งค่าห้องใน Discord &gt; การผสานรวม (Integrations) &gt; สร้างเว็บบุ๊ก (Webhooks) แล้วคัดลอกลิงก์มาวางที่นี่</p>
+        </div>
+      </article>
+
+      <article class="verify-panel mt-14">
+        <div class="section-title">
+          <div>
+            <h2>ความพร้อมของระบบ</h2>
+            <p>ตรวจสอบสถานะก่อนเริ่มส่งข้อมูลไปยังห้อง Discord</p>
+          </div>
+          <button id="btn-refresh-webhook-status" class="btn btn-soft btn-sm" type="button">ตรวจใหม่</button>
+        </div>
+
+        <div id="webhook-checklist-container" class="mt-14" style="display:flex; flex-direction:column; gap:12px;">
+          <div class="checklist-item" style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:8px; background:rgba(255,255,255,0.03);">
+            <div id="check-icon-url" class="status-indicator-dot" style="width:12px; height:12px; border-radius:50%; background:var(--muted);"></div>
+            <div style="flex:1;">
+              <strong style="display:block;">รูปแบบ Webhook URL</strong>
+              <span id="check-text-url" class="muted small">ยังไม่ได้ระบุ Webhook URL</span>
+            </div>
+            <span id="check-badge-url" class="badge badge-muted">ยังไม่พร้อม</span>
+          </div>
+
+          <div class="checklist-item" style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:8px; background:rgba(255,255,255,0.03);">
+            <div id="check-icon-db" class="status-indicator-dot" style="width:12px; height:12px; border-radius:50%; background:var(--green2);"></div>
+            <div style="flex:1;">
+              <strong style="display:block;">การเชื่อมต่อฐานข้อมูล</strong>
+              <span id="check-text-db" class="muted small">ระบบฐานข้อมูลหลักพร้อมทำงาน</span>
+            </div>
+            <span id="check-badge-db" class="badge badge-success">พร้อมใช้งาน</span>
+          </div>
+
+          <div class="checklist-item" style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:8px; background:rgba(255,255,255,0.03);">
+            <div id="check-icon-queue" class="status-indicator-dot" style="width:12px; height:12px; border-radius:50%; background:var(--green2);"></div>
+            <div style="flex:1;">
+              <strong style="display:block;">ระบบคิวส่งข้อมูลและป้องกันการติดขัด</strong>
+              <span id="check-text-queue" class="muted small">คิวส่งข้อมูลพร้อมทำงาน</span>
+            </div>
+            <span id="check-badge-queue" class="badge badge-success">พร้อมใช้งาน</span>
+          </div>
+
+          <div class="checklist-item" style="display:flex; align-items:center; gap:12px; padding:12px 16px; border-radius:8px; background:rgba(255,255,255,0.03);">
+            <div id="check-icon-worker" class="status-indicator-dot" style="width:12px; height:12px; border-radius:50%; background:var(--muted);"></div>
+            <div style="flex:1;">
+              <strong style="display:block;">สถานะการทำงานปัจจุบัน</strong>
+              <span id="check-text-worker" class="muted small">ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และเลือกปุ่มเริ่มทำงานด้านล่าง</span>
+            </div>
+            <span id="check-badge-worker" class="badge badge-muted">รอเริ่มงาน</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="verify-panel mt-14">
+        <div class="section-title">
+          <div>
+            <h2>แผงควบคุมการส่งข้อมูล</h2>
+            <p>เลือกรูปแบบการทำงานของระบบบันทึก Webhook</p>
+          </div>
+        </div>
+
+        <div id="webhook-progress-box" class="hidden mt-10" style="padding:16px; border-radius:8px; background:rgba(88,101,242,0.1); border:1px solid rgba(88,101,242,0.3);">
+          <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+            <strong id="webhook-progress-title">กำลังประมวลผลส่งข้อมูล...</strong>
+            <span id="webhook-progress-count" style="font-weight:600;">0 / 0 รายการ</span>
+          </div>
+          <div style="height:8px; width:100%; border-radius:4px; background:rgba(255,255,255,0.1); overflow:hidden;">
+            <div id="webhook-progress-bar" style="height:100%; width:0%; background:#5865F2; transition:width 0.3s ease;"></div>
+          </div>
+          <p id="webhook-progress-detail" class="muted small mt-10">ระบบกำลังส่งข้อมูลตามลำดับและจำกัดความเร็วเพื่อป้องกันข้อผิดพลาดจาก Discord</p>
+        </div>
+
+        <div class="action-grid mt-14" style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <div style="padding:16px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <h3 style="margin:0 0 6px 0; font-size:1.1rem; color:#fff;">ส่งเฉพาะรายการใหม่</h3>
+              <p class="muted small" style="margin:0 0 14px 0;">ระบบจะเริ่มส่งเฉพาะคนที่มายืนยันตัวตนใหม่ตั้งแต่ตอนนี้เป็นต้นไป โดยไม่ส่งประวัติเดิมย้อนหลัง</p>
+            </div>
+            <button id="btn-start-live-only" class="btn btn-success" type="button" style="width:100%; padding:12px; font-weight:600;">เริ่มทำงานระบบ Webhook</button>
+          </div>
+
+          <div style="padding:16px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); display:flex; flex-direction:column; justify-content:space-between;">
+            <div>
+              <h3 style="margin:0 0 6px 0; font-size:1.1rem; color:#fff;">ส่งประวัติเดิมทั้งหมดและทำงานต่อ</h3>
+              <p class="muted small" style="margin:0 0 14px 0;">ระบบจะดึงประวัติการยืนยันตัวตนทั้งหมดในเซิร์ฟเวอร์ส่งไปยัง Webhook ให้ครบก่อน แล้วทำงานต่ออัตโนมัติ</p>
+            </div>
+            <button id="btn-start-backfill-all" class="btn btn-primary" type="button" style="width:100%; padding:12px; font-weight:600;">เริ่มตรวจส่ง Webhook ทั้งหมดและทำงานต่อ</button>
+          </div>
+        </div>
       </article>
     </div>
   </section>

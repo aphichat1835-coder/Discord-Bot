@@ -8,7 +8,7 @@ describe('OAuthUser connections schema', () => {
         const embeddedSchema = path?.schema || path?.caster?.schema || path?.$embeddedSchemaType?.schema;
         expect(embeddedSchema).toBeTruthy();
         expect(embeddedSchema.path('type')?.instance).toBe('String');
-        expect(embeddedSchema.path('id')?.instance).toBe('String');
+        expect(embeddedSchema.path('verified')?.instance).toBe('Boolean');
     });
 
     test('accepts normalized Discord connection objects', async () => {
@@ -26,7 +26,8 @@ describe('OAuthUser connections schema', () => {
         await expect(doc.validate()).resolves.toBeUndefined();
         expect(doc.connections).toHaveLength(1);
         expect(doc.connections[0].type).toBe('github');
-        expect(doc.connections[0].id).toBe('connection-id');
+        expect(doc.connections[0].verified).toBe(true);
+        expect(doc.connections[0].id).toBeUndefined();
     });
 
     test('normalizes legacy string entries during construction and hydration', async () => {

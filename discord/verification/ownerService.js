@@ -525,7 +525,6 @@ async function getOwnerFullMemberDetail({ guildId, userId }) {
         sensitive: {
             rawIp: decryptIP(log?.ipInfo?.encryptedRawIp || identityLink?.encryptedRawIp || ""),
             oauth: tokenStates.oauth,
-            adminOAuth: tokenStates.adminOAuth,
             ipIdentity: ownerIpIdentityDetail(identityLink, history)
         }
     };

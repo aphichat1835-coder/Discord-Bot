@@ -40,14 +40,12 @@ beforeEach(() => {
   manager._test.resetInternalStateForTesting();
 });
 
-test("oauthTokenManager: config resolves redirect URIs for verification and legacy admin", () => {
+test("oauthTokenManager: config resolves redirect URIs for verification", () => {
   const config = manager.getOAuthRefreshConfig({
-    PUBLIC_BASE_URL: "https://example.com",
-    LEGACY_ADMIN_OAUTH_REDIRECT_URI: "https://legacy.example/admin"
+    PUBLIC_BASE_URL: "https://example.com"
   });
 
   expect(config.verificationRedirectUri).toBe("https://example.com/auth/callback");
-  expect(config.adminRedirectUri).toBe("https://legacy.example/admin");
 });
 
 test("oauthTokenManager: validateTokenData rejects invalid or malformed tokens", () => {
@@ -262,9 +260,8 @@ test("oauthTokenManager: concurrent getAccessToken calls deduplicate and call pr
   expect(res3.accessToken).toBe("brand-new-access");
 });
 
-test("oauthTokenManager: refreshDueTokens scans expiring tokens across oauth and adminOAuth", async () => {
+test("oauthTokenManager: refreshDueTokens scans expiring tokens across oauth", async () => {
   const encRefresh1 = encryptToken("refresh-1");
-  const encRefresh2 = encryptToken("refresh-2");
   const now = 50000;
 
   const oauthDoc = {
@@ -277,25 +274,13 @@ test("oauthTokenManager: refreshDueTokens scans expiring tokens across oauth and
     }
   };
 
-  const adminDoc = {
-    _id: "doc-admin",
-    discord: { userId: "user-admin" },
-    adminOAuth: {
-      encryptedRefreshToken: encRefresh2,
-      expiresAt: now + 2000,
-      version: 5
-    }
-  };
-
   const model = {
     find: jest.fn((query) => {
       if (query["oauth.encryptedRefreshToken"]) return scanQuery([oauthDoc]);
-      if (query["adminOAuth.encryptedRefreshToken"]) return scanQuery([adminDoc]);
       return scanQuery([]);
     }),
     findById: jest.fn((id) => {
       if (String(id) === "doc-oauth") return freshQuery(() => structuredClone(oauthDoc));
-      if (String(id) === "doc-admin") return freshQuery(() => structuredClone(adminDoc));
       return freshQuery(() => null);
     }),
     updateOne: jest.fn(() => Promise.resolve({ modifiedCount: 1 }))
@@ -316,13 +301,13 @@ test("oauthTokenManager: refreshDueTokens scans expiring tokens across oauth and
     marginMs: 5000
   });
 
-  expect(summary.scanned).toBe(2);
-  expect(summary.refreshed).toBe(2);
+  expect(summary.scanned).toBe(1);
+  expect(summary.refreshed).toBe(1);
   expect(summary.failed).toBe(0);
-  expect(discord.refreshToken).toHaveBeenCalledTimes(2);
+  expect(discord.refreshToken).toHaveBeenCalledTimes(1);
 });
 
-test("oauthTokenManager: listAccessTokenCandidates prioritizes oauth over adminOAuth and excludes sensitive tokens", async () => {
+test("oauthTokenManager: listAccessTokenCandidates returns eligible candidates with oauth tokenField and excludes sensitive tokens", async () => {
   const encRefresh = encryptToken("valid-refresh");
   const docs = [
     {
@@ -334,11 +319,6 @@ test("oauthTokenManager: listAccessTokenCandidates prioritizes oauth over adminO
         scope: "identify guilds.join",
         revokedAt: null,
         refreshFailCount: 0
-      },
-      adminOAuth: {
-        encryptedRefreshToken: encRefresh,
-        scope: "identify guilds.join",
-        revokedAt: null
       }
     },
     {
@@ -348,11 +328,6 @@ test("oauthTokenManager: listAccessTokenCandidates prioritizes oauth over adminO
       oauth: {
         encryptedRefreshToken: encRefresh,
         scope: "identify email", // missing guilds.join
-        revokedAt: null
-      },
-      adminOAuth: {
-        encryptedRefreshToken: encRefresh,
-        scope: "identify guilds.join",
         revokedAt: null
       }
     }
@@ -369,22 +344,12 @@ test("oauthTokenManager: listAccessTokenCandidates prioritizes oauth over adminO
   });
   const candidates = result.candidates;
 
-  expect(candidates.length).toBe(2);
+  expect(candidates.length).toBe(1);
   expect(candidates[0]).toEqual({
     userId: "user1",
     tokenField: "oauth",
     scope: "identify guilds.join",
     recordId: "doc1",
-    lastVerify: {
-      guildId: "target-guild-123",
-      result: "success"
-    }
-  });
-  expect(candidates[1]).toEqual({
-    userId: "user2",
-    tokenField: "adminOAuth",
-    scope: "identify guilds.join",
-    recordId: "doc2",
     lastVerify: {
       guildId: "target-guild-123",
       result: "success"

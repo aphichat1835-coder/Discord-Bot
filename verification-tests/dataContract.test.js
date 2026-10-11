@@ -589,7 +589,7 @@ describe("unified verification data contract", () => {
         expect(serialized).not.toContain("encrypted-access");
         expect(serialized).not.toContain("encrypted-refresh");
         expect(serialized).not.toContain("access_token");
-        expect(detail.oauthTokens).toEqual({ oauth: null, adminOAuth: null });
+        expect(detail.oauthTokens).toEqual({ oauth: null });
     });
 
     test("owner log serializers expose raw IP directly inside the authenticated dashboard", () => {

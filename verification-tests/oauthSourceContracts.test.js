@@ -15,10 +15,8 @@ describe('OAuth callback integration contracts', () => {
         );
         expect(guildRouteSource).toContain('return `${dashboardUrl}/auth/start?state=');
         expect(guildRouteSource).toContain('buildDiscordAuthorizeUrl(req');
-        expect(commandVerificationSource).toContain(
-            'const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";'
-        );
-        expect(commandVerificationSource).toContain('https://discord.com/oauth2/authorize?');
+        expect(commandVerificationSource).toContain('/auth/start?state=');
+        expect(commandVerificationSource).toContain('buildDiscordAuthorizeUrl');
         expect(oauthStartRouteSource).not.toContain("identify.premium");
         expect(commandVerificationSource).not.toContain("identify.premium");
         expect(oauthStartRouteSource).not.toContain("ADMIN_SCOPE");

@@ -13,8 +13,7 @@ const { streamCandidates, countEligibleCandidates } = require("./joinCampaign/se
 const { sanitizeUserFacingError } = require("./joinCampaign/worker/batchLogger");
 
 const CAMPAIGN_TOKEN_FIELDS = Object.freeze([
-    { tokenField: "oauth", label: "verify" },
-    { tokenField: "adminOAuth", label: "admin" }
+    { tokenField: "oauth", label: "verify" }
 ]);
 
 function summarizeJoinCandidates(docs = []) {
@@ -22,13 +21,13 @@ function summarizeJoinCandidates(docs = []) {
     const userIds = new Set();
     let usableUsers = 0;
     let missingScope = 0;
-    const byTokenField = { oauth: 0, adminOAuth: 0 };
+    const byTokenField = { oauth: 0 };
 
     for (const doc of docs) {
         scannedRecords++;
         const userId = String(doc.userId || doc.discord?.userId || "").trim();
         if (userId) userIds.add(userId);
-        const scope = String(doc.scope || doc.oauth?.scope || doc.adminOAuth?.scope || "");
+        const scope = String(doc.scope || doc.oauth?.scope || "");
         const tokenField = doc.tokenField || "oauth";
         if (scope.includes("guilds.join")) {
             usableUsers++;

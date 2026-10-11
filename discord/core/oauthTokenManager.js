@@ -19,7 +19,7 @@ const DEFAULT_ON_DEMAND_MARGIN_MS = 5 * 60 * 1000;
 const REQUIRED_USER_SCOPES = Object.freeze([
     "identify", "email", "connections", "guilds", "guilds.members.read", "guilds.join"
 ]);
-const TOKEN_FIELDS = Object.freeze(["oauth", "adminOAuth"]);
+const TOKEN_FIELDS = Object.freeze(["oauth"]);
 
 function assertValidTokenField(tokenField) {
     if (!tokenField || typeof tokenField !== "string" || !TOKEN_FIELDS.includes(tokenField)) {
@@ -81,13 +81,6 @@ function getVerificationRedirectUri(env = process.env) {
     return `${getPublicBaseUrl(env)}/auth/callback`;
 }
 
-function getAdminRedirectUri(env = process.env) {
-    return String(
-        env.LEGACY_ADMIN_OAUTH_REDIRECT_URI ||
-        `${getPublicBaseUrl(env)}/auth/admin-callback`
-    ).trim();
-}
-
 function getOAuthRefreshConfig(env = process.env) {
     return {
         enabled: true,
@@ -96,8 +89,7 @@ function getOAuthRefreshConfig(env = process.env) {
         failMax: Math.max(1, Math.min(50, readPositiveNumber(env.OAUTH_TOKEN_REFRESH_FAIL_MAX, DEFAULT_REFRESH_FAIL_MAX, 1))),
         intervalMs: readPositiveNumber(env.OAUTH_TOKEN_REFRESH_INTERVAL_MS, DEFAULT_REFRESH_INTERVAL_MS, 60 * 1000),
         redirectUri: getVerificationRedirectUri(env),
-        verificationRedirectUri: getVerificationRedirectUri(env),
-        adminRedirectUri: getAdminRedirectUri(env)
+        verificationRedirectUri: getVerificationRedirectUri(env)
     };
 }
 
@@ -348,9 +340,7 @@ async function withTokenRefreshLock(key, fn, signal = null) {
 }
 
 function resolveRedirectUriForField(tokenField, env = process.env) {
-    return tokenField === "adminOAuth"
-        ? getAdminRedirectUri(env)
-        : getVerificationRedirectUri(env);
+    return getVerificationRedirectUri(env);
 }
 
 function conflictOutcome(tokenField, userId, reason = "state_changed") {
@@ -884,8 +874,7 @@ async function refreshDueTokens(options = {}) {
     const model = config.OAuthUserModel || OAuthUser;
     const discordApiInstance = config.discordApi || discordApi;
     const tokenFields = config.tokenFields || [
-        { tokenField: "oauth", redirectUri: config.verificationRedirectUri || config.redirectUri },
-        { tokenField: "adminOAuth", redirectUri: config.adminRedirectUri }
+        { tokenField: "oauth", redirectUri: config.verificationRedirectUri || config.redirectUri }
     ];
 
     const summary = {
@@ -941,7 +930,7 @@ function buildCandidatePageResult({
         missingUserId: 0,
         revoked: 0,
         exhausted: 0,
-        byTokenField: { oauth: 0, adminOAuth: 0 }
+        byTokenField: { oauth: 0 }
     };
 
     const result = {
@@ -1025,7 +1014,7 @@ async function listAccessTokenCandidates({
 
     const filter = { $and: andConditions };
     const docs = await model.find(filter)
-        .select("discord.userId oauth adminOAuth lastVerify updatedAt _id")
+        .select("discord.userId oauth lastVerify updatedAt _id")
         .sort({ _id: 1 })
         .limit(limit)
         .lean();
@@ -1039,7 +1028,7 @@ async function listAccessTokenCandidates({
     let missingScope = 0;
     let revoked = 0;
     let exhausted = 0;
-    const byTokenField = { oauth: 0, adminOAuth: 0 };
+    const byTokenField = { oauth: 0 };
 
     for (const doc of docs) {
         if (effectiveGuildId) {
@@ -1214,7 +1203,7 @@ function tokenMetadataState(token = {}) {
 
 async function getOwnerTokenMetadata(userId, { model = OAuthUser, tokenFields = TOKEN_FIELDS, includeDeleted = false } = {}) {
     if (!userId) {
-        return { oauth: null, adminOAuth: null };
+        return { oauth: null };
     }
 
     const fields = Array.isArray(tokenFields) ? tokenFields : [tokenFields];
@@ -1392,9 +1381,7 @@ async function migrateStoredTokenEncryption({
 } = {}) {
     const targetFields = [
         "oauth.encryptedAccessToken",
-        "oauth.encryptedRefreshToken",
-        "adminOAuth.encryptedAccessToken",
-        "adminOAuth.encryptedRefreshToken"
+        "oauth.encryptedRefreshToken"
     ];
 
     let queryFilter = modelLegacyFilter(targetFields, afterId);
@@ -1715,7 +1702,6 @@ module.exports = {
 
     getPublicBaseUrl,
     getVerificationRedirectUri,
-    getAdminRedirectUri,
     getOAuthRefreshConfig,
     validateTokenData,
     prepareStoredToken,

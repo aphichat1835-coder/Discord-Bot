@@ -18,7 +18,7 @@ function resultCounter(result) {
     return { failedCount: 1 };
 }
 
-function userFields({ profile, device, memberInfo, roleId, result, findings, ipInfo, now }) {
+function userFields({ profile, device, roleId, result, findings, ipInfo, now }) {
     let lastFindings = [];
     if (Array.isArray(findings)) {
         lastFindings = findings;
@@ -33,11 +33,6 @@ function userFields({ profile, device, memberInfo, roleId, result, findings, ipI
         lastSeenAt: now,
         lastResult: result,
         lastRoleId: roleId || null,
-        lastRoles: Array.isArray(memberInfo?.roles) ? memberInfo.roles.map(String) : [],
-        lastJoinedAt: memberInfo?.joined_at || memberInfo?.joinedAt || null,
-        lastMemberPending: memberInfo?.pending === true,
-        lastCommunicationDisabledUntil:
-            memberInfo?.communication_disabled_until || memberInfo?.communicationDisabledUntil || null,
         lastDeviceFingerprintHash: device?.fingerprintHash || null,
         lastFindings,
         updatedAt: now
@@ -46,7 +41,6 @@ function userFields({ profile, device, memberInfo, roleId, result, findings, ipI
 
 async function upsertUserHistory(input, models) {
     const { guildId, ipHash, profile, now, result } = input;
-    const joinedAt = input.memberInfo?.joined_at || input.memberInfo?.joinedAt || null;
     const update = {
         $set: userFields(input),
         $setOnInsert: {
@@ -58,7 +52,6 @@ async function upsertUserHistory(input, models) {
         },
         $inc: { verifyCount: 1, ...resultCounter(result) }
     };
-    if (joinedAt) update.$min = { firstJoinedAt: joinedAt };
     return models.UserHistory.updateOne(
         { guildId, ipHash, userId: String(profile.id) },
         update,
@@ -104,40 +97,37 @@ function historyRoles(input) {
         .sort((left, right) => left.localeCompare(right, "en"));
 }
 
-function hashRoleEvent(input, roles) {
+function hashRoleEvent(input) {
     return `history:${crypto.createHash("sha256").update(JSON.stringify({
         guildId: input.guildId,
         ipHash: input.ipHash,
         userId: String(input.profile?.id || input.userId || ""),
         roleId: input.roleId || null,
-        roles,
         result: input.result || null,
         at: Number(input.now || input.at || 0)
     })).digest("hex")}`;
 }
 
 function roleEventId(input) {
-    return hashRoleEvent(input, historyRoles(input));
+    return hashRoleEvent(input);
 }
 
 function legacyOrderedRoleEventId(input) {
-    return hashRoleEvent(input, orderedHistoryRoles(input));
+    return hashRoleEvent(input);
 }
 
 function compatibleRoleEventIds(input) {
-    return [...new Set([roleEventId(input), legacyOrderedRoleEventId(input)])];
+    return [roleEventId(input)];
 }
 
 function roleEventIdentity(input) {
-    const roles = historyRoles(input);
     return {
         guildId: String(input.guildId || ""),
         ipHash: String(input.ipHash || ""),
         userId: String(input.profile?.id || input.userId || ""),
         roleId: input.roleId || null,
         result: input.result || null,
-        at: Number(input.now || input.at || 0),
-        roles: roles.length > 0 ? { $all: roles, $size: roles.length } : { $size: 0 }
+        at: Number(input.now || input.at || 0)
     };
 }
 
@@ -151,7 +141,7 @@ function roleEventFilter(input) {
 }
 
 async function createRoleHistory(input, models) {
-    const { guildId, ipHash, profile, memberInfo, roleId, result, now } = input;
+    const { guildId, ipHash, profile, roleId, result, now } = input;
     const eventId = roleEventId(input);
     return models.RoleHistory.updateOne(roleEventFilter(input), {
         $setOnInsert: {
@@ -160,7 +150,6 @@ async function createRoleHistory(input, models) {
             ipHash,
             userId: String(profile.id),
             roleId: roleId || null,
-            roles: historyRoles({ memberInfo }),
             result,
             at: now,
             source: "oauth_verification",
@@ -440,14 +429,12 @@ function recoveredMember(member) {
 
 function recoveredLogInput(log) {
     const identity = log.discordSnapshot || {};
-    const member = log.memberSnapshot || {};
     return {
         guildId: String(log.guildId || ""),
         ipHash: String(log.ipInfo?.ipHash || ""),
         profile: recoveredProfile(log, identity),
         ipInfo: log.ipInfo || {},
         device: log.device || null,
-        memberInfo: recoveredMember(member),
         roleId: log.roleId || null,
         result: log.result || "failed",
         findings: Array.isArray(log.findings) ? log.findings : [],
@@ -471,7 +458,6 @@ async function backfillVerifyLog(log, models, now, session = null) {
             uniqueUsers: 0,
             users: [],
             deviceFingerprints: [],
-            roleSnapshots: [],
             createdAt: now
         },
         $inc: { totalVerifications: 1 },

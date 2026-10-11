@@ -172,9 +172,7 @@ audit are allowed. Private Owner-only logs/webhooks may include a token only whe
 the Owner-selected event schema intentionally includes that field, as required by
 OI-04; unrelated credentials must not be added to an event automatically.
 
-Historical `adminOAuth` fields remain refresh-compatible. No route creates a new
-admin grant. Configure `LEGACY_ADMIN_OAUTH_REDIRECT_URI` when old tokens require
-the retired origin during refresh.
+Legacy `adminOAuth` fields have been completely retired from database models, workers, and runtime. All OAuth operations exclusively use unified `oauth`.
 
 ### Master Token Coordinator & Concurrency Security
 

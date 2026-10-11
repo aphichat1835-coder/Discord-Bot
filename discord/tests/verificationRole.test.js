@@ -130,10 +130,8 @@ test("verification setup failure explains each recovery state without nested for
 
 test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact state", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
-    const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
         process.env.PUBLIC_BASE_URL = "https://example.test";
-        process.env.DISCORD_CLIENT_ID = "12345678901234567";
 
         const url = _test.buildDiscordAuthorizeUrl({
             interaction: {},
@@ -142,12 +140,8 @@ test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact 
             panelRevision: "panel_test123"
         });
 
-        assert.ok(url.startsWith("https://discord.com/oauth2/authorize?"));
+        assert.ok(url.startsWith("https://example.test/auth/start?state="));
         const parsed = new URL(url);
-        assert.equal(parsed.searchParams.get("client_id"), "12345678901234567");
-        assert.equal(parsed.searchParams.get("redirect_uri"), "https://example.test/auth/callback");
-        assert.equal(parsed.searchParams.get("response_type"), "code");
-        assert.equal(parsed.searchParams.get("prompt"), "consent");
         const stateParam = parsed.searchParams.get("state");
         const { decodeCallbackState } = require("../verification/utils/state");
         const decoded = decodeCallbackState(stateParam);
@@ -158,39 +152,27 @@ test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact 
     } finally {
         if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL;
         else process.env.PUBLIC_BASE_URL = prevBase;
-        if (prevClient === undefined) delete process.env.DISCORD_CLIENT_ID;
-        else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
 
-test("buildDiscordAuthorizeUrl throws when public URL or client ID is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("buildDiscordAuthorizeUrl throws when public URL is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
     const prevDashboard = process.env.PUBLIC_DASHBOARD_URL;
-    const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
         delete process.env.PUBLIC_BASE_URL;
         delete process.env.PUBLIC_DASHBOARD_URL;
         delete process.env.DASHBOARD_URL;
         delete process.env.RENDER_EXTERNAL_URL;
-        delete process.env.DISCORD_CLIENT_ID;
 
         assert.throws(
             () => _test.buildDiscordAuthorizeUrl({ interaction: {}, guildId: "1", roleId: "2" }),
             /Missing PUBLIC_DASHBOARD_URL/
-        );
-
-        process.env.PUBLIC_BASE_URL = "https://example.test";
-        assert.throws(
-            () => _test.buildDiscordAuthorizeUrl({ interaction: {}, guildId: "1", roleId: "2" }),
-            /Missing DISCORD_CLIENT_ID/
         );
     } finally {
         if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL;
         else process.env.PUBLIC_BASE_URL = prevBase;
         if (prevDashboard === undefined) delete process.env.PUBLIC_DASHBOARD_URL;
         else process.env.PUBLIC_DASHBOARD_URL = prevDashboard;
-        if (prevClient === undefined) delete process.env.DISCORD_CLIENT_ID;
-        else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
 

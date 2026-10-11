@@ -48,8 +48,9 @@ models, routes, utilities, views, and assets live in `discord/verification/`.
 Guild-admin OAuth/session access was removed; management is Owner PIN only.
 Owner Verification is rendered inside the private Dashboard ควบคุมบอท shell. The
 guild chooser and five-section per-guild workspace use the existing Owner PIN,
-navigation, and CSRF boundary; the public `/auth/callback` member page keeps its
-existing independent design. Existing routes stay compatible.
+navigation, and CSRF boundary; the data section contains the Webhook Log Verify
+control panel and OAuth recovery center, while the public `/auth/callback` member
+page keeps its existing independent design. Existing routes stay compatible.
 
 ## Entrypoint and boot
 
@@ -171,10 +172,13 @@ migrated or rebuilt through re-verification.
 
 ## Compatibility
 
-The existing Mongoose model and collection names are preserved. Schema changes
-are additive. Historical `adminOAuth` encrypted fields are retained and the
-maintenance lifecycle can refresh them; `LEGACY_ADMIN_OAUTH_REDIRECT_URI` can
-pin their original redirect URI. No admin OAuth route creates new grants.
+The existing Mongoose model and collection names are preserved.
+Under the renovated verification architecture:
+- Raw Discord guild arrays are discarded in memory, storing aggregate `guildSummary: { totalCount, ownedCount, status, fetchedAt, attemptedAt, failureReason }`.
+- Connections store only `{ type, verified }`; extra IDs, names, and metadata are stripped.
+- Member and role assignment is transient via Discord REST API; `lastMember`, `memberSnapshot`, and role history arrays in MongoDB are retired.
+- `requestId` is completely purged from all models and logs.
+- Legacy `adminOAuth` fields are completely retired; all OAuth workflows use unified `oauth`.
 
 Complete OAuth snapshots use versioned normal-item chunks and byte chunks for
 oversized objects. There is no aggregate truncation budget; every document must

@@ -8,7 +8,6 @@ const schema = new mongoose.Schema({
     ipHash: { type: String, required: true },
     userId: { type: String, required: true },
     roleId: String,
-    roles: [String],
     result: String,
     at: Number,
     source: { type: String, default: "oauth_verification" },

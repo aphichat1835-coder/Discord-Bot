@@ -279,7 +279,7 @@ class JoinCampaignRepository {
             let count = 0;
             for (const item of records) {
                 const tokenField = String(item.tokenField || "").trim();
-                if (tokenField !== "oauth" && tokenField !== "adminOAuth") {
+                if (tokenField !== "oauth") {
                     continue; // Skip invalid token field - fail-closed
                 }
                 const info = stmt.run(String(campaignId), String(item.userId), tokenField, now, now);
