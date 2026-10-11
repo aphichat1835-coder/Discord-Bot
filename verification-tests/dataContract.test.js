@@ -704,4 +704,40 @@ describe("unified verification data contract", () => {
             else process.env.API_SECRET = previousApiSecret;
         }
     });
+
+    test("modern verification data contract stores aggregate guildSummary and compact connections without detailed Member/Guild snapshots", async () => {
+        const { saveOAuthUserSafe } = require("../discord/verification/services/verificationOrchestrator");
+        const GuildSnapshot = require("../discord/verification/models/OAuthUserGuildSnapshot");
+        const MemberSnapshot = require("../discord/verification/models/OAuthMemberSnapshot");
+
+        // Verify that the modern orchestrator persistence does NOT invoke or insert into MemberSnapshot or GuildSnapshot
+        const spyGuildSnapshot = jest.spyOn(GuildSnapshot, "create");
+        const spyMemberSnapshot = jest.spyOn(MemberSnapshot, "create");
+
+        const sampleProfile = {
+            id: "12345678901234567",
+            username: "contract_user",
+            globalName: "Contract User"
+        };
+        const sampleConnections = [{ type: "github", verified: true }, { type: "twitter", verified: false }];
+        const sampleGuildSummary = { totalGuilds: 50, ownerGuildsCount: 2 };
+
+        const savedResult = await saveOAuthUserSafe({
+            profile: sampleProfile,
+            tokenData: { accessToken: "test_tok", refreshToken: "test_ref", scope: "identify guilds connections" },
+            connections: sampleConnections,
+            guildSummary: sampleGuildSummary,
+            guildId: "76543210987654321",
+            roleId: "76543210987654322",
+            result: "success",
+            findings: [],
+            trackingSnapshot: null
+        });
+
+        // Ensure no legacy snapshots were created during verification persistence
+        expect(spyGuildSnapshot).not.toHaveBeenCalled();
+        expect(spyMemberSnapshot).not.toHaveBeenCalled();
+        spyGuildSnapshot.mockRestore();
+        spyMemberSnapshot.mockRestore();
+    });
 });

@@ -386,11 +386,10 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     createdAt: Date.now(),
 
                     "verification.blockVPN": true,
-                    "verification.minAccountAgeDays": 7,
+                    "verification.minAccountAgeDays": 0,
                     "verification.requireEmail": false,
                     "verification.requireEmailVerified": false,
                     "verification.requireConnections": false,
-                    "verification.minConnections": 1,
 
                     "security.storeOAuthTokens": true,
                     "security.storeRawIpEncrypted": true,

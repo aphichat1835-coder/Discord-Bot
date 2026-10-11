@@ -105,7 +105,11 @@ function runStartupCheck(db, options = {}) {
 
     // 9. Storage Pre-Flight Check (Fails only on actual filesystem failure / disk < 100MB)
     try {
-        const storageInfo = evaluateStoragePaths({ dbPath: options.dbPath });
+        const storageInfo = evaluateStoragePaths({
+            dbPath: options.dbPath,
+            backupDir: options.backupDir,
+            assetDir: options.assetDir
+        });
         if (!storageInfo.ok) {
             throw new Error(`Storage pre-flight check failed: ${storageInfo.errors.join("; ")}`);
         }

@@ -528,6 +528,10 @@ async function executeVerification({
                 badgeFlags: profile.badgeFlags,
                 connectionsCount: connections.length
             },
+            connectionsSnapshot: connections.map(c => ({
+                type: String(c.type || ""),
+                verified: Boolean(c.verified)
+            })),
             guildSummary,
             joinResult: null,
             roleAssignResult: null,

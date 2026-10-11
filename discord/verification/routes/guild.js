@@ -1576,7 +1576,7 @@ router.post("/api/guild/:guildId/webhook-log/url", requireAdmin, requireGuildAdm
     if (isNewUrl && previousUrl) {
       currentVersion += 1;
       // Cancel any ongoing backfill jobs associated with the old destination URL (P1-5)
-      verificationWebhookRepository.cancelOrFailOldJobs(guildId, "webhook_url_changed");
+      verificationWebhookRepository.cancelOrFailOldJobs(guildId, "webhook_url_changed", currentVersion);
     }
 
     await GuildConfig.updateOne(

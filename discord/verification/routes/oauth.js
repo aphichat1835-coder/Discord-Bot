@@ -147,7 +147,7 @@ function buildPolicySnapshot(v = {}) {
         enabled: normalized.enabled !== false,
         blockVPN: normalized.blockVPN !== false,
         blockHosting: normalized.blockHosting === true,
-        minAccountAgeDays: Number.isFinite(Number(normalized.minAccountAgeDays)) ? Number(normalized.minAccountAgeDays) : 7,
+        minAccountAgeDays: Number.isFinite(Number(normalized.minAccountAgeDays)) ? Number(normalized.minAccountAgeDays) : 0,
         requireEmail: !!normalized.requireEmail,
         requireEmailVerified: !!normalized.requireEmailVerified,
         requireConnections: !!normalized.requireConnections,

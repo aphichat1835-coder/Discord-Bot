@@ -11,6 +11,8 @@ const { decryptToken, decryptIP } = require("../../utils/crypto");
 
 const MAX_EMBED_CHARS = 5800;
 const MAX_FIELD_VALUE_CHARS = 1000;
+const MAX_FIELD_NAME_CHARS = 240;
+const MAX_EMBEDS_PER_MESSAGE = 10;
 const BATCH_SIZE = 5;
 const RATE_LIMIT_DELAY_MS = 1200;
 
@@ -37,19 +39,35 @@ function formatDate(timestamp) {
  * Splits lines into multiple embed fields to avoid truncation (P1-8).
  */
 function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
+    const safeTitle = truncate(title, MAX_FIELD_NAME_CHARS);
     if (!Array.isArray(lines) || !lines.length) {
-        return [{ name: title, value: "ไม่มี", inline: false }];
+        return [{ name: safeTitle, value: "ไม่มี", inline: false }];
     }
+    // Flatten any lines that exceed maxChars to prevent single-line overflow
+    const normalizedLines = [];
+    for (const rawLine of lines) {
+        const s = String(rawLine || "");
+        if (s.length <= maxChars) {
+            normalizedLines.push(s);
+        } else {
+            let offset = 0;
+            while (offset < s.length) {
+                normalizedLines.push(s.slice(offset, offset + maxChars));
+                offset += maxChars;
+            }
+        }
+    }
+
     const fields = [];
     let currentLines = [];
     let currentLen = 0;
 
-    for (const line of lines) {
+    for (const line of normalizedLines) {
         const lineLen = line.length + 1;
         if (currentLen + lineLen > maxChars && currentLines.length > 0) {
             const partNum = fields.length + 1;
             fields.push({
-                name: `${title}${partNum > 1 ? ` (ส่วนที่ ${partNum})` : ""}`,
+                name: truncate(`${safeTitle}${partNum > 1 ? ` (ส่วนที่ ${partNum})` : ""}`, 250),
                 value: currentLines.join("\n"),
                 inline: false
             });
@@ -63,7 +81,7 @@ function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
     if (currentLines.length > 0) {
         const partNum = fields.length + 1;
         fields.push({
-            name: `${title}${fields.length > 0 ? ` (ส่วนที่ ${partNum})` : ""}`,
+            name: truncate(`${safeTitle}${partNum > 1 ? ` (ส่วนที่ ${partNum})` : ""}`, 250),
             value: currentLines.join("\n"),
             inline: false
         });
@@ -75,10 +93,11 @@ function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
  * Splits a long string into multiple embed fields to avoid truncation (P1-8).
  */
 function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
+    const safeTitle = truncate(title, MAX_FIELD_NAME_CHARS);
     const s = String(str || "");
-    if (!s) return [{ name: title, value: "ไม่มี", inline: false }];
+    if (!s) return [{ name: safeTitle, value: "ไม่มี", inline: false }];
     if (s.length <= maxChars) {
-        return [{ name: title, value: s, inline: false }];
+        return [{ name: safeTitle, value: s, inline: false }];
     }
     const fields = [];
     let remaining = s;
@@ -87,7 +106,7 @@ function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
         const chunk = remaining.slice(0, maxChars);
         remaining = remaining.slice(maxChars);
         fields.push({
-            name: `${title}${part > 1 ? ` (ส่วนที่ ${part})` : ""}`,
+            name: truncate(`${safeTitle}${part > 1 ? ` (ส่วนที่ ${part})` : ""}`, 250),
             value: chunk,
             inline: false
         });
@@ -211,22 +230,43 @@ function buildWebhookPayload({
 }
 
 /**
- * Splits embeds having more than 25 fields into sequential embeds (Discord limit safety).
+ * Splits embeds having more than 25 fields or total chars > MAX_EMBED_CHARS into sequential embeds (Discord limit safety).
  */
 function splitEmbedFields(embed) {
-    if (!embed.fields || embed.fields.length <= 25) {
+    const fields = Array.isArray(embed.fields) ? embed.fields : [];
+    if (!fields.length) {
         return [embed];
     }
     const result = [];
-    const fields = embed.fields;
-    for (let i = 0; i < fields.length; i += 25) {
-        const slice = fields.slice(i, i + 25);
+    let currentSlice = [];
+    let currentFieldChars = 0;
+    const baseChars = (embed.title?.length || 0) + (embed.description?.length || 0) + (embed.footer?.text?.length || 0);
+
+    for (const f of fields) {
+        const fChars = (f.name?.length || 0) + (f.value?.length || 0);
+        // Split if fields count reaches 25 OR total embed characters would exceed MAX_EMBED_CHARS
+        if (currentSlice.length >= 25 || (currentSlice.length > 0 && baseChars + currentFieldChars + fChars > MAX_EMBED_CHARS)) {
+            result.push({
+                ...embed,
+                title: result.length === 0 ? embed.title : truncate(`${embed.title} (ส่วนต่อ ${result.length + 1})`, 250),
+                fields: currentSlice
+            });
+            currentSlice = [f];
+            currentFieldChars = fChars;
+        } else {
+            currentSlice.push(f);
+            currentFieldChars += fChars;
+        }
+    }
+
+    if (currentSlice.length > 0) {
         result.push({
             ...embed,
-            title: i === 0 ? embed.title : `${embed.title} (ส่วนต่อ)`,
-            fields: slice
+            title: result.length === 0 ? embed.title : truncate(`${embed.title} (ส่วนต่อ ${result.length + 1})`, 250),
+            fields: currentSlice
         });
     }
+
     return result;
 }
 
@@ -244,7 +284,7 @@ function embedCharCount(embed) {
 }
 
 /**
- * Auto-splits embeds into sequential message batches if >5,800 chars without dropping data.
+ * Auto-splits embeds into sequential message batches if >5,800 chars or >10 embeds without dropping data.
  */
 function fitEmbedsIntoMessages(embeds = []) {
     const messages = [];
@@ -253,7 +293,7 @@ function fitEmbedsIntoMessages(embeds = []) {
 
     for (const embed of embeds) {
         const count = embedCharCount(embed);
-        if (currentBatch.length > 0 && currentChars + count > MAX_EMBED_CHARS) {
+        if (currentBatch.length > 0 && (currentBatch.length >= MAX_EMBEDS_PER_MESSAGE || currentChars + count > MAX_EMBED_CHARS)) {
             messages.push({ embeds: currentBatch });
             currentBatch = [embed];
             currentChars = count;
@@ -325,7 +365,11 @@ class VerificationWebhookManager {
 
         // Recover any stuck SENDING deliveries from prior node crashes/restarts (P1-6)
         try {
-            this.repo.recoverStuckSendingDeliveries();
+            const recovery = this.repo.recoverStuckSendingDeliveries();
+            const guildIds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
+            for (const gId of guildIds) {
+                this.triggerWorker(gId);
+            }
         } catch {
             // SQLite may not be open yet in isolated module tests
         }
@@ -505,22 +549,18 @@ class VerificationWebhookManager {
 
         // P0-1: Guard centrally against non-success or unassigned events
         if (eventData) {
-            if (eventData.result && eventData.result !== "success") {
-                return null;
-            }
-            if (eventData.roleAssignResult) {
-                const r = eventData.roleAssignResult;
-                const roleOk = r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true;
-                if (!roleOk) return null;
-            }
+            if (eventData.result !== "success") return null;
+            const r = eventData.roleAssignResult;
+            const roleOk = r && (r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true);
+            if (!roleOk) return null;
         } else if (logId) {
             const log = await VerifyLog.findById(logId).lean();
             if (!log || log.result !== "success") return null;
-            if (log.roleAssignResult) {
-                const r = log.roleAssignResult;
-                const roleOk = r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true;
-                if (!roleOk) return null;
-            }
+            const r = log.roleAssignResult;
+            const roleOk = r && (r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true);
+            if (!roleOk) return null;
+        } else {
+            return null;
         }
 
         const config = await GuildConfig.findOne().where("guildId").equals(safeGuildId).lean();
@@ -640,6 +680,19 @@ class VerificationWebhookManager {
         const destinationVersion = job.destination_version || 1;
 
         while (true) {
+            const currentJob = this.repo.getJobById(job.job_id);
+            if (!currentJob || currentJob.status !== "RUNNING") {
+                console.warn(`[VerificationWebhook] Job ${job.job_id} is no longer running (status: ${currentJob?.status})`);
+                break;
+            }
+
+            const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+            const currentDestVersion = Number(currentConfig?.verification?.webhookLog?.destinationVersion) || 1;
+            if (currentDestVersion !== destinationVersion) {
+                console.warn(`[VerificationWebhook] Destination version changed for guild=${guildId} during backfill`);
+                break;
+            }
+
             const hasLease = this.repo.acquireJobLease(job.job_id, leaseToken, 30000);
             if (!hasLease) {
                 console.warn(`[VerificationWebhook] Lease lost for job=${job.job_id}`);
@@ -761,12 +814,18 @@ class VerificationWebhookManager {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
         const webhookUrl = config?.verification?.webhookLog?.url;
         if (!webhookUrl) return;
+        const currentVersion = Number(config?.verification?.webhookLog?.destinationVersion) || 1;
 
         while (true) {
             const deliveries = this.repo.claimNextDeliveries(guildId, 5);
             if (!deliveries.length) break;
 
             for (const item of deliveries) {
+                // If delivery belongs to an older destination version, fail and skip
+                if (currentVersion && item.destination_version < currentVersion) {
+                    this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Delivery belongs to older webhook URL version");
+                    continue;
+                }
                 try {
                     // P1-2: Strict lookup by exact event_id
                     let log = null;

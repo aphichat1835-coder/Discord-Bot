@@ -34,7 +34,15 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
     const repo = new VerificationWebhookRepository(db);
     const manager = new VerificationWebhookManager(repo);
 
-    t.after(() => {
+    t.after(async () => {
+        try {
+            if (manager.activeWorkers && manager.activeWorkers.size > 0) {
+                await Promise.allSettled(Array.from(manager.activeWorkers.values()));
+            }
+            for (const timer of manager.retryTimers.values()) {
+                clearTimeout(timer);
+            }
+        } catch (_) {}
         try {
             db.close();
         } catch (_) {}
@@ -288,5 +296,218 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
         assert.ok(connField);
         assert.match(connField.value, /Steam/);
         assert.match(connField.value, /GitHub/);
+    });
+
+    await t.test("9. Orchestrator Live Dispatch 4 Scenarios & Fail-Closed Guard", async () => {
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const originalFindOne = GuildConfig.findOne;
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: async () => ({
+                        verification: {
+                            webhookLog: {
+                                enabled: true,
+                                url: "https://discord.com/api/webhooks/999999999/abcdefghijklmnopqrstuvwxyz0123456789_ABCDEFGH",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        try {
+            // Scenario 1: Verification success & role assigned ok
+            const res1 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_1_" + runNonce,
+                userId: "user_orch_1",
+                logId: "log_orch_1",
+                eventData: {
+                    result: "success",
+                    roleAssignResult: { ok: true }
+                }
+            });
+            assert.ok(res1, "Scenario 1: Should return deliveryId for success + role ok");
+            assert.match(res1, /^del_/);
+
+            // Scenario 2: Verification success but log/eventData is not success or missing
+            const res2 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_2_" + runNonce,
+                userId: "user_orch_2",
+                eventData: null,
+                logId: null
+            });
+            assert.equal(res2, null, "Scenario 2: Should return null when eventData and logId are null");
+
+            // Scenario 3: Verification success with alreadyHadRole: true
+            const res3 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_3_" + runNonce,
+                userId: "user_orch_3",
+                logId: "log_orch_3",
+                eventData: {
+                    result: "success",
+                    roleAssignResult: { ok: true, alreadyHadRole: true }
+                }
+            });
+            assert.ok(res3, "Scenario 3: Should return deliveryId for alreadyHadRole: true");
+
+            // Scenario 4: Role assignment failed (ok: false)
+            const res4 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_4_" + runNonce,
+                userId: "user_orch_4",
+                logId: "log_orch_4",
+                eventData: {
+                    result: "success",
+                    roleAssignResult: { ok: false, error: "role_failed" }
+                }
+            });
+            assert.equal(res4, null, "Scenario 4: Should return null when role assignment failed");
+        } finally {
+            GuildConfig.findOne = originalFindOne;
+        }
+    });
+
+    await t.test("10. Atomic Job Lease Protection prevents lease on FAILED or COMPLETED jobs", () => {
+        const gLease = "g_lease_" + runNonce;
+        const jId = "j_lease_" + runNonce;
+        repo.createJob({ jobId: jId, guildId: gLease, destinationVersion: 1, mode: "BACKFILL_LIVE" });
+
+        // Acquire lease on RUNNING job succeeds
+        const acquired = repo.acquireJobLease(jId, "token_1", 30000);
+        assert.equal(acquired, true, "Should acquire lease on RUNNING job");
+
+        // Renew lease on RUNNING job succeeds
+        const renewed = repo.renewJobLease(jId, "token_1", 30000);
+        assert.equal(renewed, true, "Should renew lease on RUNNING job");
+
+        // Mark job FAILED
+        repo.failJob(jId, "manual_failure_test");
+
+        // Attempting to acquire lease on FAILED job must fail
+        const failedAcquire = repo.acquireJobLease(jId, "token_2", 30000);
+        assert.equal(failedAcquire, false, "Must not acquire lease on FAILED job");
+
+        // Attempting to renew lease on FAILED job must fail
+        const failedRenew = repo.renewJobLease(jId, "token_1", 30000);
+        assert.equal(failedRenew, false, "Must not renew lease on FAILED job");
+    });
+
+    await t.test("11. Webhook URL Change & Version Cancellation cascades to old deliveries", () => {
+        const gVer = "g_ver_" + runNonce;
+        const jVer = "j_ver_" + runNonce;
+        repo.createJob({ jobId: jVer, guildId: gVer, destinationVersion: 1, mode: "BACKFILL_LIVE" });
+
+        // Enqueue version 1 delivery
+        const d1 = "del_v1_" + runNonce;
+        repo.enqueueDelivery({
+            deliveryId: d1,
+            jobId: jVer,
+            guildId: gVer,
+            destinationVersion: 1,
+            eventId: "ev_v1_" + runNonce,
+            userId: "u_v1"
+        });
+
+        // URL changes -> new version is 2, cancel older jobs and deliveries
+        repo.cancelOrFailOldJobs(gVer, "webhook_url_changed", 2);
+
+        const jRow = repo.getJobById(jVer);
+        assert.equal(jRow.status, "FAILED");
+
+        const dRow = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d1);
+        assert.equal(dRow.status, "FAILED");
+        assert.equal(dRow.error_code, "destination_version_changed");
+    });
+
+    await t.test("12. SQLite Queue Recovery returns affected guildIds and coerces to number", () => {
+        const gRec1 = "g_rec1_" + runNonce;
+        const gRec2 = "g_rec2_" + runNonce;
+        const dRec1 = "d_rec1_" + runNonce;
+        const dRec2 = "d_rec2_" + runNonce;
+
+        repo.enqueueDelivery({ deliveryId: dRec1, guildId: gRec1, destinationVersion: 1, eventId: "e1", userId: "u1" });
+        repo.enqueueDelivery({ deliveryId: dRec2, guildId: gRec2, destinationVersion: 1, eventId: "e2", userId: "u2" });
+
+        // Set both to SENDING 10 minutes ago
+        const past = Date.now() - 600000;
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING', last_attempt_at = ? WHERE delivery_id IN (?, ?)").run(past, dRec1, dRec2);
+
+        const result = repo.recoverStuckSendingDeliveries(300000);
+        // Numeric coercion works
+        assert.ok(result >= 2, "Numeric comparison (>= 2) should pass");
+        assert.ok(Number(result) >= 2, "Number(result) should be at least 2");
+
+        // guildIds is an array containing both guilds
+        assert.ok(Array.isArray(result.guildIds));
+        assert.ok(result.guildIds.includes(gRec1));
+        assert.ok(result.guildIds.includes(gRec2));
+    });
+
+    await t.test("13. Comprehensive Discord Limits: field name/value clamping and embed/message batching", () => {
+        // 1. Extreme field name length (>256 chars)
+        const longName = "A".repeat(400);
+        const nameFields = chunkLinesToFields(longName, ["Normal value line"]);
+        for (const f of nameFields) {
+            assert.ok(f.name.length <= 256, "Field name must never exceed 256 characters");
+            assert.ok(f.name.length <= 250, "Field name should be clamped within 250 chars");
+        }
+
+        // 2. Extreme string length (>3000 chars) in single value
+        const longString = "B".repeat(3500);
+        const strFields = chunkStringToFields("LongStringTest", longString, 1000);
+        assert.ok(strFields.length >= 4, "Should chunk 3500 chars into at least 4 fields");
+        for (const f of strFields) {
+            assert.ok(f.value.length <= 1000, "Field value chunk must not exceed 1000 chars");
+        }
+
+        // 3. Huge single line (>2500 chars) in chunkLinesToFields
+        const hugeLine = "C".repeat(2500);
+        const hugeLineFields = chunkLinesToFields("HugeLineTest", [hugeLine], 1000);
+        assert.ok(hugeLineFields.length >= 3, "Huge line must be broken up into multiple fields");
+        for (const f of hugeLineFields) {
+            assert.ok(f.value.length <= 1000, "Field value must not exceed 1000 chars");
+        }
+
+        // 4. Extreme embed with 65 fields
+        const manyFields = Array.from({ length: 65 }, (_, i) => ({
+            name: `Field_${i + 1}`,
+            value: `Value_${i + 1}`
+        }));
+        const hugeEmbed = {
+            title: "HugeEmbedWithManyFields",
+            fields: manyFields,
+            footer: { text: "Event: ev_stress • User: u_stress" }
+        };
+        const splitEmbeds = splitEmbedFields(hugeEmbed);
+        assert.ok(splitEmbeds.length >= 3, "65 fields must be split into at least 3 embeds");
+        for (const emb of splitEmbeds) {
+            assert.ok(emb.fields.length <= 25, "Each embed must have <= 25 fields");
+        }
+
+        // 5. Embed with total characters > 6,000
+        const heavyFields = Array.from({ length: 20 }, (_, i) => ({
+            name: `HeavyField_${i + 1}`,
+            value: "X".repeat(500) // 20 * 500 = 10,000 characters!
+        }));
+        const charHeavyEmbed = {
+            title: "CharHeavyEmbed",
+            fields: heavyFields,
+            footer: { text: "Event: ev_heavy • User: u_heavy" }
+        };
+        const charSplits = splitEmbedFields(charHeavyEmbed);
+        assert.ok(charSplits.length >= 2, "Embed exceeding 5800 chars must be split into sequential embeds");
+
+        // 6. Message batching with 25 embeds (exceeding 10 embeds per message limit)
+        const twentyFiveEmbeds = Array.from({ length: 25 }, (_, i) => ({
+            title: `Embed_${i + 1}`,
+            fields: [{ name: "K", value: "V" }],
+            footer: { text: "Event: ev_multi • User: u_multi" }
+        }));
+        const batches = fitEmbedsIntoMessages(twentyFiveEmbeds);
+        assert.ok(batches.length >= 3, "25 embeds must be packaged into at least 3 messages");
+        for (const msg of batches) {
+            assert.ok(msg.embeds.length <= 10, "Every message must contain at most 10 embeds");
+        }
     });
 });
