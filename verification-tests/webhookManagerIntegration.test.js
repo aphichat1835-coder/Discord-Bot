@@ -18,6 +18,7 @@ const {
     fitEmbedsIntoMessages,
     deliverWebhookEvent,
     postWebhookMessage,
+    isPermanentWebhookError,
     isEligibleVerifyLog,
     VerificationWebhookManager
 } = require("../discord/verification/services/webhook/verificationWebhookManager");
@@ -31,7 +32,8 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
     runStartupCheck(db, {
         dbPath: testDbPath,
         migrationsDir: path.resolve(__dirname, "../database/sqlite/migrations"),
-        backupDir: path.join(tempDir, "backups")
+        backupDir: path.join(tempDir, "backups"),
+        assetDir: path.join(tempDir, "cache-assets")
     });
 
     const repo = new VerificationWebhookRepository(db);
@@ -1411,6 +1413,95 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             global.fetch = origFetch;
         }
     });
+
+    await t.test("35. P1-6: isPermanentWebhookError differentiates non-retryable 4xx from retryable errors", () => {
+        // Permanent / non-retryable errors
+        assert.equal(isPermanentWebhookError({ status: 400 }), true);
+        assert.equal(isPermanentWebhookError({ status: 401 }), true);
+        assert.equal(isPermanentWebhookError({ status: 403 }), true);
+        assert.equal(isPermanentWebhookError({ status: 404 }), true);
+        assert.equal(isPermanentWebhookError({ status: 405 }), true);
+        assert.equal(isPermanentWebhookError({ status: 410 }), true);
+        assert.equal(isPermanentWebhookError(new Error("webhook_http_404:Not Found")), true);
+        assert.equal(isPermanentWebhookError({ code: "destination_changed_during_delivery" }), true);
+
+        // Retryable / transient errors
+        assert.equal(isPermanentWebhookError({ status: 429 }), false);
+        assert.equal(isPermanentWebhookError({ status: 500 }), false);
+        assert.equal(isPermanentWebhookError({ status: 502 }), false);
+        assert.equal(isPermanentWebhookError({ status: 503 }), false);
+        assert.equal(isPermanentWebhookError({ status: 504 }), false);
+        assert.equal(isPermanentWebhookError(new Error("webhook_request_timeout:15000ms")), false);
+        assert.equal(isPermanentWebhookError(new Error("network error")), false);
+    });
+
+    await t.test("36. P1-6: postWebhookMessage attaches status code to errors for fail-closed handling", async () => {
+        const origFetch = global.fetch;
+        global.fetch = async () => ({
+            ok: false,
+            status: 404,
+            text: async () => "Unknown Webhook"
+        });
+
+        try {
+            await assert.rejects(
+                async () => postWebhookMessage("https://discord.com/api/webhooks/99999/token", { content: "hi" }),
+                (err) => {
+                    assert.equal(err.status, 404);
+                    assert.equal(isPermanentWebhookError(err), true);
+                    return true;
+                }
+            );
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("37. P1-4: updateJobProgress with leaseToken rejects stale worker updates after lease changes", () => {
+        const gId = "guild_lease_test";
+        const jId = "job_lease_test_1";
+        repo.createJob({
+            jobId: jId,
+            guildId: gId,
+            destinationVersion: 1,
+            mode: "BACKFILL",
+            totalEligible: 10
+        });
+
+        // Worker A acquires lease
+        const acquired = repo.acquireJobLease(jId, "token_worker_A", 10000);
+        assert.equal(acquired, true);
+
+        // Worker A can update progress with token_worker_A
+        const updA = repo.updateJobProgress(jId, {
+            processedCount: 2,
+            leaseToken: "token_worker_A"
+        });
+        assert.equal(updA.changes, 1);
+
+        // Worker B acquires expired or new lease
+        // Simulate lease expiration by updating lease directly in DB or acquiring with worker B
+        repo.db.prepare("UPDATE verification_webhook_jobs SET lease_token = ?, lease_expires_at = ? WHERE job_id = ?")
+            .run("token_worker_B", Date.now() + 10000, jId);
+
+        // Worker A tries to update progress with stale token_worker_A -> must be rejected (changes = 0)
+        const updStaleA = repo.updateJobProgress(jId, {
+            processedCount: 3,
+            leaseToken: "token_worker_A"
+        });
+        assert.equal(updStaleA.changes, 0, "Stale worker update rejected");
+
+        // Worker B can update progress
+        const updB = repo.updateJobProgress(jId, {
+            processedCount: 4,
+            leaseToken: "token_worker_B"
+        });
+        assert.equal(updB.changes, 1, "Active worker update accepted");
+
+        const finalJob = repo.getJobById(jId);
+        assert.equal(finalJob.processed_count, 4);
+    });
 });
+
 
 

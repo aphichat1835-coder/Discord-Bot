@@ -392,11 +392,29 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
 
     if (!res.ok) {
         const errorText = await res.text().catch(() => "");
-        throw new Error(`webhook_http_${res.status}:${errorText.slice(0, 100)}`);
+        const httpError = new Error(`webhook_http_${res.status}:${errorText.slice(0, 100)}`);
+        httpError.status = res.status;
+        httpError.code = `webhook_http_${res.status}`;
+        throw httpError;
     }
 
     urlBackoffUntil.delete(webhookUrl);
     return true;
+}
+
+/**
+ * Determines whether a delivery error is permanent (non-retryable) such as HTTP 400, 401, 403, 404.
+ */
+function isPermanentWebhookError(err) {
+    if (!err) return false;
+    const status = Number(err.status) || (String(err.message || "").match(/webhook_http_(\d{3})/) ? Number(RegExp.$1) : null);
+    if (status && [400, 401, 403, 404, 405, 410].includes(status)) {
+        return true;
+    }
+    if (err.code === "destination_changed_during_delivery" || err.message === "destination_changed_during_delivery") {
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -983,10 +1001,15 @@ class VerificationWebhookManager {
                 processed++;
                 lastCursorId = eventId;
 
-                this.repo.updateJobProgress(job.job_id, {
+                const updProgress = this.repo.updateJobProgress(job.job_id, {
                     processedCount: processed,
-                    lastCursorId
+                    lastCursorId,
+                    leaseToken
                 });
+                if (updProgress && updProgress.changes === 0) {
+                    console.warn(`[VerificationWebhook] Lease expired or lost for job ${job.job_id}; halting backfill`);
+                    return;
+                }
             }
 
             // Drain queued items through the unified queue worker (P1-4)
@@ -1146,14 +1169,16 @@ class VerificationWebhookManager {
 
                 } catch (sendErr) {
                     console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
-                    if (item.attempt_count >= 5) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "exhausted", sendErr.message, item.destination_version);
+                    const isPermanent = isPermanentWebhookError(sendErr);
+                    if (isPermanent || item.attempt_count >= 5) {
+                        const failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
+                        this.repo.markDeliveryFailed(item.delivery_id, failReason, sendErr.message, item.destination_version);
                         sendThrottledAlert({
                             key: `exhausted_${guildId}_${item.delivery_id}`,
                             severity: "ERROR",
-                            code: "verification.webhook_retry_exhausted",
-                            title: "WEBHOOK RETRY EXHAUSTED",
-                            description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ลองใหม่ครบ 5 ครั้งแล้วยังไม่สำเร็จ: ${sendErr.message}`,
+                            code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
+                            title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
+                            description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
                             guildId
                         });
                         if (item.job_id) {
@@ -1164,6 +1189,15 @@ class VerificationWebhookManager {
                                 });
                             }
                             await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+                        }
+                        if (sendErr.status === 401 || sendErr.status === 404) {
+                            await GuildConfig.updateOne({ guildId }, {
+                                $set: {
+                                    "verification.webhookLog.valid": false,
+                                    "verification.webhookLog.lastStatus": "failed",
+                                    "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
+                                }
+                            }).catch(() => {});
                         }
                     } else {
                         this.repo.markDeliveryRetry(item.delivery_id, 10000, "retry", sendErr.message, item.destination_version);
@@ -1239,6 +1273,7 @@ module.exports = {
     fitEmbedsIntoMessages,
     deliverWebhookEvent,
     postWebhookMessage,
+    isPermanentWebhookError,
     isEligibleVerifyLog,
     VerificationWebhookManager,
     verificationWebhookManager

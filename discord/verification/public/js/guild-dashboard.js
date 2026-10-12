@@ -2636,15 +2636,22 @@
       if (progressBox && progressCount && progressBar) {
         if (data.activeJob) {
           progressBox.classList.remove("hidden");
-          if (progressTitle) progressTitle.textContent = "กำลังประมวลผลส่งข้อมูล...";
           const processed = Number(data.activeJob.processedCount || 0);
           const total = Number(data.activeJob.totalEligible || 0);
-          progressCount.textContent = `${processed} จาก ${total} รายการ`;
-          const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+          const success = Number(data.activeJob.successCount || 0);
+          const retry = Number(data.activeJob.retryCount || 0);
+          const failure = Number(data.activeJob.failureCount || 0);
+          const confirmed = success + failure;
+
+          if (progressTitle) {
+            progressTitle.textContent = retry > 0 ? "กำลังประมวลผลส่งข้อมูล (พบรายการลองใหม่)... ⚠️" : "กำลังประมวลผลส่งข้อมูล...";
+          }
+          progressCount.textContent = `ส่งสำเร็จ: ${success} จาก ${total} รายการ (สแกนคิว: ${processed}/${total})`;
+          const pct = total > 0 ? Math.min(100, Math.round((confirmed / total) * 100)) : 0;
           progressBar.style.width = `${pct}%`;
-          progressBar.style.background = "#5865F2";
+          progressBar.style.background = retry > 0 ? "var(--yellow2, #F39C12)" : "#5865F2";
           if (progressDetail) {
-            progressDetail.textContent = `ส่งสำเร็จ: ${data.activeJob.successCount || 0} | ลองใหม่: ${data.activeJob.retryCount || 0} | ล้มเหลว: ${data.activeJob.failureCount || 0}`;
+            progressDetail.textContent = `ส่งสำเร็จ: ${success} | ลองใหม่: ${retry} | ล้มเหลว: ${failure}`;
           }
 
           if (!webhookPollInterval) {
@@ -2693,6 +2700,10 @@
       showToast("กรุณาระบุ Discord Webhook URL", "err");
       return;
     }
+    if (url.includes("***") || !input.dataset.userEditing) {
+      showToast("กรุณากรอก Discord Webhook URL ใหม่ทั้งหมดหากต้องการเปลี่ยน", "warn");
+      return;
+    }
     const btn = $("btn-save-webhook-url");
     if (btn) btn.disabled = true;
     try {
@@ -2701,7 +2712,7 @@
         body: JSON.stringify({ url })
       });
       showToast(res.message || "บันทึก Webhook URL สำเร็จ", "ok");
-      if (input) input.dataset.userEditing = "";
+      if (input) delete input.dataset.userEditing;
       await loadWebhookStatus();
     } catch (err) {
       showToast(err.message || "บันทึก Webhook URL ไม่สำเร็จ", "err");
@@ -2729,11 +2740,13 @@
 
   function bindWebhookControls() {
     const input = $("webhook-url-input");
-    input?.addEventListener("focus", () => {
+    input?.addEventListener("input", () => {
       if (input) input.dataset.userEditing = "true";
     });
     input?.addEventListener("blur", () => {
-      if (input && !input.value) delete input.dataset.userEditing;
+      if (input && (!input.value || input.value.includes("***"))) {
+        delete input.dataset.userEditing;
+      }
     });
     $("btn-save-webhook-url")?.addEventListener("click", saveWebhookUrl);
     $("btn-start-live-only")?.addEventListener("click", () => startWebhookMode("live"));
