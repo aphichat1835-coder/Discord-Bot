@@ -66,10 +66,6 @@ function buildPreflightConfirmationPayload({
         }
     ]);
 
-    embed.setFooter({
-        text: "หากไม่ต้องการเริ่มดึงสมาชิก สามารถกดปิดหน้าต่างนี้ได้ทันทีครับ"
-    });
-
     const confirmBtn = new ButtonBuilder()
         .setCustomId(`${IDS.BTN_CONFIRM_PREFIX}${stageId}`)
         .setLabel("ยืนยันเริ่มดึงสมาชิก")

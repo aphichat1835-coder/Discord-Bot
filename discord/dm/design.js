@@ -95,15 +95,14 @@ function buildDmEmbed(options = {}) {
         { name: "🧾 รหัสอ้างอิง", value: code(options.referenceId || "ไม่มี"), inline: true },
         { name: "🕒 เวลา", value: `<t:${Math.floor(timestamp / 1000)}:F>`, inline: true }
     );
-    const fields = fitFields(fieldCandidates, title.length + summary.length + footer.length);
+    const fields = fitFields(fieldCandidates, title.length + summary.length);
 
     const embed = new MessageEmbed()
         .setColor(COLORS[options.tone] || COLORS.info)
         .setTitle(title)
         .setDescription(summary)
         .addFields(fields)
-        .setTimestamp(timestamp)
-        .setFooter({ text: footer });
+        .setTimestamp(timestamp);
 
     if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
     return embed;

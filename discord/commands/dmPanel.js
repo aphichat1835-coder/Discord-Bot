@@ -50,7 +50,6 @@ function buildDmPanelEmbed({ hasAttachment = false } = {}) {
             `- ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง\n\n` +
             `*Developed by <@${ownerId}>*`
         )
-        .setFooter({ text: 'คลิกปุ่มด้านล่างเพื่อเริ่มการตั้งค่าการส่งข้อความ' })
         .setTimestamp();
 
     if (hasAttachment) {
@@ -331,7 +330,6 @@ async function handleDmPanelModal(interaction) {
             { name: '🖼️ รูปภาพแนบ', value: imageUrl || '*(ไม่มี)*', inline: true },
             { name: '🪝 Webhook รับ Log', value: `\`${webhookUrl.slice(0, 45)}...\``, inline: true }
         )
-        .setFooter({ text: 'กดปุ่ม ยืนยันเริ่มส่ง เพื่อเริ่มการทำงาน หรือ ยกเลิก หากต้องการแก้ไข' })
         .setTimestamp();
 
     if (checkResult.botUser?.avatarUrl) {

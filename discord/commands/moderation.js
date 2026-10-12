@@ -185,10 +185,6 @@ function buildClearResultEmbed(interaction, result) {
         ]);
     }
 
-    embed.setFooter({
-        text: `ผู้สั่ง: ${interaction.user.tag}`,
-        iconURL: interaction.user.displayAvatarURL?.() || undefined
-    });
     embed.setTimestamp();
     return embed;
 }

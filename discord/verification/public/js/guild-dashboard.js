@@ -1547,7 +1547,7 @@
     const footer = document.createElement("div");
     const timestamp = panel.showTimestamp ? ` · ${new Date().toLocaleString("th-TH")}` : "";
     footer.className = "embed-preview-footer";
-    footer.textContent = `${panel.footerText || "Discord Verification System"}${timestamp}`;
+    footer.textContent = `${panel.footerText || ""}${timestamp}`;
     return footer;
   }
 

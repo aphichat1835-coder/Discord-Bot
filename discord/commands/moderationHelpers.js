@@ -219,10 +219,6 @@ function buildModerationReplyEmbed(interaction, target, action, reason, caseNumb
         embed.setThumbnail(avatarUrl);
     }
 
-    embed.setFooter({
-        text: `เซิร์ฟเวอร์: ${interaction.guild?.name || "-"} • ผู้สั่ง: ${interaction.user.tag}`,
-        iconURL: interaction.user?.displayAvatarURL?.() || undefined
-    });
     embed.setTimestamp();
 
     return embed;

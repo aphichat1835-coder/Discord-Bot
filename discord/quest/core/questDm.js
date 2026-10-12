@@ -121,8 +121,7 @@ function buildQuestSummaryEmbed({
         fields,
         nextAction,
         referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
-        timestamp,
-        footer: 'ระบบ Discord Quest อัตโนมัติ'
+        timestamp
     });
 }
 
@@ -159,8 +158,7 @@ function buildQuestAuthFailureEmbed({
         ],
         nextAction: 'กรุณารับ Token ใหม่ของบัญชีนี้ แล้วใช้คำสั่ง `/quest panel` เพื่อเปิดใช้งานใหม่อีกครั้ง',
         referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
-        timestamp,
-        footer: 'ระบบ Discord Quest อัตโนมัติ'
+        timestamp
     });
 }
 
@@ -198,8 +196,7 @@ function buildQuestStoppedEmbed({
         ],
         nextAction: 'สามารถเปิดแผงควบคุม `/quest panel` เพื่อเริ่มการทำงานใหม่อีกครั้งได้ทุกเมื่อ',
         referenceId: jobKey ? safeText(jobKey.slice(-16), 'quest', 32) : 'quest',
-        timestamp,
-        footer: 'ระบบ Discord Quest อัตโนมัติ'
+        timestamp
     });
 }
 

@@ -425,7 +425,6 @@ function buildWebhookPayload({
         color: result === "success" ? 0x2ECC71 : (result === "blocked" ? 0xE74C3C : 0xF39C12),
         thumbnail: profile.avatarUrl ? { url: profile.avatarUrl } : undefined,
         fields,
-        footer: { text: footerText },
         timestamp: new Date(verifiedAt).toISOString()
     };
 
@@ -612,18 +611,6 @@ async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onP
             }
         }
         const msg = messages[i];
-        if (messages.length > 1) {
-            for (const emb of msg.embeds) {
-                const partTag = `ส่วนที่ ${i + 1}/${messages.length}`;
-                if (emb.footer && emb.footer.text) {
-                    if (!emb.footer.text.includes("ส่วนที่")) {
-                        emb.footer.text = `${emb.footer.text} • ${partTag}`;
-                    }
-                } else {
-                    emb.footer = { text: partTag };
-                }
-            }
-        }
         await postWebhookMessage(webhookUrl, msg);
         if (typeof onPartSent === "function") {
             await onPartSent(i + 1, messages.length);

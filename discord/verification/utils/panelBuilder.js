@@ -15,7 +15,7 @@ const DEFAULT_PANEL = Object.freeze({
   color: "#5865F2",
   imageUrl: "",
   thumbnailUrl: "",
-  footerText: "Discord Verification System",
+  footerText: "",
   titleUrl: "",
   buttonText: "✅ ยืนยันตัวตน ✅",
   buttonLabel: "✅ ยืนยันตัวตน ✅",

@@ -48,7 +48,7 @@ const DEFAULT_PANEL = {
         "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2\n" +
         "ระบบจะตรวจสอบบัญชีและเพิ่มยศให้โดยอัตโนมัติเมื่อผ่านเงื่อนไข",
     color: "#5865F2",
-    footer: "Discord Verification System",
+    footer: "",
     oauthButtonText: "✅ ยืนยันตัวตนเข้าดิส",
     directButtonText: "🎭 รับยศ"
 };
@@ -849,7 +849,6 @@ function buildVerificationSetupResultEmbed({
                 inline: true
             }
         )
-        .setFooter({ text: `ตั้งค่าโดย ${interaction.user.tag}` })
         .setTimestamp();
 }
 

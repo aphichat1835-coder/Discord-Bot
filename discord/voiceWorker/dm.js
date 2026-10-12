@@ -208,8 +208,7 @@ function buildVoiceEventEmbed(snapshot, profile = null) {
         details: snapshot.reason,
         nextAction: snapshot.action,
         referenceId: getSessionShortId(snapshot.sessionId),
-        timestamp: snapshot.verifiedAt,
-        footer: "ระบบออนช่องเสียง"
+        timestamp: snapshot.verifiedAt
     });
 }
 
@@ -258,8 +257,7 @@ async function sendVoiceDigestDM(ownerId, items, metadata = {}) {
                 { name: "🔎 รายการล่าสุด", value: safeText(examples, "ไม่มีรายละเอียด", 1024) }
             ],
             nextAction: "ตรวจสอบเฉพาะรายการที่ยังไม่กลับสู่สถานะปกติจากหน้า Dashboard",
-            referenceId: digestReference,
-            footer: "สรุประบบออนช่องเสียง"
+            referenceId: digestReference
         });
         return dmService.send({
             eventKey: `voice:${ownerId}:${digestReference}`,
@@ -386,8 +384,7 @@ function buildVoiceTrackerEmbed(snapshot, trackerState = {}, profile = null) {
         details,
         nextAction,
         referenceId: `track-${getSessionShortId(snapshot.sessionId)}`,
-        timestamp: Date.now(),
-        footer: "ระบบติดตามการกู้คืนช่องเสียง"
+        timestamp: Date.now()
     });
 }
 

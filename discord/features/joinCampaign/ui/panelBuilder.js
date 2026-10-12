@@ -66,8 +66,6 @@ function buildPanelPayload({
         });
     }
 
-    embed.setFooter({ text: "ดึงสมาชิกอัตโนมัติ • ปลอดภัยและเป็นไปตามข้อกำหนด" });
-
     // 2. Select Menu Row (Modes)
     const selectOptions = listModes().map(m => ({
         label: m.label,

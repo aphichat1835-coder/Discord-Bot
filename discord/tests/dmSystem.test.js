@@ -60,9 +60,10 @@ test("shared DM design stays inside Discord embed limits", () => {
         details: "D".repeat(2000),
         nextAction: "N".repeat(2000)
     }).toJSON();
-    const textLength = embed.title.length + embed.description.length + embed.footer.text.length +
+    const textLength = embed.title.length + embed.description.length +
         embed.fields.reduce((total, field) => total + field.name.length + field.value.length, 0);
 
+    assert.equal(embed.footer, undefined);
     assert.ok(embed.fields.length <= 25);
     assert.ok(textLength <= 5800);
 });

@@ -60,8 +60,7 @@ async function sendMoveNotification(sessionId, deps = {}) {
         details: "ระบบทำการล็อกตำแหน่งและบินกลับห้องเป้าหมายเดิมทันทีทุกครั้ง และหน่วงเวลาส่งสรุป 3 นาทีหลังเหตุการณ์สงบลงเพื่อป้องกันข้อความสแปม",
         nextAction: "ไม่ต้องดำเนินการใดๆ บัญชียังคงออนไลน์อยู่ในห้องเป้าหมายตามปกติ หากมีการแกล้งลากบ่อยครั้ง อาจพิจารณาปรับสิทธิ์ Move Members ในเซิร์ฟเวอร์",
         referenceId: getSessionShortId(sessionId),
-        timestamp: record.lastMovedAt,
-        footer: "ระบบล็อกช่องเสียง"
+        timestamp: record.lastMovedAt
     });
 
     const eventKey = `voice:moved:${sessionId}:${record.lastMovedAt}`;

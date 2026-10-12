@@ -342,12 +342,6 @@ function buildEmojiNoticeEmbed({ title, description, color = config.system.theme
     if (guildIcon) {
         embed.setThumbnail(guildIcon);
     }
-    if (user?.tag) {
-        embed.setFooter({
-            text: `ผู้สั่ง: ${user.tag}`,
-            iconURL: user.displayAvatarURL?.({ dynamic: true }) || undefined
-        });
-    }
     return embed;
 }
 
@@ -455,10 +449,6 @@ function buildEmojiResultEmbed({ total, added, skipped, failed, createdStatic, c
         .setColor(theme.color)
         .setTitle(theme.title)
         .setDescription(descLines.join("\n"))
-        .setFooter({
-            text: `ผู้สั่ง: ${user?.tag || "ผู้ดูแลระบบ"}`,
-            iconURL: user?.displayAvatarURL?.({ dynamic: true }) || undefined
-        })
         .setTimestamp();
 
     const fields = buildEmojiResultFields({ createdStatic, createdAnimated, skippedEmojis, failedEmojis });

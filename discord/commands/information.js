@@ -222,7 +222,6 @@ function buildServerLoadingEmbed(interaction) {
             "ขอบเขตที่กำลังตรวจสอบ",
             "`MEMBERS` คนและบอท\n`CHANNELS` ช่องและหมวดหมู่\n`SECURITY` การยืนยัน 2FA และตัวกรองสื่อ"
         )
-        .setFooter({ text: "เซิร์ฟเวอร์ขนาดใหญ่อาจใช้เวลานานขึ้นเล็กน้อย" })
         .setTimestamp();
     const icon = interaction.guild?.iconURL?.({ forceStatic: false, size: 256 });
     if (icon) embed.setThumbnail(icon);
@@ -241,7 +240,6 @@ function buildUserLoadingEmbed(interaction) {
             "กำลังจัดเรียงข้อมูล",
             `${config.emojis?.loading || "⏳"} โปรไฟล์และอายุบัญชี • ยศและสิทธิ์ • Timeout และสถานะสมาชิก`
         )
-        .setFooter({ text: "แสดงเฉพาะข้อมูลที่บอทเข้าถึงได้ • ผลลัพธ์จะมาแทนที่ข้อความนี้" })
         .setTimestamp();
     const avatar = user?.displayAvatarURL?.({ forceStatic: false, size: 256 });
     if (avatar) embed.setThumbnail(avatar);
@@ -259,7 +257,6 @@ function buildPingLoadingEmbed() {
             "VOICE     กำลังอ่านสถานะ\n" +
             "```"
         )
-        .setFooter({ text: "ค่าทั้งหมดวัดใหม่จากการเรียกคำสั่งครั้งนี้" })
         .setTimestamp();
 }
 
@@ -458,7 +455,6 @@ function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
             buildServerSecurityAndBoostField(guild, extra),
             buildServerSystemAndFeaturesField(guild)
         )
-        .setFooter({ text: `เรียกดูโดย ${safeText(guild.members?.me?.user?.tag || "Phomueangtai", "Phomueangtai", 120)} • ข้อมูลอาจเปลี่ยนหลังเรียกคำสั่ง` })
         .setTimestamp();
 
     const iconUrl = guild.iconURL?.({ forceStatic: false, size: 1024 });
@@ -813,7 +809,6 @@ function buildUserInfoEmbed(interaction, user, member) {
             buildUserRolesAndPermsField(member),
             buildUserStatusAndActivityField(member)
         )
-        .setFooter({ text: `เรียกดูโดย ${safeText(interaction.user?.tag || interaction.user?.username, "สมาชิก", 120)} • ข้อมูลเรียลไทม์` })
         .setTimestamp();
 
     const avatar = member?.displayAvatarURL?.({ forceStatic: false, size: 1024 }) ||
@@ -1056,7 +1051,6 @@ function buildPingEmbed(stats) {
                 inline: false
             }
         )
-        .setFooter({ text: "RAM คือ Process RSS จริง • CPU เป็นค่าที่วัดระหว่างตอบคำสั่งครั้งนี้" })
         .setTimestamp();
 
     if (stats.botAvatarUrl) {

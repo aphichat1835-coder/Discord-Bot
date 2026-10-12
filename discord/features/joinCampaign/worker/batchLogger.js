@@ -259,9 +259,6 @@ async function sendFinalSummaryEmbed({
         description,
         color,
         fields,
-        footer: {
-            text: "ดึงสมาชิกอัตโนมัติ • รายงานผลเสร็จสิ้น"
-        },
         timestamp: new Date().toISOString()
     };
 

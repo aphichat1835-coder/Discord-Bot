@@ -69,8 +69,7 @@ function buildVoiceStatusEmbed(session, page, total) {
             `— **สถานะ:** ${getVoiceStatusLabel(session, config)}\n` +
             `— **ออนเมื่อ:** <t:${Math.floor((session.startedAt || Date.now()) / 1000)}:R>\n` +
             `— **Reconnect:** ${session.reconnectCount || 0} ครั้ง`
-        )
-        .setFooter({ text: `รายการทั้งหมดในระบบ ${page + 1} / ${total}` });
+        );
 }
 
 function buildVoiceStatusControls(current, page) {

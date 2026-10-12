@@ -147,10 +147,6 @@ async function buildStopPanelPayload(ownerId, notice = null) {
         ].filter(Boolean).join('\n'))
         .setTimestamp();
 
-    if (totalActive > 0) {
-        embed.setFooter({ text: `Auto Daily: ${rows.length} · กำลังทำงานอยู่: ${oneShotJobs.length + scheduledJobs.length}` });
-    }
-
     const components = [];
 
     if (rows.length > 0) {

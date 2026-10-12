@@ -128,9 +128,6 @@ function buildMemberLogEmbed({
             { name: '📊 สถานะ', value: statusText, inline: false },
             { name: '⏰ เวลาที่ส่ง', value: `<t:${Math.floor(Date.now() / 1000)}:T> (<t:${Math.floor(Date.now() / 1000)}:R>)`, inline: false }
         )
-        .setFooter({
-            text: `บอทตัวรอง: ${botUser?.tag || 'Helper Bot'} • ระบบส่งข้อความ DM`
-        })
         .setTimestamp();
 
     if (avatarUrl) {
@@ -167,7 +164,6 @@ function buildFinalSummaryEmbed({
             { name: '🤖 บอทผู้ส่ง (ตัวรอง)', value: `\`${botUser?.tag || botUser?.id || 'Unknown'}\``, inline: true },
             { name: `${serverEmoji} เซิร์ฟเวอร์`, value: `\`${guild?.name}\` (\`${guild?.id}\`)`, inline: true }
         )
-        .setFooter({ text: 'ระบบกระจายข้อความ DM • เสร็จสิ้นภารกิจ' })
         .setTimestamp();
 
     if (guild?.iconUrl) {
