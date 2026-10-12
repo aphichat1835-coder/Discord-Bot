@@ -185,11 +185,40 @@ class VerificationWebhookRepository {
 
     cancelJob(jobId, reason = "cancelled") {
         const now = Date.now();
-        return this.db.prepare(`
-            UPDATE verification_webhook_jobs
-            SET status = 'FAILED', lease_token = NULL, lease_expires_at = NULL, error_message = ?, updated_at = ?
-            WHERE job_id = ? AND status IN ('RUNNING', 'PENDING')
-        `).run(String(reason), now, String(jobId));
+        return this.db.transaction(() => {
+            const jobResult = this.db.prepare(`
+                UPDATE verification_webhook_jobs
+                SET status = 'FAILED', lease_token = NULL, lease_expires_at = NULL, error_message = ?, updated_at = ?
+                WHERE job_id = ? AND status IN ('RUNNING', 'PENDING')
+            `).run(String(reason), now, String(jobId));
+
+            this.db.prepare(`
+                UPDATE verification_webhook_deliveries
+                SET status = 'FAILED', error_code = 'job_cancelled', error_message = ?, updated_at = ?
+                WHERE job_id = ? AND status IN ('PENDING', 'RETRY')
+            `).run(String(reason), now, String(jobId));
+
+            return jobResult;
+        })();
+    }
+
+    cancelActiveJobsAndDeliveriesForGuild(guildId, reason = "switched_to_live_only") {
+        const now = Date.now();
+        return this.db.transaction(() => {
+            const jobResult = this.db.prepare(`
+                UPDATE verification_webhook_jobs
+                SET status = 'FAILED', lease_token = NULL, lease_expires_at = NULL, error_message = ?, updated_at = ?
+                WHERE guild_id = ? AND status IN ('RUNNING', 'PENDING')
+            `).run(String(reason), now, String(guildId));
+
+            this.db.prepare(`
+                UPDATE verification_webhook_deliveries
+                SET status = 'FAILED', error_code = 'cancelled_by_live_mode', error_message = ?, updated_at = ?
+                WHERE guild_id = ? AND job_id IS NOT NULL AND status IN ('PENDING', 'RETRY')
+            `).run(String(reason), now, String(guildId));
+
+            return jobResult;
+        })();
     }
 
     cancelOrFailOldJobs(guildId, errorMessage = "destination_version_changed", newDestinationVersion = null) {
@@ -272,32 +301,62 @@ class VerificationWebhookRepository {
         })();
     }
 
-    markDeliverySent(deliveryId) {
+    markDeliverySent(deliveryId, expectedDestinationVersion = null) {
         const now = Date.now();
+        if (expectedDestinationVersion !== null && Number(expectedDestinationVersion) > 0) {
+            return this.db.prepare(`
+                UPDATE verification_webhook_deliveries
+                SET status = 'SENT', error_code = NULL, error_message = NULL, updated_at = ?
+                WHERE delivery_id = ? AND status IN ('SENDING', 'PENDING', 'RETRY') AND destination_version = ?
+            `).run(now, String(deliveryId), Number(expectedDestinationVersion));
+        }
         return this.db.prepare(`
             UPDATE verification_webhook_deliveries
             SET status = 'SENT', error_code = NULL, error_message = NULL, updated_at = ?
-            WHERE delivery_id = ?
+            WHERE delivery_id = ? AND status IN ('SENDING', 'PENDING', 'RETRY')
         `).run(now, String(deliveryId));
     }
 
-    markDeliveryRetry(deliveryId, delayMs = 5000, errorCode = null, errorMessage = null) {
+    markDeliveryRetry(deliveryId, delayMs = 5000, errorCode = null, errorMessage = null, expectedDestinationVersion = null) {
         const now = Date.now();
         const nextRetry = now + Math.max(1000, Number(delayMs) || 5000);
+        if (expectedDestinationVersion !== null && Number(expectedDestinationVersion) > 0) {
+            return this.db.prepare(`
+                UPDATE verification_webhook_deliveries
+                SET status = 'RETRY', next_retry_at = ?, error_code = ?, error_message = ?, updated_at = ?
+                WHERE delivery_id = ? AND status IN ('SENDING', 'PENDING', 'RETRY') AND destination_version = ?
+            `).run(nextRetry, errorCode ? String(errorCode) : null, errorMessage ? String(errorMessage) : null, now, String(deliveryId), Number(expectedDestinationVersion));
+        }
         return this.db.prepare(`
             UPDATE verification_webhook_deliveries
             SET status = 'RETRY', next_retry_at = ?, error_code = ?, error_message = ?, updated_at = ?
-            WHERE delivery_id = ?
+            WHERE delivery_id = ? AND status IN ('SENDING', 'PENDING', 'RETRY')
         `).run(nextRetry, errorCode ? String(errorCode) : null, errorMessage ? String(errorMessage) : null, now, String(deliveryId));
     }
 
-    markDeliveryFailed(deliveryId, errorCode = null, errorMessage = null) {
+    markDeliveryFailed(deliveryId, errorCode = null, errorMessage = null, expectedDestinationVersion = null) {
         const now = Date.now();
+        if (expectedDestinationVersion !== null && Number(expectedDestinationVersion) > 0) {
+            return this.db.prepare(`
+                UPDATE verification_webhook_deliveries
+                SET status = 'FAILED', error_code = ?, error_message = ?, updated_at = ?
+                WHERE delivery_id = ? AND status IN ('SENDING', 'PENDING', 'RETRY') AND destination_version = ?
+            `).run(errorCode ? String(errorCode) : null, errorMessage ? String(errorMessage) : null, now, String(deliveryId), Number(expectedDestinationVersion));
+        }
         return this.db.prepare(`
             UPDATE verification_webhook_deliveries
             SET status = 'FAILED', error_code = ?, error_message = ?, updated_at = ?
-            WHERE delivery_id = ?
+            WHERE delivery_id = ? AND status IN ('SENDING', 'PENDING', 'RETRY')
         `).run(errorCode ? String(errorCode) : null, errorMessage ? String(errorMessage) : null, now, String(deliveryId));
+    }
+
+    countPendingDeliveriesForJob(jobId) {
+        const row = this.db.prepare(`
+            SELECT COUNT(*) as count
+            FROM verification_webhook_deliveries
+            WHERE job_id = ? AND status IN ('PENDING', 'SENDING')
+        `).get(String(jobId));
+        return row?.count || 0;
     }
 
     getDeliveryStats(guildId, destinationVersion = null) {
@@ -320,7 +379,7 @@ class VerificationWebhookRepository {
 
     recoverStuckSendingDeliveries(maxAgeMs = 300000) {
         const now = Date.now();
-        const cutoff = now - Math.max(30000, Number(maxAgeMs) || 300000);
+        const cutoff = Number(maxAgeMs) <= 0 ? now : (now - Math.max(30000, Number(maxAgeMs) || 300000));
         return this.db.transaction(() => {
             const affectedRows = this.db.prepare(`
                 SELECT DISTINCT guild_id

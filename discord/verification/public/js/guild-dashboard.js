@@ -2663,7 +2663,7 @@
           if (progressDetail) {
             progressDetail.textContent = data.lastError || "ระบบทำงานในโหมด Live พร้อมส่งข้อมูลทันที";
           }
-          if (data.enabled && state.currentTab === "data") {
+          if (data.enabled && state.activeTab === "data") {
             if (webhookPollInterval) clearInterval(webhookPollInterval);
             webhookPollInterval = setInterval(loadWebhookStatus, 10000);
           } else if (webhookPollInterval) {
@@ -2672,7 +2672,7 @@
           }
         } else {
           progressBox.classList.add("hidden");
-          if (data.enabled && state.currentTab === "data") {
+          if (data.enabled && state.activeTab === "data") {
             if (webhookPollInterval) clearInterval(webhookPollInterval);
             webhookPollInterval = setInterval(loadWebhookStatus, 10000);
           } else if (webhookPollInterval) {

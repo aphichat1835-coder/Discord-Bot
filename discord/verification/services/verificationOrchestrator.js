@@ -7,14 +7,14 @@ const {
     normalizeVerificationConfig,
     normalizeSecurityRules
 } = require("../utils/verifyMode");
+const discordDataCollector = require("./collectors/discordDataCollector");
 const {
-    collectDiscordData,
     getAccountCreatedAt,
     getAccountAgeDays,
     getAvatarUrl,
     getBannerUrl,
     displayTag
-} = require("./collectors/discordDataCollector");
+} = discordDataCollector;
 const { evaluateSecurity } = require("./securityEvaluator");
 const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require("./verificationPersistence");
 const { verificationWebhookManager } = require("./webhook/verificationWebhookManager");
@@ -407,7 +407,7 @@ async function executeVerification({
     // --- Step 2: Collect Discord Data via OAuth ---
     let discordData;
     try {
-        discordData = await collectDiscordData({ code, redirectUri });
+        discordData = await discordDataCollector.collectDiscordData({ code, redirectUri });
     } catch (discordErr) {
         if (discord.isOAuthInvalidGrantError(discordErr)) {
             return {
@@ -580,7 +580,10 @@ async function executeVerification({
     let finalReason = "verified";
     let isLookupError = false;
 
-    if (!memberInfo && (memberLookupFailure || (memberLookupStatus && memberLookupStatus !== 200 && memberLookupStatus !== 404))) {
+    const isNotFound = memberLookupStatus === 404;
+    const isLookupFailure = Boolean(memberLookupFailure) || (memberLookupStatus && memberLookupStatus !== 200 && memberLookupStatus !== 404);
+
+    if (!memberInfo && !isNotFound && isLookupFailure) {
         // Membership lookup failed due to API / network failure (P1-A, P1-B)
         isLookupError = true;
         finalReason = "member_lookup_failed";
@@ -681,6 +684,35 @@ async function executeVerification({
 
     // If role assignment or lookup failed, return user error immediately without dispatching webhook or DM
     if (!isSuccess) {
+        // Record recovery if critical persistence failed on failed attempts as well (Section 3.1)
+        const failedPersistenceResult = evaluateCriticalPersistence({
+            oauthSaved: oauthPersistence?.saved === true,
+            verifyLogSaved: Boolean(verifyLogSaved),
+            verifyLogDegraded: verifyLogSaved?.isBudgetDegraded === true,
+            trackingRequired: Boolean(ipInfo?.ipHash),
+            trackingSaved: Boolean(trackingSnapshot)
+        });
+        if (!failedPersistenceResult.ok) {
+            console.error("[VERIFY] Critical persistence failure on failed attempt. Recording recovery...");
+            await coordinatePersistenceFailure({
+                requestId: req?.id || `req_${Date.now()}`,
+                guildId,
+                userId: profile.id,
+                roleId: configuredRoleId,
+                result: "failed",
+                roleAssignResult,
+                roleApplied: false,
+                persistence: failedPersistenceResult.persistence,
+                removeRole: () => Promise.resolve({ ok: true }),
+                saveRecovery: async recoveryRecord => {
+                    const res = await VerificationRecovery.create(recoveryRecord);
+                    return Boolean(res);
+                }
+            }).catch(err => {
+                console.error("[VERIFY] Failed to record recovery for failed attempt persistence failure:", err);
+            });
+        }
+
         if (isLookupError) {
             return {
                 statusCode: 200,
@@ -726,11 +758,13 @@ async function executeVerification({
     if (!persistenceResult.ok) {
         console.error("[VERIFY] Critical persistence failure detected. Coordinating rollback/recovery...");
         const recoveryOutcome = await coordinatePersistenceFailure({
+            requestId: req?.id || `req_${Date.now()}`,
             guildId,
             userId: profile.id,
             roleId: configuredRoleId,
             result: "failed",
             roleAssignResult,
+            roleApplied: roleAssignResult?.ok === true && roleAssignResult?.alreadyHadRole !== true,
             persistence: persistenceResult.persistence,
             removeRole: () => discord.removeRoleFromMember(guildId, profile.id, configuredRoleId),
             saveRecovery: async recoveryRecord => {

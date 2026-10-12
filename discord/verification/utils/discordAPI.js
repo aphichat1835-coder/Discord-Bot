@@ -629,6 +629,13 @@ async function getGuildMemberResult(accessToken, guildId) {
                 Authorization: `Bearer ${accessToken}`
             }
         });
+        if (res.status === 404) {
+            return {
+                member: null,
+                status: 404,
+                failureReason: null
+            };
+        }
         if (!res.ok) {
             return {
                 member: null,
@@ -637,7 +644,7 @@ async function getGuildMemberResult(accessToken, guildId) {
             };
         }
         const data = await res.json();
-        if (!data || typeof data !== "object" || Array.isArray(data)) {
+        if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.roles)) {
             return {
                 member: null,
                 status: res.status,
@@ -650,9 +657,17 @@ async function getGuildMemberResult(accessToken, guildId) {
             failureReason: null
         };
     } catch (err) {
+        const status = Number(err?.status) || null;
+        if (status === 404) {
+            return {
+                member: null,
+                status: 404,
+                failureReason: null
+            };
+        }
         return {
             member: null,
-            status: Number(err?.status) || null,
+            status,
             failureReason: optionalFetchFailureReason(err)
         };
     }

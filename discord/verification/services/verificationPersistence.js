@@ -13,10 +13,23 @@ function evaluateCriticalPersistence({ oauthSaved, verifyLogSaved, trackingRequi
     };
 }
 
-function roleWasApplied(result, roleAssignResult) {
-    return result === "success" &&
-        roleAssignResult?.ok === true &&
-        roleAssignResult?.alreadyHadRole !== true;
+let sendWebhookEventSafe = null;
+try {
+    const { sendWebhookEvent } = require("../../core/webhooks");
+    sendWebhookEventSafe = sendWebhookEvent;
+} catch {
+    // optional in isolated unit tests
+}
+
+function roleWasApplied(resultOrRoleAssign, maybeRoleAssign) {
+    const roleAssign = (maybeRoleAssign && typeof maybeRoleAssign === "object")
+        ? maybeRoleAssign
+        : (resultOrRoleAssign && typeof resultOrRoleAssign === "object" ? resultOrRoleAssign : null);
+
+    return Boolean(
+        roleAssign?.ok === true &&
+        roleAssign?.alreadyHadRole !== true
+    );
 }
 
 async function coordinatePersistenceFailure({
@@ -24,18 +37,21 @@ async function coordinatePersistenceFailure({
     guildId,
     userId,
     roleId,
-    result,
+    result = "failed",
     roleAssignResult,
+    roleApplied: explicitRoleApplied,
     persistence,
     removeRole,
     saveRecovery,
     now = Date.now
 }) {
-    const roleApplied = roleWasApplied(result, roleAssignResult);
+    const roleApplied = typeof explicitRoleApplied === "boolean"
+        ? explicitRoleApplied
+        : roleWasApplied(roleAssignResult || result, roleAssignResult);
     let rollbackAttempted = false;
     let rollbackSucceeded = false;
 
-    if (roleApplied) {
+    if (roleApplied && typeof removeRole === "function") {
         rollbackAttempted = true;
         try {
             const rollback = await removeRole();
@@ -43,6 +59,21 @@ async function coordinatePersistenceFailure({
         } catch {
             rollbackSucceeded = false;
         }
+    }
+
+    if (roleApplied && typeof sendWebhookEventSafe === "function") {
+        sendWebhookEventSafe({
+            target: "ALERT",
+            severity: rollbackSucceeded ? "WARN" : "ERROR",
+            category: "VERIFICATION",
+            code: rollbackSucceeded ? "verification.persistence_failure_rolled_back" : "verification.persistence_rollback_failed",
+            state: "OPEN",
+            guildId,
+            title: rollbackSucceeded ? "PERSISTENCE FAILURE (ROLLED BACK)" : "PERSISTENCE ROLLBACK FAILED",
+            description: rollbackSucceeded
+                ? `บันทึกข้อมูลสำคัญไม่ครบ จึงย้อนยศสมาชิกกลับแล้ว (userId=${userId}, roleId=${roleId})`
+                : `การย้อนยศสมาชิกล้มเหลวหลังข้อมูลสำคัญบันทึกไม่ครบ (userId=${userId}, roleId=${roleId}): ต้องตรวจสอบด้วยตนเอง`
+        }).catch(() => {});
     }
 
     const recovery = {

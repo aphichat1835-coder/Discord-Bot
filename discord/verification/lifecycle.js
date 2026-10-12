@@ -24,6 +24,7 @@ const {
 } = require("./utils/ipUtils");
 const { readFiniteInteger } = require("../core/numbers");
 const { sendWebhookEvent } = require("../core/webhooks");
+const { verificationWebhookManager } = require("./services/webhook/verificationWebhookManager");
 
 const RETENTION_CONFIG_SCAN_MAX = readFiniteInteger(process.env.RETENTION_CONFIG_SCAN_MAX, { fallback: 1000, min: 50, max: 10000 });
 const RETENTION_ERROR_MAX = readFiniteInteger(process.env.RETENTION_ERROR_MAX, { fallback: 50, min: 5, max: 1000 });
@@ -291,6 +292,17 @@ async function runVerificationMaintenance(options = {}) {
             } catch (err) {
                 lastOAuthRefreshError = safeError(err);
             }
+            if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
+                try {
+                    const recovery = verificationWebhookManager.repo.recoverStuckSendingDeliveries(300000);
+                    const stuckGuilds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
+                    for (const gId of stuckGuilds) {
+                        if (typeof verificationWebhookManager.triggerWorker === "function") {
+                            verificationWebhookManager.triggerWorker(gId);
+                        }
+                    }
+                } catch (_) {}
+            }
         }
 
         summary.finishedAt = Date.now();
@@ -328,6 +340,13 @@ async function startVerificationRuntime(options = {}) {
     startLookupCacheCleanup();
     runtimeStartPromise = (async () => {
         await maintenanceRunner();
+        if (typeof verificationWebhookManager?.performStartupRecovery === "function") {
+            try {
+                await verificationWebhookManager.performStartupRecovery();
+            } catch (recoveryErr) {
+                console.error("[VERIFICATION] webhook startup recovery failed:", recoveryErr);
+            }
+        }
         if (typeof tokenManager.start === "function") {
             try {
                 await tokenManager.start();

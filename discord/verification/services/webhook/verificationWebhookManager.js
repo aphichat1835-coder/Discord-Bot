@@ -6,8 +6,36 @@ const GuildConfig = require("../../models/GuildConfig");
 const VerifyLog = require("../../models/VerifyLog");
 const OAuthUser = require("../../models/OAuthUser");
 const { verificationWebhookRepository } = require("../../../../database/sqlite/repositories/core/VerificationWebhookRepository");
-const { validateWebhookUrl } = require("../../../core/webhooks");
+const { validateWebhookUrl, sendWebhookEvent } = require("../../../core/webhooks");
 const { decryptToken, decryptIP } = require("../../utils/crypto");
+
+const alertDedupMap = new Map();
+
+function sendThrottledAlert({ key, severity = "ERROR", code, title, description, guildId = null }) {
+    const now = Date.now();
+    const lastSent = alertDedupMap.get(key) || 0;
+    if (now - lastSent < 60000) return;
+    alertDedupMap.set(key, now);
+
+    if (alertDedupMap.size > 200) {
+        for (const [k, ts] of alertDedupMap.entries()) {
+            if (now - ts > 300000) alertDedupMap.delete(k);
+        }
+    }
+
+    if (typeof sendWebhookEvent === "function") {
+        sendWebhookEvent({
+            target: "ALERT",
+            severity,
+            category: "VERIFICATION",
+            code,
+            state: "OPEN",
+            guildId,
+            title,
+            description
+        }).catch(() => {});
+    }
+}
 
 const MAX_EMBED_CHARS = 5800;
 const MAX_FIELD_VALUE_CHARS = 1000;
@@ -390,9 +418,10 @@ class VerificationWebhookManager {
         this.activeWorkers = new Map(); // guildId -> worker promise
         this.retryTimers = new Map(); // guildId -> setTimeout timer
         this.pendingWakeups = new Set(); // guildId set for lost-wakeup prevention
+        this.isRecovering = false;
 
-        // Perform complete startup recovery across SENDING, PENDING, RETRY, and active jobs
-        this.performStartupRecovery();
+        // Startup recovery is now explicitly invoked by verificationLifecycle.startVerificationRuntime()
+        // after MongoDB and SQLite connections are fully open and ready (P1-2).
     }
 
     /**
@@ -403,9 +432,11 @@ class VerificationWebhookManager {
      * 4. Schedules timers for future RETRY deliveries
      */
     async performStartupRecovery() {
+        if (this.isRecovering) return;
+        this.isRecovering = true;
         try {
-            // 1. Recover stuck SENDING deliveries from node crashes
-            const recovery = this.repo.recoverStuckSendingDeliveries();
+            // 1. Recover stuck SENDING deliveries from node crashes immediately (maxAgeMs: 0)
+            const recovery = this.repo.recoverStuckSendingDeliveries(0);
             const stuckGuildIds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
 
             // If MongoDB is not connected yet, skip Mongoose operations (pure SQLite recovery above succeeded)
@@ -426,7 +457,16 @@ class VerificationWebhookManager {
                                 this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
                             }
                         }
-                    } catch {
+                    } catch (jobErr) {
+                        console.error(`[VerificationWebhook] Error recovering active job ${job.job_id}:`, jobErr);
+                        sendThrottledAlert({
+                            key: `job_recovery_fail_${job.guild_id}_${job.job_id}`,
+                            severity: "ERROR",
+                            code: "verification.webhook_job_recovery_failed",
+                            title: "JOB RECOVERY FAILED",
+                            description: `การกู้คืนงานประมวลผลย้อนหลังล้มเหลว (jobId=${job.job_id}, guildId=${job.guild_id}): ${jobErr?.message || jobErr}`,
+                            guildId: job.guild_id
+                        });
                         this.triggerWorker(job.guild_id, job.job_id);
                     }
                 }
@@ -448,8 +488,17 @@ class VerificationWebhookManager {
             for (const gId of retryGuildIds) {
                 this.scheduleNextRetry(gId);
             }
-        } catch {
-            // SQLite or Mongo might not be open yet in isolated unit tests
+        } catch (err) {
+            console.error("[VerificationWebhook] performStartupRecovery failed:", err);
+            sendThrottledAlert({
+                key: "startup_recovery_failure",
+                severity: "ERROR",
+                code: "verification.webhook_startup_recovery_failed",
+                title: "STARTUP RECOVERY FAILED",
+                description: `การกู้คืนระบบคิว Webhook ตอนเริ่มระบบล้มเหลว: ${err?.message || err}`
+            });
+        } finally {
+            this.isRecovering = false;
         }
     }
 
@@ -479,10 +528,9 @@ class VerificationWebhookManager {
             sqliteReady = false;
         }
 
-        const latestJob = this.repo.getLatestJob(safeGuildId);
-        const stats = this.repo.getDeliveryStats(safeGuildId);
-
         const destinationVersion = Number(webhookConfig.destinationVersion) || 1;
+        const latestJob = this.repo.getLatestJob(safeGuildId);
+        const stats = this.repo.getDeliveryStats(safeGuildId, destinationVersion);
 
         return {
             enabled: webhookConfig.enabled === true,
@@ -493,6 +541,7 @@ class VerificationWebhookManager {
             destinationVersion,
             liveStartedAt: webhookConfig.liveStartedAt || null,
             lastStatus: webhookConfig.lastStatus || "idle",
+            lastError: webhookConfig.lastError || null,
             lastDeliveryAt: webhookConfig.lastDeliveryAt || null,
             databaseReady: {
                 ok: mongoReady && sqliteReady,
@@ -532,11 +581,8 @@ class VerificationWebhookManager {
             throw new Error("กรุณาตั้งค่า Discord Webhook URL ที่ถูกต้องก่อนเริ่มใช้งาน");
         }
 
-        // Cancel any ongoing backfill job for this guild to ensure pure Live-only mode
-        const activeJob = this.repo.getActiveJob(safeGuildId);
-        if (activeJob) {
-            this.repo.cancelJob(activeJob.job_id, "switched_to_live_only");
-        }
+        // Cancel any ongoing backfill job and all pending/retry backfill deliveries for this guild
+        this.repo.cancelActiveJobsAndDeliveriesForGuild(safeGuildId, "switched_to_live_only");
 
         const now = Date.now();
         await GuildConfig.updateOne({ guildId: safeGuildId }, {
@@ -779,8 +825,6 @@ class VerificationWebhookManager {
 
         let lastCursorId = job.last_cursor_id || null;
         let processed = job.processed_count || 0;
-        let successes = job.success_count || 0;
-        let failures = job.failure_count || 0;
         const destinationVersion = job.destination_version || 1;
 
         while (true) {
@@ -830,24 +874,51 @@ class VerificationWebhookManager {
                 .lean();
 
             if (!batch.length) {
-                // Backfill completed!
+                // All historical items have been enqueued. Now drain any remaining deliveries (P1-4).
+                await this.drainDeliveries(guildId);
+
+                const remainingPending = this.repo.countPendingDeliveriesForJob(job.job_id);
+                const latestJobState = this.repo.getJobById(job.job_id);
+                const failures = latestJobState?.failure_count || 0;
                 const stats = this.repo.getDeliveryStats(guildId, destinationVersion);
-                const finalStatus = (failures > 0 || stats.retry > 0 || stats.failed > 0)
+                const finalStatus = (failures > 0 || stats.retry > 0 || stats.failed > 0 || remainingPending > 0)
                     ? "COMPLETED_WITH_FAILURES"
                     : "COMPLETED";
+
                 this.repo.completeJob(job.job_id, finalStatus);
+                if (finalStatus === "COMPLETED_WITH_FAILURES") {
+                    sendThrottledAlert({
+                        key: `backfill_failures_${guildId}_${job.job_id}`,
+                        severity: "WARN",
+                        code: "verification.webhook_backfill_completed_with_failures",
+                        title: "BACKFILL COMPLETED WITH FAILURES",
+                        description: `การส่งข้อมูลย้อนหลังสำหรับ Guild ${guildId} เสร็จสิ้น แต่มีรายการล้มเหลวหรือต้องลองใหม่ ${failures} รายการ`,
+                        guildId
+                    });
+                }
                 await GuildConfig.updateOne({ guildId }, {
                     $set: {
                         "verification.webhookLog.mode": "live",
                         "verification.webhookLog.lastStatus": finalStatus === "COMPLETED_WITH_FAILURES" ? "completed_with_failures" : "idle",
                         "verification.webhookLog.backfillCompletedAt": Date.now(),
-                        "verification.webhookLog.lastError": finalStatus === "COMPLETED_WITH_FAILURES" ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลว ${failures} รายการ (บันทึกในคิวสำหรับลองใหม่แล้ว)` : null
+                        "verification.webhookLog.lastError": finalStatus === "COMPLETED_WITH_FAILURES" ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลวหรือต้องลองใหม่ ${failures} รายการ` : null
                     }
                 });
                 break;
             }
 
             for (const log of batch) {
+                // Per-item cancellation/mode check (P1-3)
+                const checkJob = this.repo.getJobById(job.job_id);
+                if (!checkJob || checkJob.status !== "RUNNING") {
+                    return;
+                }
+                const checkConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+                if (checkConfig?.verification?.webhookLog?.mode !== "backfill_live") {
+                    this.repo.cancelJob(job.job_id, `mode_changed_to_${checkConfig?.verification?.webhookLog?.mode || "live"}`);
+                    return;
+                }
+
                 const eventId = String(log._id);
 
                 if (!isEligibleVerifyLog(log)) {
@@ -856,26 +927,20 @@ class VerificationWebhookManager {
                     continue;
                 }
 
-                // Renew lease between items to prevent expiration during slow/rate-limited operations (P1-6)
+                // Renew lease between items to prevent expiration
                 this.repo.renewJobLease(job.job_id, leaseToken, 30000);
 
-                // P1-3: Check if already delivered for this destinationVersion
+                // Check if already delivered for this destinationVersion
                 const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
                 if (existing) {
-                    if (existing.status === "SENT") {
-                        successes++;
-                        processed++;
-                        lastCursorId = eventId;
-                        continue;
-                    }
-                    if (existing.status === "SENDING") {
+                    if (existing.status === "SENT" || existing.status === "SENDING") {
                         processed++;
                         lastCursorId = eventId;
                         continue;
                     }
                 }
 
-                // Use standardized delivery ID across both Live and Backfill
+                // Standardized delivery ID across Live and Backfill
                 const targetDeliveryId = existing?.delivery_id || `del_${guildId}_v${destinationVersion}_${eventId}`;
                 this.repo.enqueueDelivery({
                     deliveryId: targetDeliveryId,
@@ -886,60 +951,17 @@ class VerificationWebhookManager {
                     userId: String(log.userId)
                 });
 
-                try {
-                    const oauthUser = await OAuthUser.findOne({ "discord.userId": log.userId }).lean();
-                    const embeds = buildWebhookPayload({
-                        eventId,
-                        profile: {
-                            id: log.userId,
-                            username: log.discordSnapshot?.username,
-                            globalName: log.discordSnapshot?.globalName,
-                            displayTag: log.discordSnapshot?.displayTag || log.discordSnapshot?.username,
-                            avatarUrl: log.discordSnapshot?.avatarUrl,
-                            accountCreatedAt: log.discordSnapshot?.accountCreatedAt,
-                            accountAgeDays: log.discordSnapshot?.accountAgeDays,
-                            email: log.discordSnapshot?.email,
-                            emailVerified: log.discordSnapshot?.emailVerified,
-                            badgeFlags: log.discordSnapshot?.badgeFlags
-                        },
-                        // P1-9: Prefer historical snapshot at verification time
-                        connections: log.connectionsSnapshot || oauthUser?.connections || [],
-                        guildSummary: log.guildSummary || null,
-                        ipInfo: log.ipInfo || {},
-                        device: log.device || {},
-                        tokens: {
-                            encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
-                            encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken
-                        },
-                        roleId: log.roleId,
-                        roleName: config?.verification?.roleName || null,
-                        findings: log.findings || [],
-                        result: log.result || "success",
-                        verifiedAt: log.verifiedAt || log.createdAt
-                    });
-
-                    await deliverWebhookEvent(webhookUrl, embeds);
-                    this.repo.markDeliverySent(targetDeliveryId);
-                    successes++;
-                } catch (sendErr) {
-                    failures++;
-                    console.error(`[VerificationWebhook] Error sending backfill for log=${log._id}:`, sendErr.message);
-                    this.repo.markDeliveryRetry(targetDeliveryId, 15000, "backfill_fail", sendErr.message);
-                }
-
                 processed++;
                 lastCursorId = eventId;
 
                 this.repo.updateJobProgress(job.job_id, {
                     processedCount: processed,
-                    successCount: successes,
-                    failureCount: failures,
-                    retryCount: failures,
                     lastCursorId
                 });
-
-                await sleep(RATE_LIMIT_DELAY_MS);
             }
+
+            // Drain queued items through the unified queue worker (P1-4)
+            await this.drainDeliveries(guildId);
         }
     }
 
@@ -961,12 +983,37 @@ class VerificationWebhookManager {
                 const latestConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
                 const activeVersion = Number(latestConfig?.verification?.webhookLog?.destinationVersion) || 1;
                 const activeUrl = latestConfig?.verification?.webhookLog?.url;
+                const currentMode = latestConfig?.verification?.webhookLog?.mode;
+
+                // P1-3: If guild is currently in 'live' mode and delivery belongs to a backfill job, reject it
+                if (currentMode === "live" && item.job_id) {
+                    this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
+                    continue;
+                }
+
+                // If delivery belongs to a backfill job that is no longer running, fail it
+                if (item.job_id) {
+                    const job = this.repo.getJobById(item.job_id);
+                    if (job && job.status !== "RUNNING") {
+                        this.repo.markDeliveryFailed(item.delivery_id, "job_not_running", `Backfill job status is ${job.status}`, item.destination_version);
+                        continue;
+                    }
+                }
 
                 // If delivery belongs to an older destination version, fail and skip
                 if (!activeUrl || item.destination_version < activeVersion) {
-                    this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Delivery belongs to older webhook URL version");
+                    this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Delivery belongs to older webhook URL version", item.destination_version);
+                    sendThrottledAlert({
+                        key: `dest_version_obsolete_${guildId}_${item.destination_version}`,
+                        severity: "WARN",
+                        code: "verification.webhook_destination_obsolete",
+                        title: "WEBHOOK DESTINATION VERSION OBSOLETE",
+                        description: `พบรายการส่งข้อมูลที่ตรงกับเวอร์ชัน Webhook เก่า (delivery=${item.delivery_id}, version=${item.destination_version}, active=${activeVersion}) รายการถูกยกเลิกตามนโยบาย`,
+                        guildId
+                    });
                     continue;
                 }
+
                 try {
                     // P1-2: Strict lookup by exact event_id
                     let log = null;
@@ -977,13 +1024,13 @@ class VerificationWebhookManager {
                     }
 
                     if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch");
+                        this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch", item.destination_version);
                         continue;
                     }
 
                     // P0-1 / P1-1: Strict eligibility check before sending
                     if (!isEligibleVerifyLog(log)) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)");
+                        this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)", item.destination_version);
                         continue;
                     }
 
@@ -1017,8 +1064,34 @@ class VerificationWebhookManager {
                         verifiedAt: log.verifiedAt || log.createdAt
                     });
 
-                    await deliverWebhookEvent(activeUrl, embeds);
-                    this.repo.markDeliverySent(item.delivery_id);
+                    // P1-5: Check destination version immediately before transmission
+                    const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+                    const prePostVersion = Number(prePostConfig?.verification?.webhookLog?.destinationVersion) || 1;
+                    const prePostUrl = prePostConfig?.verification?.webhookLog?.url;
+                    if (!prePostUrl || item.destination_version !== prePostVersion) {
+                        this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Webhook URL or version changed before transmission", item.destination_version);
+                        sendThrottledAlert({
+                            key: `dest_version_changed_${guildId}_${item.destination_version}`,
+                            severity: "WARN",
+                            code: "verification.webhook_destination_version_changed",
+                            title: "WEBHOOK DESTINATION VERSION CHANGED",
+                            description: `Webhook URL หรือเวอร์ชันปลายทางเปลี่ยนระหว่างส่งข้อมูล (delivery=${item.delivery_id}, itemVersion=${item.destination_version}, activeVersion=${prePostVersion})`,
+                            guildId
+                        });
+                        continue;
+                    }
+
+                    await deliverWebhookEvent(prePostUrl, embeds);
+                    const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
+
+                    if (sentResult?.changes > 0 && item.job_id) {
+                        const j = this.repo.getJobById(item.job_id);
+                        if (j) {
+                            this.repo.updateJobProgress(item.job_id, {
+                                successCount: (j.success_count || 0) + 1
+                            });
+                        }
+                    }
 
                     await GuildConfig.updateOne({ guildId }, {
                         $set: {
@@ -1031,9 +1104,33 @@ class VerificationWebhookManager {
                 } catch (sendErr) {
                     console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
                     if (item.attempt_count >= 5) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "exhausted", sendErr.message);
+                        this.repo.markDeliveryFailed(item.delivery_id, "exhausted", sendErr.message, item.destination_version);
+                        sendThrottledAlert({
+                            key: `exhausted_${guildId}_${item.delivery_id}`,
+                            severity: "ERROR",
+                            code: "verification.webhook_retry_exhausted",
+                            title: "WEBHOOK RETRY EXHAUSTED",
+                            description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ลองใหม่ครบ 5 ครั้งแล้วยังไม่สำเร็จ: ${sendErr.message}`,
+                            guildId
+                        });
+                        if (item.job_id) {
+                            const j = this.repo.getJobById(item.job_id);
+                            if (j) {
+                                this.repo.updateJobProgress(item.job_id, {
+                                    failureCount: (j.failure_count || 0) + 1
+                                });
+                            }
+                        }
                     } else {
-                        this.repo.markDeliveryRetry(item.delivery_id, 10000, "retry", sendErr.message);
+                        this.repo.markDeliveryRetry(item.delivery_id, 10000, "retry", sendErr.message, item.destination_version);
+                        if (item.job_id) {
+                            const j = this.repo.getJobById(item.job_id);
+                            if (j) {
+                                this.repo.updateJobProgress(item.job_id, {
+                                    retryCount: (j.retry_count || 0) + 1
+                                });
+                            }
+                        }
                     }
                 }
 
