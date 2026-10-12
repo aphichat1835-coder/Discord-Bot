@@ -71,15 +71,49 @@ class VerificationWebhookRepository {
         `).get(String(guildId)) || null;
     }
 
+    ensureDeliverySchema() {
+        if (this._deliverySchemaEnsured) return;
+        try {
+            this.db.exec(`ALTER TABLE verification_webhook_deliveries ADD COLUMN sent_parts INTEGER DEFAULT 0`);
+        } catch (_) {}
+        this._deliverySchemaEnsured = true;
+    }
+
     updateJobProgress(jobId, {
         processedCount,
         successCount,
         failureCount,
         retryCount,
         lastCursorVerifiedAt = null,
-        lastCursorId = null
+        lastCursorId = null,
+        leaseToken = null
     }) {
         const now = Date.now();
+        if (leaseToken) {
+            const stmt = this.db.prepare(`
+                UPDATE verification_webhook_jobs
+                SET processed_count = COALESCE(?, processed_count),
+                    success_count = COALESCE(?, success_count),
+                    failure_count = COALESCE(?, failure_count),
+                    retry_count = COALESCE(?, retry_count),
+                    last_cursor_verified_at = COALESCE(?, last_cursor_verified_at),
+                    last_cursor_id = COALESCE(?, last_cursor_id),
+                    updated_at = ?
+                WHERE job_id = ? AND status = 'RUNNING' AND lease_token = ? AND lease_expires_at >= ?
+            `);
+            return stmt.run(
+                processedCount !== undefined ? Number(processedCount) : null,
+                successCount !== undefined ? Number(successCount) : null,
+                failureCount !== undefined ? Number(failureCount) : null,
+                retryCount !== undefined ? Number(retryCount) : null,
+                lastCursorVerifiedAt !== null ? Number(lastCursorVerifiedAt) : null,
+                lastCursorId !== null ? String(lastCursorId) : null,
+                now,
+                String(jobId),
+                String(leaseToken),
+                now
+            );
+        }
         const stmt = this.db.prepare(`
             UPDATE verification_webhook_jobs
             SET processed_count = COALESCE(?, processed_count),
@@ -89,7 +123,7 @@ class VerificationWebhookRepository {
                 last_cursor_verified_at = COALESCE(?, last_cursor_verified_at),
                 last_cursor_id = COALESCE(?, last_cursor_id),
                 updated_at = ?
-            WHERE job_id = ?
+            WHERE job_id = ? AND status = 'RUNNING'
         `);
         return stmt.run(
             processedCount !== undefined ? Number(processedCount) : null,
@@ -127,13 +161,20 @@ class VerificationWebhookRepository {
         return result.changes > 0;
     }
 
-    completeJob(jobId, status = 'COMPLETED') {
+    completeJob(jobId, status = 'COMPLETED', leaseToken = null) {
         const now = Date.now();
         const finalStatus = ['COMPLETED', 'COMPLETED_WITH_FAILURES'].includes(status) ? status : 'COMPLETED';
+        if (leaseToken) {
+            return this.db.prepare(`
+                UPDATE verification_webhook_jobs
+                SET status = ?, lease_token = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
+                WHERE job_id = ? AND status = 'RUNNING' AND lease_token = ?
+            `).run(finalStatus, now, now, String(jobId), String(leaseToken));
+        }
         return this.db.prepare(`
             UPDATE verification_webhook_jobs
             SET status = ?, lease_token = NULL, lease_expires_at = NULL, completed_at = ?, updated_at = ?
-            WHERE job_id = ?
+            WHERE job_id = ? AND status = 'RUNNING'
         `).run(finalStatus, now, now, String(jobId));
     }
 
@@ -256,6 +297,7 @@ class VerificationWebhookRepository {
         eventId,
         userId
     }) {
+        this.ensureDeliverySchema();
         const now = Date.now();
         const stmt = this.db.prepare(`
             INSERT OR IGNORE INTO verification_webhook_deliveries (
@@ -278,6 +320,7 @@ class VerificationWebhookRepository {
     }
 
     claimNextDeliveries(guildId, limit = 10) {
+        this.ensureDeliverySchema();
         const now = Date.now();
         const selectStmt = this.db.prepare(`
             SELECT * FROM verification_webhook_deliveries
@@ -354,9 +397,52 @@ class VerificationWebhookRepository {
         const row = this.db.prepare(`
             SELECT COUNT(*) as count
             FROM verification_webhook_deliveries
-            WHERE job_id = ? AND status IN ('PENDING', 'SENDING')
+            WHERE job_id = ? AND status IN ('PENDING', 'SENDING', 'RETRY')
         `).get(String(jobId));
         return row?.count || 0;
+    }
+
+    getJobDeliveryStats(jobId) {
+        const rows = this.db.prepare(`
+            SELECT status, COUNT(*) as count
+            FROM verification_webhook_deliveries
+            WHERE job_id = ?
+            GROUP BY status
+        `).all(String(jobId));
+
+        const stats = {
+            pending: 0,
+            sending: 0,
+            sent: 0,
+            retry: 0,
+            failed: 0,
+            total: 0,
+            get pendingCount() { return this.pending; },
+            get sendingCount() { return this.sending; },
+            get sentCount() { return this.sent; },
+            get retryCount() { return this.retry; },
+            get failedCount() { return this.failed; },
+            get totalCount() { return this.total; }
+        };
+        for (const row of rows) {
+            const key = String(row.status || "").toLowerCase();
+            const cnt = Number(row.count) || 0;
+            if (stats[key] !== undefined) {
+                stats[key] = cnt;
+            }
+            stats.total += cnt;
+        }
+        return stats;
+    }
+
+    updateDeliverySentParts(deliveryId, sentParts) {
+        const now = Date.now();
+        this.ensureDeliverySchema();
+        return this.db.prepare(`
+            UPDATE verification_webhook_deliveries
+            SET sent_parts = ?, updated_at = ?
+            WHERE delivery_id = ?
+        `).run(Math.max(0, Number(sentParts) || 0), now, String(deliveryId));
     }
 
     getDeliveryStats(guildId, destinationVersion = null) {

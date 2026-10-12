@@ -466,4 +466,142 @@ test("Section 3.2: executeVerification 5 membership lookup scenarios ensure only
     }
 });
 
+test("evaluateSecurity: detects deviceDuplicate and enforces violation when enabled", () => {
+    const { evaluateSecurity } = require("../discord/verification/services/securityEvaluator");
+    const result = evaluateSecurity({
+        profile: { id: "user_a", accountAgeDays: 100, email: "a@test.com", emailVerified: true },
+        device: { fingerprintHash: "device_hash_123" },
+        deviceSummary: { userIds: ["user_b", "user_c"] }, // 2 other accounts already on device
+        securityRules: {
+            deviceDuplicate: {
+                enabled: true,
+                threshold: 1, // max 1 account allowed
+                action: "deny_role"
+            }
+        }
+    });
+
+    assert.equal(result.isBlocked, true);
+    assert.equal(result.moderationAction, "deny_role");
+    assert.ok(result.findings.some(f => f.startsWith("device_duplicate_limit:")));
+    assert.ok(result.allViolations.some(v => v.key === "deviceDuplicate"));
+});
+
+test("evaluateSecurity: detects deviceDuplicate as finding only when rule is disabled", () => {
+    const { evaluateSecurity } = require("../discord/verification/services/securityEvaluator");
+    const result = evaluateSecurity({
+        profile: { id: "user_a", accountAgeDays: 100, email: "a@test.com", emailVerified: true },
+        device: { fingerprintHash: "device_hash_123" },
+        deviceSummary: { userIds: ["user_b", "user_c"] }, // 2 other accounts already on device
+        securityRules: {
+            deviceDuplicate: {
+                enabled: false,
+                threshold: 1,
+                action: "deny_role"
+            }
+        }
+    });
+
+    assert.equal(result.isBlocked, false);
+    assert.equal(result.moderationAction, null);
+    // Finding is always recorded regardless of rule enabled status
+    assert.ok(result.findings.some(f => f.startsWith("device_duplicate_limit:3")));
+    assert.equal(result.allViolations.length, 0);
+});
+
+test("evaluateSecurity: same user re-verifying does not trigger deviceDuplicate false-positive", () => {
+    const { evaluateSecurity } = require("../discord/verification/services/securityEvaluator");
+    const result = evaluateSecurity({
+        profile: { id: "user_a", accountAgeDays: 100, email: "a@test.com", emailVerified: true },
+        device: { fingerprintHash: "device_hash_123" },
+        deviceSummary: { userIds: ["user_a"] }, // Only user_a itself exists on device
+        securityRules: {
+            deviceDuplicate: {
+                enabled: true,
+                threshold: 1,
+                action: "deny_role"
+            }
+        }
+    });
+
+    // Projected unique accounts = 0 others + 1 current = 1 <= threshold 1
+    assert.equal(result.isBlocked, false);
+    assert.ok(!result.findings.some(f => f.startsWith("device_duplicate_limit:")));
+});
+
+test("evaluateSecurity: requireConnections blocks when connections empty and passes when provided", () => {
+    const { evaluateSecurity } = require("../discord/verification/services/securityEvaluator");
+    // Case 1: Empty connections -> blocked
+    const blockedResult = evaluateSecurity({
+        profile: { id: "user_a", accountAgeDays: 100, email: "a@test.com", emailVerified: true },
+        policySnapshot: { requireConnections: true },
+        connections: []
+    });
+    assert.equal(blockedResult.isBlocked, true);
+    assert.equal(blockedResult.moderationAction, "deny_role");
+    assert.ok(blockedResult.findings.includes("no_connections"));
+    assert.ok(blockedResult.allViolations.some(v => v.key === "requireConnections"));
+
+    // Case 2: Has connections -> allowed
+    const passedResult = evaluateSecurity({
+        profile: { id: "user_a", accountAgeDays: 100, email: "a@test.com", emailVerified: true },
+        policySnapshot: { requireConnections: true },
+        connections: [{ type: "youtube", id: "yt_123" }]
+    });
+    assert.equal(passedResult.isBlocked, false);
+    assert.ok(!passedResult.findings.includes("no_connections"));
+
+    // Case 3: requireConnections disabled -> allowed even if empty
+    const disabledResult = evaluateSecurity({
+        profile: { id: "user_a", accountAgeDays: 100, email: "a@test.com", emailVerified: true },
+        policySnapshot: { requireConnections: false },
+        connections: []
+    });
+    assert.equal(disabledResult.isBlocked, false);
+    assert.ok(!disabledResult.findings.includes("no_connections"));
+});
+
+test("loadExistingDeviceContext: aggregates user IDs matching fingerprintHash and includes current user", async () => {
+    const { loadExistingDeviceContext } = require("../discord/verification/services/verificationOrchestrator");
+    const IpIdentityLink = require("../discord/verification/models/IpIdentityLink");
+    const origFind = IpIdentityLink.find;
+
+    try {
+        IpIdentityLink.find = () => ({
+            select: () => ({
+                sort: () => ({
+                    limit: () => ({
+                        lean: async () => [
+                            {
+                                deviceFingerprints: [
+                                    { fingerprintHash: "test_dev_hash", userId: "user_alpha" },
+                                    { fingerprintHash: "other_dev_hash", userId: "user_beta" } // should not match
+                                ],
+                                users: [
+                                    { userId: "user_gamma", lastDeviceFingerprintHash: "test_dev_hash" }
+                                ]
+                            }
+                        ]
+                    })
+                })
+            })
+        });
+
+        const context = await loadExistingDeviceContext({
+            device: { fingerprintHash: "test_dev_hash" },
+            guildId: GUILD_ID,
+            currentUserId: "user_delta"
+        });
+
+        assert.equal(context.uniqueUsers, 3);
+        assert.ok(context.userIds.includes("user_alpha"));
+        assert.ok(context.userIds.includes("user_gamma"));
+        assert.ok(context.userIds.includes("user_delta"));
+        assert.ok(!context.userIds.includes("user_beta"));
+    } finally {
+        IpIdentityLink.find = origFind;
+    }
+});
+
+
 

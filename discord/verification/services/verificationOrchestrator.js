@@ -339,6 +339,52 @@ async function loadExistingIpLinkContext({ ipInfo, guildId }) {
     };
 }
 
+async function loadExistingDeviceContext({ device, guildId, currentUserId }) {
+    if (!device?.fingerprintHash || !guildId) {
+        return {
+            uniqueUsers: currentUserId ? 1 : 0,
+            userIds: currentUserId ? [String(currentUserId)] : []
+        };
+    }
+    const safeGuildId = safeSnowflakeStrict(guildId, "guild_id");
+    const targetHash = String(device.fingerprintHash);
+
+    return safeSideEffect("loadDeviceIdentityLinks", async () => {
+        const links = await IpIdentityLink.find({
+            guildId: safeGuildId,
+            "deviceFingerprints.fingerprintHash": targetHash,
+            deletedAt: { $exists: false }
+        })
+            .select("users.userId users.lastDeviceFingerprintHash deviceFingerprints.fingerprintHash deviceFingerprints.userId")
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(50)
+            .lean();
+
+        const userIds = new Set();
+        for (const link of links || []) {
+            for (const df of link.deviceFingerprints || []) {
+                if (df && df.fingerprintHash === targetHash && df.userId) {
+                    userIds.add(String(df.userId));
+                }
+            }
+            for (const u of link.users || []) {
+                if (u && u.lastDeviceFingerprintHash === targetHash && u.userId) {
+                    userIds.add(String(u.userId));
+                }
+            }
+        }
+        if (currentUserId) userIds.add(String(currentUserId));
+
+        return {
+            uniqueUsers: userIds.size,
+            userIds: Array.from(userIds)
+        };
+    }, {
+        uniqueUsers: currentUserId ? 1 : 0,
+        userIds: currentUserId ? [String(currentUserId)] : []
+    });
+}
+
 async function executeVerification({
     req,
     code,
@@ -453,19 +499,25 @@ async function executeVerification({
         hosting: false
     });
 
-    const device = safeSideEffect("extractDevice", () => extractDevice(req), {
+    const device = await safeSideEffect("extractDevice", () => extractDevice(req), {
         userAgent: req.headers["user-agent"] || "",
         fingerprintHash: null
     });
 
     // --- Step 4: Security Evaluation ---
     const ipLinkContext = await loadExistingIpLinkContext({ ipInfo, guildId });
+    const deviceContext = await loadExistingDeviceContext({
+        device,
+        guildId,
+        currentUserId: profile?.id
+    });
     const securityRules = normalizeSecurityRules(verificationConfig.securityRules || {});
     const policySnapshot = {
         enabled: verificationConfig.enabled !== false,
         minAccountAgeDays: verificationConfig.minAccountAgeDays || 0,
         requireEmail: Boolean(verificationConfig.requireEmail),
         requireEmailVerified: Boolean(verificationConfig.requireEmailVerified),
+        requireConnections: Boolean(verificationConfig.requireConnections),
         securityRules
     };
 
@@ -473,10 +525,12 @@ async function executeVerification({
         profile,
         ipInfo,
         device,
+        connections: discordData?.connections || [],
         existingIpLink: ipLinkContext.existingIpLink,
         securityRules,
         policySnapshot,
-        trackedUsers: ipLinkContext.trackedUsers
+        trackedUsers: ipLinkContext.trackedUsers,
+        deviceSummary: deviceContext
     });
 
     const allFindings = securityEval.findings;
@@ -834,6 +888,7 @@ module.exports = {
     saveVerifyLogSafe,
     updateIpIdentityTrackingSafe,
     loadExistingIpLinkContext,
+    loadExistingDeviceContext,
     isPanelRevisionValid,
     fitVerifyLogBudget
 };

@@ -147,8 +147,16 @@ async function collectDiscordData({ code, redirectUri }) {
 
     const resolved = await Promise.all([
         discord.getUserProfile(accessToken),
-        discord.getUserConnections(accessToken),
-        discord.getUserGuilds(accessToken)
+        Promise.resolve(discord.getUserConnections(accessToken)).catch(err => ({
+            fetchFailed: true,
+            fetchStatus: err?.status || 500,
+            fetchFailureReason: err?.message || "connections_fetch_error"
+        })),
+        Promise.resolve(discord.getUserGuilds(accessToken)).catch(err => ({
+            fetchFailed: true,
+            fetchStatus: err?.status || 500,
+            fetchFailureReason: err?.message || "guilds_fetch_error"
+        }))
     ]);
 
     const rawProfile = resolved[0] || {};

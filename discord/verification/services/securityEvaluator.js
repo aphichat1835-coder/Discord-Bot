@@ -41,10 +41,12 @@ function evaluateSecurity({
     profile,
     ipInfo = {},
     device = null,
+    connections = [],
     existingIpLink = null,
     securityRules = {},
     policySnapshot = {},
-    trackedUsers = []
+    trackedUsers = [],
+    deviceSummary = null
 }) {
     const findings = [];
     const violations = [];
@@ -76,6 +78,16 @@ function evaluateSecurity({
             action: "deny_role",
             reason: "email_unverified",
             userError: "อีเมลของบัญชี Discord ยังไม่ได้รับการยืนยัน กรุณายืนยันอีเมลก่อน"
+        });
+    }
+
+    if (policySnapshot.requireConnections && (!connections || !connections.length)) {
+        findings.push("no_connections");
+        violations.push({
+            key: "requireConnections",
+            action: "deny_role",
+            reason: "no_connections",
+            userError: "เซิร์ฟเวอร์นี้ต้องการให้บัญชี Discord ของคุณเชื่อมต่อกับบริการภายนอก (เช่น Steam, YouTube, GitHub) ก่อนยืนยันตัวตน"
         });
     }
 
@@ -170,6 +182,29 @@ function evaluateSecurity({
                     prevBlockRule,
                     "previously_blocked_ip",
                     "เครือข่ายนี้เคยถูกระงับสิทธิ์ในการยืนยันตัวตนมาก่อน"
+                ));
+            }
+        }
+    }
+
+    // --- Device Duplicate Detection & Enforcement ---
+    if (device?.fingerprintHash) {
+        const deviceUsers = Array.isArray(deviceSummary?.userIds)
+            ? deviceSummary.userIds
+            : [];
+        const otherDeviceUsers = deviceUsers.filter(uid => String(uid || "") !== String(profile?.id || ""));
+        const projectedDeviceUsers = otherDeviceUsers.length + 1;
+        const devRule = securityRules.deviceDuplicate;
+        const devThreshold = Number(devRule?.threshold || 2);
+
+        if (projectedDeviceUsers > devThreshold) {
+            findings.push(`device_duplicate_limit:${projectedDeviceUsers}`);
+            if (devRule?.enabled === true && devRule?.action !== "allow") {
+                violations.push(makeRuleViolation(
+                    "deviceDuplicate",
+                    devRule,
+                    `device_duplicate_limit:${projectedDeviceUsers}`,
+                    "อุปกรณ์นี้มีจำนวนบัญชีที่ยืนยันเกินขีดจำกัดที่กำหนดไว้"
                 ));
             }
         }

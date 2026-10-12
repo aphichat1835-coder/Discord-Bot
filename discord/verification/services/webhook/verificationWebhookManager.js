@@ -338,18 +338,38 @@ function fitEmbedsIntoMessages(embeds = []) {
     return messages;
 }
 
+const WEBHOOK_FETCH_TIMEOUT_MS = 15000;
+
 /**
- * Sends a single webhook message with automatic 429 retry backoff.
+ * Sends a single webhook message with automatic 429 retry backoff and fetch timeout.
  */
 async function postWebhookMessage(webhookUrl, body, attempt = 1) {
-    const res = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            ...body,
-            allowed_mentions: { parse: [] }
-        })
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        controller.abort(new Error("webhook_request_timeout"));
+    }, WEBHOOK_FETCH_TIMEOUT_MS);
+
+    let res;
+    try {
+        res = await fetch(webhookUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                ...body,
+                allowed_mentions: { parse: [] }
+            }),
+            signal: controller.signal
+        });
+    } catch (fetchErr) {
+        if (fetchErr.name === "AbortError" || fetchErr.message === "webhook_request_timeout") {
+            const timeoutError = new Error(`webhook_request_timeout:${WEBHOOK_FETCH_TIMEOUT_MS}ms`);
+            timeoutError.code = "webhook_request_timeout";
+            throw timeoutError;
+        }
+        throw fetchErr;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 
     if (res.status === 429) {
         const retryAfter = Number(res.headers.get("retry-after")) || 2;
@@ -371,14 +391,17 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
 
 /**
  * Delivers full verification event embeds to a webhook URL.
+ * Supports resumption from startPart to prevent re-sending already acknowledged parts on retry.
  */
-async function deliverWebhookEvent(webhookUrl, embeds = []) {
+async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onPartSent = null } = {}) {
     const splitEmbeds = [];
     for (const emb of embeds) {
         splitEmbeds.push(...splitEmbedFields(emb));
     }
     const messages = fitEmbedsIntoMessages(splitEmbeds);
-    for (let i = 0; i < messages.length; i++) {
+    const startIndex = Math.max(0, Math.min(Number(startPart) || 0, messages.length));
+
+    for (let i = startIndex; i < messages.length; i++) {
         const msg = messages[i];
         if (messages.length > 1) {
             for (const emb of msg.embeds) {
@@ -393,6 +416,9 @@ async function deliverWebhookEvent(webhookUrl, embeds = []) {
             }
         }
         await postWebhookMessage(webhookUrl, msg);
+        if (typeof onPartSent === "function") {
+            await onPartSent(i + 1, messages.length);
+        }
         if (messages.length > 1 && i < messages.length - 1) {
             await sleep(RATE_LIMIT_DELAY_MS);
         }
@@ -805,6 +831,14 @@ class VerificationWebhookManager {
 
         } catch (err) {
             console.error(`[VerificationWebhookManager] Worker error for guild=${safeGuildId}:`, err);
+            sendThrottledAlert({
+                key: `worker_unhandled_error_${safeGuildId}`,
+                severity: "ERROR",
+                code: "verification.webhook_worker_error",
+                title: "WEBHOOK WORKER UNHANDLED ERROR",
+                description: `เกิดข้อผิดพลาดในการทำงานของ Worker สำหรับ Guild ${safeGuildId}: ${err?.message || err}`,
+                guildId: safeGuildId
+            });
             await GuildConfig.updateOne({ guildId: safeGuildId }, {
                 $set: {
                     "verification.webhookLog.lastStatus": "failed",
@@ -876,34 +910,7 @@ class VerificationWebhookManager {
             if (!batch.length) {
                 // All historical items have been enqueued. Now drain any remaining deliveries (P1-4).
                 await this.drainDeliveries(guildId);
-
-                const remainingPending = this.repo.countPendingDeliveriesForJob(job.job_id);
-                const latestJobState = this.repo.getJobById(job.job_id);
-                const failures = latestJobState?.failure_count || 0;
-                const stats = this.repo.getDeliveryStats(guildId, destinationVersion);
-                const finalStatus = (failures > 0 || stats.retry > 0 || stats.failed > 0 || remainingPending > 0)
-                    ? "COMPLETED_WITH_FAILURES"
-                    : "COMPLETED";
-
-                this.repo.completeJob(job.job_id, finalStatus);
-                if (finalStatus === "COMPLETED_WITH_FAILURES") {
-                    sendThrottledAlert({
-                        key: `backfill_failures_${guildId}_${job.job_id}`,
-                        severity: "WARN",
-                        code: "verification.webhook_backfill_completed_with_failures",
-                        title: "BACKFILL COMPLETED WITH FAILURES",
-                        description: `การส่งข้อมูลย้อนหลังสำหรับ Guild ${guildId} เสร็จสิ้น แต่มีรายการล้มเหลวหรือต้องลองใหม่ ${failures} รายการ`,
-                        guildId
-                    });
-                }
-                await GuildConfig.updateOne({ guildId }, {
-                    $set: {
-                        "verification.webhookLog.mode": "live",
-                        "verification.webhookLog.lastStatus": finalStatus === "COMPLETED_WITH_FAILURES" ? "completed_with_failures" : "idle",
-                        "verification.webhookLog.backfillCompletedAt": Date.now(),
-                        "verification.webhookLog.lastError": finalStatus === "COMPLETED_WITH_FAILURES" ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลวหรือต้องลองใหม่ ${failures} รายการ` : null
-                    }
-                });
+                await this.checkAndCompleteJobIfDone(job.job_id, guildId, leaseToken);
                 break;
             }
 
@@ -928,7 +935,11 @@ class VerificationWebhookManager {
                 }
 
                 // Renew lease between items to prevent expiration
-                this.repo.renewJobLease(job.job_id, leaseToken, 30000);
+                const renewed = this.repo.renewJobLease(job.job_id, leaseToken, 30000);
+                if (!renewed) {
+                    console.warn(`[VerificationWebhook] Lease renewal failed for job ${job.job_id}; halting backfill to prevent conflict`);
+                    return;
+                }
 
                 // Check if already delivered for this destinationVersion
                 const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
@@ -1081,25 +1092,33 @@ class VerificationWebhookManager {
                         continue;
                     }
 
-                    await deliverWebhookEvent(prePostUrl, embeds);
-                    const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
-
-                    if (sentResult?.changes > 0 && item.job_id) {
-                        const j = this.repo.getJobById(item.job_id);
-                        if (j) {
-                            this.repo.updateJobProgress(item.job_id, {
-                                successCount: (j.success_count || 0) + 1
-                            });
-                        }
-                    }
-
-                    await GuildConfig.updateOne({ guildId }, {
-                        $set: {
-                            "verification.webhookLog.lastDeliveryAt": Date.now(),
-                            "verification.webhookLog.lastStatus": "success",
-                            "verification.webhookLog.lastError": null
+                    await deliverWebhookEvent(prePostUrl, embeds, {
+                        startPart: Number(item.sent_parts) || 0,
+                        onPartSent: async (partIndex) => {
+                            this.repo.updateDeliverySentParts(item.delivery_id, partIndex);
                         }
                     });
+                    const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
+
+                    if (sentResult?.changes > 0) {
+                        if (item.job_id) {
+                            const j = this.repo.getJobById(item.job_id);
+                            if (j) {
+                                this.repo.updateJobProgress(item.job_id, {
+                                    successCount: (j.success_count || 0) + 1
+                                });
+                            }
+                            await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+                        }
+
+                        await GuildConfig.updateOne({ guildId }, {
+                            $set: {
+                                "verification.webhookLog.lastDeliveryAt": Date.now(),
+                                "verification.webhookLog.lastStatus": "success",
+                                "verification.webhookLog.lastError": null
+                            }
+                        });
+                    }
 
                 } catch (sendErr) {
                     console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
@@ -1120,6 +1139,7 @@ class VerificationWebhookManager {
                                     failureCount: (j.failure_count || 0) + 1
                                 });
                             }
+                            await this.checkAndCompleteJobIfDone(item.job_id, guildId);
                         }
                     } else {
                         this.repo.markDeliveryRetry(item.delivery_id, 10000, "retry", sendErr.message, item.destination_version);
@@ -1141,6 +1161,47 @@ class VerificationWebhookManager {
         // P1-7: Schedule next retry timer if any items remain in RETRY
         this.scheduleNextRetry(guildId);
     }
+
+    /**
+     * Checks if all deliveries for a backfill job are finished and completes the job if so (P1-1).
+     */
+    async checkAndCompleteJobIfDone(jobId, guildId, leaseToken = null) {
+        if (!jobId) return;
+        const remainingForJob = this.repo.countPendingDeliveriesForJob(jobId);
+        if (remainingForJob > 0) return;
+
+        const job = this.repo.getJobById(jobId);
+        if (!job || job.status !== "RUNNING") return;
+
+        const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+        if (currentConfig?.verification?.webhookLog?.mode !== "backfill_live") return;
+
+        const jobStats = this.repo.getJobDeliveryStats(jobId);
+        const failures = (job.failure_count || 0) + (jobStats.failed || 0);
+        const finalStatus = failures > 0
+            ? "COMPLETED_WITH_FAILURES"
+            : "COMPLETED";
+
+        this.repo.completeJob(jobId, finalStatus, leaseToken);
+        if (finalStatus === "COMPLETED_WITH_FAILURES") {
+            sendThrottledAlert({
+                key: `backfill_failures_${guildId}_${jobId}`,
+                severity: "WARN",
+                code: "verification.webhook_backfill_completed_with_failures",
+                title: "BACKFILL COMPLETED WITH FAILURES",
+                description: `การส่งข้อมูลย้อนหลังสำหรับ Guild ${guildId} เสร็จสิ้น แต่มีรายการล้มเหลว ${failures} รายการ`,
+                guildId
+            });
+        }
+        await GuildConfig.updateOne({ guildId }, {
+            $set: {
+                "verification.webhookLog.mode": "live",
+                "verification.webhookLog.lastStatus": finalStatus === "COMPLETED_WITH_FAILURES" ? "completed_with_failures" : "idle",
+                "verification.webhookLog.backfillCompletedAt": Date.now(),
+                "verification.webhookLog.lastError": finalStatus === "COMPLETED_WITH_FAILURES" ? `ส่งประวัติย้อนหลังเสร็จสิ้น แต่พบรายการล้มเหลว ${failures} รายการ` : null
+            }
+        });
+    }
 }
 
 const verificationWebhookManager = new VerificationWebhookManager();
@@ -1153,6 +1214,7 @@ module.exports = {
     embedCharCount,
     fitEmbedsIntoMessages,
     deliverWebhookEvent,
+    postWebhookMessage,
     isEligibleVerifyLog,
     VerificationWebhookManager,
     verificationWebhookManager

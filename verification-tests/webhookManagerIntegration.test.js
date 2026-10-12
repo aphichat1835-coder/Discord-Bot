@@ -16,6 +16,8 @@ const {
     chunkStringToFields,
     splitEmbedFields,
     fitEmbedsIntoMessages,
+    deliverWebhookEvent,
+    postWebhookMessage,
     isEligibleVerifyLog,
     VerificationWebhookManager
 } = require("../discord/verification/services/webhook/verificationWebhookManager");
@@ -1173,6 +1175,169 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             assert.equal(readiness.enabled, true);
         } finally {
             GuildConfig.findOne = originalFindOne;
+        }
+    });
+
+    await t.test("30. P1: Multi-message chunking resumes from sent_parts without duplicating sent parts", async () => {
+        const origFetch = global.fetch;
+        const sentRequests = [];
+        global.fetch = async (url, options) => {
+            sentRequests.push(JSON.parse(options.body));
+            return {
+                ok: true,
+                status: 200,
+                text: async () => "ok"
+            };
+        };
+
+        try {
+            // Create an event that splits into 2 distinct messages (exceeding single embed char limits)
+            const hugeFields = Array.from({ length: 30 }, (_, i) => ({
+                name: `Field ${i}`,
+                value: "X".repeat(200)
+            }));
+            const largeEmbed = {
+                title: "Test Large Payload",
+                fields: hugeFields
+            };
+
+            const deliveredParts = [];
+            await deliverWebhookEvent("https://discord.com/api/webhooks/test/url", [largeEmbed], {
+                startPart: 1, // Simulate resuming after part 1 was already acknowledged
+                onPartSent: async (partIndex, totalParts) => {
+                    deliveredParts.push({ partIndex, totalParts });
+                }
+            });
+
+            // If it split into 2 messages, starting from 1 means only 1 message was transmitted
+            assert.equal(sentRequests.length, 1, "Only remaining unacknowledged part was transmitted");
+            assert.ok(deliveredParts.length >= 1, "onPartSent callback fired for completed part");
+
+            // Also test SQLite sent_parts persistence
+            const guildId = "g_parts_" + runNonce;
+            const eventId = "ev_parts_" + runNonce;
+            const deliveryId = "del_parts_" + runNonce;
+            repo.enqueueDelivery({
+                deliveryId,
+                guildId,
+                destinationVersion: 1,
+                eventId,
+                userId: "user_parts"
+            });
+
+            repo.updateDeliverySentParts(deliveryId, 2);
+            const saved = repo.getDeliveryByEventId(guildId, 1, eventId);
+            assert.equal(saved.sent_parts, 2, "SQLite properly records updated sent_parts");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("31. P1: Backfill job remains RUNNING when delivery retries and completes only after retry succeeds", async () => {
+        const guildId = "g_backfill_retry_" + runNonce;
+        const jobId = "job_retry_" + runNonce;
+        const eventId = "ev_retry_" + runNonce;
+        const deliveryId = "del_retry_" + runNonce;
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "backfill",
+            totalEligible: 1
+        });
+
+        repo.enqueueDelivery({
+            deliveryId,
+            guildId,
+            destinationVersion: 1,
+            eventId,
+            userId: "user_retry",
+            jobId
+        });
+
+        // Claim and mark retry
+        repo.claimNextDeliveries(guildId, 1);
+        repo.markDeliveryRetry(deliveryId, 5000, "temp_network_blip", "Simulated transient failure", 1);
+
+        // Count pending deliveries must count RETRY items
+        const pendingCount = repo.countPendingDeliveriesForJob(jobId);
+        assert.equal(pendingCount, 1, "Pending deliveries count includes RETRY items");
+
+        const stats = repo.getJobDeliveryStats(jobId);
+        assert.equal(stats.retryCount, 1, "Stats reflect RETRY delivery");
+
+        // Calling checkAndCompleteJobIfDone while items are in RETRY must NOT complete the job
+        await manager.checkAndCompleteJobIfDone(jobId, guildId);
+        const jobStillRunning = repo.getJobById(jobId);
+        assert.equal(jobStillRunning.status, "RUNNING", "Job must stay RUNNING while deliveries are pending retry");
+
+        // Now simulate retry completion
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const origFindOne = GuildConfig.findOne;
+        const origUpdateOne = GuildConfig.updateOne;
+        let modeSwitchedToLive = false;
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/123/mock",
+                                enabled: true,
+                                mode: "backfill_live",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        GuildConfig.updateOne = (filter, update) => {
+            if (update?.$set?.["verification.webhookLog.mode"] === "live") {
+                modeSwitchedToLive = true;
+            }
+            return Promise.resolve({ acknowledged: true });
+        };
+
+        try {
+            repo.markDeliverySent(deliveryId, 1);
+            assert.equal(repo.countPendingDeliveriesForJob(jobId), 0, "No pending deliveries remain");
+
+            await manager.checkAndCompleteJobIfDone(jobId, guildId);
+            const completedJob = repo.getJobById(jobId);
+            assert.equal(completedJob.status, "COMPLETED", "Job transitions to COMPLETED once retry finishes");
+            assert.equal(modeSwitchedToLive, true, "Guild switches to live mode only when all retries complete");
+        } finally {
+            GuildConfig.findOne = origFindOne;
+            GuildConfig.updateOne = origUpdateOne;
+        }
+    });
+
+    await t.test("32. P1/P2: postWebhookMessage aborts and throws webhook_request_timeout on request timeout", async () => {
+        const origFetch = global.fetch;
+        global.fetch = async (url, options) => {
+            const abortErr = new Error("This operation was aborted");
+            abortErr.name = "AbortError";
+            throw abortErr;
+        };
+
+        try {
+            await assert.rejects(
+                async () => {
+                    await postWebhookMessage("https://discord.com/api/webhooks/test/timeout", { content: "ping" });
+                },
+                (err) => {
+                    assert.equal(err.code, "webhook_request_timeout");
+                    assert.ok(err.message.includes("webhook_request_timeout"));
+                    return true;
+                },
+                "postWebhookMessage must normalize AbortError into webhook_request_timeout"
+            );
+        } finally {
+            global.fetch = origFetch;
         }
     });
 });
