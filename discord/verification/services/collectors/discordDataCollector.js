@@ -116,11 +116,16 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousS
         const prevOwned = Number.isFinite(Number(previousSummary?.ownedCount))
             ? Number(previousSummary.ownedCount)
             : (Number.isFinite(Number(previousSummary?.ownerGuildsCount)) ? Number(previousSummary.ownerGuildsCount) : 0);
+        const prevAdmin = Number.isFinite(Number(previousSummary?.adminCount))
+            ? Number(previousSummary.adminCount)
+            : (Number.isFinite(Number(previousSummary?.adminGuildsCount)) ? Number(previousSummary.adminGuildsCount) : 0);
         return {
             totalCount: prevTotal,
             ownedCount: prevOwned,
+            adminCount: prevAdmin,
             totalGuilds: prevTotal,
             ownerGuildsCount: prevOwned,
+            adminGuildsCount: prevAdmin,
             status: "failed",
             fetchedAt: previousSummary?.fetchedAt || null,
             attemptedAt: now,
@@ -130,17 +135,30 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousS
 
     const totalCount = guildsResult.length;
     let ownedCount = 0;
+    let adminCount = 0;
     for (const g of guildsResult) {
         if (g?.owner === true) {
             ownedCount++;
+        }
+        try {
+            const perms = BigInt(g?.permissions || 0);
+            if (g?.owner === true || (perms & 8n) === 8n) {
+                adminCount++;
+            }
+        } catch {
+            if (g?.owner === true) {
+                adminCount++;
+            }
         }
     }
 
     return {
         totalCount,
         ownedCount,
+        adminCount,
         totalGuilds: totalCount,
         ownerGuildsCount: ownedCount,
+        adminGuildsCount: adminCount,
         status: totalCount > 0 ? "success" : "empty",
         fetchedAt: now,
         attemptedAt: now,
