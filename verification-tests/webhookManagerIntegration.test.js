@@ -1654,6 +1654,7 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
         const sec5 = embed.fields.find(f => f.name.includes("สิทธิ์และการเข้าถึง"));
         assert.ok(sec5, "Section 5 exists");
         assert.match(sec5.value, /• Scope: identify email connections guilds guilds\.members\.read guilds\.join/);
+        assert.match(sec5.value, /• หมดอายุ \(Expires\): 7 วัน \(หมดอายุ .*\)/);
         assert.match(sec5.value, /• Access Token:\n  `RAW_ACCESS_TOKEN_XYZ_1234567890`/);
         assert.match(sec5.value, /• Refresh Token:\n  `RAW_REFRESH_TOKEN_ABC_0987654321`/);
 
