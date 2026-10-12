@@ -655,7 +655,6 @@ function buildWebhookEventPayload(event = {}) {
             title: buildWebhookEventTitle(event, presentation, displayCategory, target),
             description: event.description ? String(event.description) : undefined,
             fields,
-            footer: { text: `${displayCategory} · ${code}` },
             ...(thumbnailUrl ? { thumbnail: { url: thumbnailUrl } } : {}),
             timestamp: resolveEventTimestamp(event.timestamp).toISOString()
         }]
@@ -709,7 +708,6 @@ function buildWebhookEventPayloads(event = {}, options = {}) {
                 author: primary.embeds[0].author,
                 title: "Owner event continuation",
                 fields,
-                footer: primary.embeds[0].footer,
                 timestamp: primary.embeds[0].timestamp
             }]
         });
