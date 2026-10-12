@@ -132,6 +132,36 @@ describe("unified verification data contract", () => {
         expect(summary.guilds).toBeUndefined();
     });
 
+    test("preserves previous successful guild summary counts when guilds fetch fails", () => {
+        const { computeGuildSummary } = require("../discord/verification/services/collectors/discordDataCollector");
+        const prev = {
+            totalCount: 200,
+            ownedCount: 5,
+            totalGuilds: 200,
+            ownerGuildsCount: 5,
+            status: "success",
+            fetchedAt: 1700000000000
+        };
+        const summary = computeGuildSummary(null, true, "network_timeout", prev);
+        expect(summary.totalCount).toBe(200);
+        expect(summary.ownedCount).toBe(5);
+        expect(summary.status).toBe("failed");
+        expect(summary.failureReason).toBe("network_timeout");
+        expect(summary.fetchedAt).toBe(1700000000000);
+        expect(summary.attemptedAt).toBeGreaterThan(0);
+    });
+
+    test("returns zero counts and failed status when guilds fetch fails with no previous summary", () => {
+        const { computeGuildSummary } = require("../discord/verification/services/collectors/discordDataCollector");
+        const summary = computeGuildSummary(null, true, "network_timeout", null);
+        expect(summary.totalCount).toBe(0);
+        expect(summary.ownedCount).toBe(0);
+        expect(summary.status).toBe("failed");
+        expect(summary.failureReason).toBe("network_timeout");
+        expect(summary.fetchedAt).toBeNull();
+        expect(summary.attemptedAt).toBeGreaterThan(0);
+    });
+
     test("stores more than 80 target-guild roles without truncation", () => {
         const roles = Array.from({ length: 125 }, (_, index) => String(index + 1));
         const member = compactMemberInfo({

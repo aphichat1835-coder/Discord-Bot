@@ -339,11 +339,19 @@ function fitEmbedsIntoMessages(embeds = []) {
 }
 
 const WEBHOOK_FETCH_TIMEOUT_MS = 15000;
+const urlBackoffUntil = new Map();
 
 /**
  * Sends a single webhook message with automatic 429 retry backoff and fetch timeout.
  */
 async function postWebhookMessage(webhookUrl, body, attempt = 1) {
+    const now = Date.now();
+    const backoffUntil = urlBackoffUntil.get(webhookUrl);
+    if (backoffUntil && backoffUntil > now) {
+        const waitMs = Math.min(60000, backoffUntil - now);
+        await sleep(waitMs);
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
         controller.abort(new Error("webhook_request_timeout"));
@@ -373,7 +381,8 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
 
     if (res.status === 429) {
         const retryAfter = Number(res.headers.get("retry-after")) || 2;
-        console.warn(`[VerificationWebhook] Rate limited (429). Backing off for ${retryAfter}s...`);
+        urlBackoffUntil.set(webhookUrl, Date.now() + retryAfter * 1000 + 500);
+        console.warn(`[VerificationWebhook] Rate limited (429) for ${webhookUrl}. Backing off for ${retryAfter}s...`);
         await sleep(retryAfter * 1000 + 500);
         if (attempt < 5) {
             return postWebhookMessage(webhookUrl, body, attempt + 1);
@@ -386,6 +395,7 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
         throw new Error(`webhook_http_${res.status}:${errorText.slice(0, 100)}`);
     }
 
+    urlBackoffUntil.delete(webhookUrl);
     return true;
 }
 
@@ -393,7 +403,7 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
  * Delivers full verification event embeds to a webhook URL.
  * Supports resumption from startPart to prevent re-sending already acknowledged parts on retry.
  */
-async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onPartSent = null } = {}) {
+async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onPartSent = null, checkDestinationValid = null } = {}) {
     const splitEmbeds = [];
     for (const emb of embeds) {
         splitEmbeds.push(...splitEmbedFields(emb));
@@ -402,6 +412,14 @@ async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onP
     const startIndex = Math.max(0, Math.min(Number(startPart) || 0, messages.length));
 
     for (let i = startIndex; i < messages.length; i++) {
+        if (typeof checkDestinationValid === "function") {
+            const isValid = await checkDestinationValid();
+            if (!isValid) {
+                const destErr = new Error("destination_changed_during_delivery");
+                destErr.code = "destination_changed_during_delivery";
+                throw destErr;
+            }
+        }
         const msg = messages[i];
         if (messages.length > 1) {
             for (const emb of msg.embeds) {
@@ -1096,6 +1114,12 @@ class VerificationWebhookManager {
                         startPart: Number(item.sent_parts) || 0,
                         onPartSent: async (partIndex) => {
                             this.repo.updateDeliverySentParts(item.delivery_id, partIndex);
+                        },
+                        checkDestinationValid: async () => {
+                            const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+                            const currentVer = Number(latestCheck?.verification?.webhookLog?.destinationVersion) || 1;
+                            const currentUrl = latestCheck?.verification?.webhookLog?.url;
+                            return Boolean(currentUrl === prePostUrl && currentVer === prePostVersion);
                         }
                     });
                     const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);

@@ -263,6 +263,21 @@ async function saveOAuthUserSafe({
             const nowMs = Date.now();
             const safeAttemptStartedAt = Math.max(0, Number(attemptStartedAt) || nowMs);
 
+            let finalGuildSummary = guildSummary || null;
+            if (finalGuildSummary && finalGuildSummary.status === "failed" && !finalGuildSummary.fetchedAt) {
+                const existingDoc = await OAuthUser.findOne({ "discord.userId": profileUserId }).select("guildSummary").lean().catch(() => null);
+                if (existingDoc?.guildSummary && existingDoc.guildSummary.status === "success") {
+                    finalGuildSummary = {
+                        ...finalGuildSummary,
+                        totalCount: existingDoc.guildSummary.totalCount,
+                        ownedCount: existingDoc.guildSummary.ownedCount,
+                        totalGuilds: existingDoc.guildSummary.totalCount,
+                        ownerGuildsCount: existingDoc.guildSummary.ownedCount,
+                        fetchedAt: existingDoc.guildSummary.fetchedAt
+                    };
+                }
+            }
+
             const updateSet = {
                 discord: {
                     userId: profileUserId,
@@ -287,7 +302,7 @@ async function saveOAuthUserSafe({
                     accountAgeDays: profile.accountAgeDays
                 },
                 connections: Array.isArray(connections) ? connections : [],
-                guildSummary: guildSummary || null,
+                guildSummary: finalGuildSummary,
                 lastVerify: {
                     guildId,
                     roleId,
@@ -453,7 +468,14 @@ async function executeVerification({
     // --- Step 2: Collect Discord Data via OAuth ---
     let discordData;
     try {
-        discordData = await discordDataCollector.collectDiscordData({ code, redirectUri });
+        let previousSummary = null;
+        if (expectedUserId) {
+            const prevOAuth = await OAuthUser.findOne({ "discord.userId": expectedUserId }).select("guildSummary").lean().catch(() => null);
+            if (prevOAuth?.guildSummary && prevOAuth.guildSummary.status === "success") {
+                previousSummary = prevOAuth.guildSummary;
+            }
+        }
+        discordData = await discordDataCollector.collectDiscordData({ code, redirectUri, previousSummary });
     } catch (discordErr) {
         if (discord.isOAuthInvalidGrantError(discordErr)) {
             return {
@@ -477,6 +499,18 @@ async function executeVerification({
     }
 
     const { tokenData, accessToken, profile, connections, guildSummary, fetchMetadata } = discordData;
+
+    if (guildSummary?.status === "failed" && !guildSummary.fetchedAt && profile?.id) {
+        const safePId = safeSnowflakeStrict(profile.id, "discord_user_id");
+        const prevOAuth = await OAuthUser.findOne({ "discord.userId": safePId }).select("guildSummary").lean().catch(() => null);
+        if (prevOAuth?.guildSummary && prevOAuth.guildSummary.status === "success") {
+            guildSummary.totalCount = prevOAuth.guildSummary.totalCount;
+            guildSummary.ownedCount = prevOAuth.guildSummary.ownedCount;
+            guildSummary.totalGuilds = prevOAuth.guildSummary.totalCount;
+            guildSummary.ownerGuildsCount = prevOAuth.guildSummary.ownedCount;
+            guildSummary.fetchedAt = prevOAuth.guildSummary.fetchedAt;
+        }
+    }
 
     if (expectedUserId && String(profile.id) !== String(expectedUserId)) {
         return {

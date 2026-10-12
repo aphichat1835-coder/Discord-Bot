@@ -107,15 +107,22 @@ function normalizeConnections(connections = []) {
  * Total count and owned count only.
  * Discards raw guilds array immediately!
  */
-function computeGuildSummary(guildsResult, fetchFailed, failureReason) {
+function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousSummary = null) {
     const now = Date.now();
     if (fetchFailed || !Array.isArray(guildsResult)) {
+        const prevTotal = Number.isFinite(Number(previousSummary?.totalCount))
+            ? Number(previousSummary.totalCount)
+            : (Number.isFinite(Number(previousSummary?.totalGuilds)) ? Number(previousSummary.totalGuilds) : 0);
+        const prevOwned = Number.isFinite(Number(previousSummary?.ownedCount))
+            ? Number(previousSummary.ownedCount)
+            : (Number.isFinite(Number(previousSummary?.ownerGuildsCount)) ? Number(previousSummary.ownerGuildsCount) : 0);
         return {
-            totalCount: 0,
-            ownedCount: 0,
-            totalGuilds: 0,
-            ownerGuildsCount: 0,
+            totalCount: prevTotal,
+            ownedCount: prevOwned,
+            totalGuilds: prevTotal,
+            ownerGuildsCount: prevOwned,
             status: "failed",
+            fetchedAt: previousSummary?.fetchedAt || null,
             attemptedAt: now,
             failureReason: failureReason || "guilds_fetch_failed"
         };
@@ -141,7 +148,7 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason) {
     };
 }
 
-async function collectDiscordData({ code, redirectUri }) {
+async function collectDiscordData({ code, redirectUri, previousSummary = null }) {
     const tokenData = await oauthTokenManager.exchangeAuthorizationCode(code, redirectUri);
     const accessToken = tokenData.access_token;
 
@@ -181,7 +188,7 @@ async function collectDiscordData({ code, redirectUri }) {
     };
 
     const connections = connectionsFetchFailed ? [] : normalizeConnections(rawConnections);
-    const guildSummary = computeGuildSummary(rawGuilds, guildsFetchFailed, fetchMetadata.guildsFailureReason);
+    const guildSummary = computeGuildSummary(rawGuilds, guildsFetchFailed, fetchMetadata.guildsFailureReason, previousSummary);
 
     const profile = {
         id: String(rawProfile.id),

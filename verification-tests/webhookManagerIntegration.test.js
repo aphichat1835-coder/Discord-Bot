@@ -1340,6 +1340,77 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             global.fetch = origFetch;
         }
     });
+
+    await t.test("33. P1/P2: deliverWebhookEvent aborts multipart delivery if destination changes midway", async () => {
+        const origFetch = global.fetch;
+        let partsSent = 0;
+        global.fetch = async () => {
+            partsSent++;
+            return { ok: true, status: 200, text: async () => "ok" };
+        };
+
+        try {
+            const hugeFields = Array.from({ length: 30 }, (_, i) => ({
+                name: `Field ${i}`,
+                value: "X".repeat(200)
+            }));
+            const largeEmbed = { title: "Test Multipart Abort", fields: hugeFields };
+
+            let callCount = 0;
+            await assert.rejects(
+                async () => {
+                    await deliverWebhookEvent("https://discord.com/api/webhooks/test/url", [largeEmbed], {
+                        startPart: 0,
+                        checkDestinationValid: async () => {
+                            callCount++;
+                            // Return true on part 0, then false on part 1
+                            return callCount <= 1;
+                        }
+                    });
+                },
+                (err) => {
+                    assert.equal(err.code, "destination_changed_during_delivery");
+                    return true;
+                },
+                "deliverWebhookEvent must abort when checkDestinationValid returns false"
+            );
+            assert.equal(partsSent, 1, "Only first part was sent before destination change aborted delivery");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("34. P1/P2: postWebhookMessage coordinates URL-level 429 rate limit backoff across callers", async () => {
+        const origFetch = global.fetch;
+        const testUrl = "https://discord.com/api/webhooks/test/ratelimit_url";
+        let fetchCalls = 0;
+
+        global.fetch = async () => {
+            fetchCalls++;
+            if (fetchCalls === 1) {
+                return {
+                    ok: false,
+                    status: 429,
+                    headers: {
+                        get: (k) => k.toLowerCase() === "retry-after" ? "0.1" : null
+                    }
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                text: async () => "ok"
+            };
+        };
+
+        try {
+            const res = await postWebhookMessage(testUrl, { content: "test 429" });
+            assert.equal(res, true);
+            assert.ok(fetchCalls >= 2, "Retried after 429 backoff");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
 });
 
 
