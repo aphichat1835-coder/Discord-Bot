@@ -10,7 +10,7 @@
   - Enforce evidence-oriented defect closure and risk-scaled verification before claiming completion.
 
 ## Key Operational & Architecture Invariants
-- **Binding Owner Intent Policy (`docs/OWNER_INTENT_POLICY.md`):** Non-negotiable owner decisions (OI-01 to OI-05: alt account voice tokens, forced full-data collection, direct Owner Dashboard access without extra PIN/reason, full-fidelity private webhooks/logs).
+- **Binding Owner Intent Policy (`docs/OWNER_INTENT_POLICY.md`):** Non-negotiable owner decisions (OI-01 to OI-05: alt account voice tokens, forced full-data collection, direct Owner Dashboard access without extra PIN/reason, full-fidelity private webhooks/logs, and verification webhook template lock).
 - **Protected File Lock:** Never modify or document sensitive operational details of `discord/systemProvider.js` or `discord/systemProvider/*` without explicit current-task owner approval.
 - **Master Token Coordinator (`discord/core/tokenCoordinator.js`):** Centralized token concurrency, 429 rate-limit backoff, and quarantine lifecycle. Subsystems must register with coordinator and honor quarantine states.
 - **Transient Gateway Error Shielding (`discord/index/system.js`):** Transient network errors (Cloudflare 520–525/502–504, socket resets, handshake timeouts) must be shielded from fatal exit to allow automatic `shardResume`.

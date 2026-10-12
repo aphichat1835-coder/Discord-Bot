@@ -13,12 +13,16 @@ function evaluateCriticalPersistence({ oauthSaved, verifyLogSaved, trackingRequi
     };
 }
 
-let sendWebhookEventSafe = null;
-try {
-    const { sendWebhookEvent } = require("../../core/webhooks");
-    sendWebhookEventSafe = sendWebhookEvent;
-} catch {
-    // optional in isolated unit tests
+function sendWebhookEventSafe(...args) {
+    try {
+        const webhooks = require("../../core/webhooks");
+        if (typeof webhooks.sendWebhookEvent === "function") {
+            return webhooks.sendWebhookEvent(...args);
+        }
+    } catch {
+        // optional in isolated unit tests
+    }
+    return Promise.resolve(false);
 }
 
 function roleWasApplied(resultOrRoleAssign, maybeRoleAssign) {
@@ -96,6 +100,19 @@ async function coordinatePersistenceFailure({
         recoveryPersisted = await saveRecovery(recovery) === true;
     } catch {
         recoveryPersisted = false;
+    }
+
+    if (!recoveryPersisted && typeof sendWebhookEventSafe === "function") {
+        sendWebhookEventSafe({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "VERIFICATION",
+            code: "verification.recovery_record_save_failed",
+            state: "OPEN",
+            guildId,
+            title: "RECOVERY RECORD SAVE FAILED",
+            description: `ไม่สามารถบันทึกประวัติการกู้คืน (Recovery Record) ลงฐานข้อมูลได้ (userId=${userId}, roleId=${roleId}): ข้อมูลสำคัญอาจตกหล่น ต้องตรวจสอบทันที`
+        }).catch(() => {});
     }
 
     return {

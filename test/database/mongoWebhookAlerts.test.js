@@ -52,7 +52,7 @@ describe("Database Webhooks Alert Lifecycle Suite", () => {
         const item = primaryAlerts[0];
         assert.equal(item.target, "ALERT");
         assert.equal(item.options.eventCode, "mongo.connection.lost");
-        assert.match(item.payload.embeds[0].footer.text, /mongo\.connection\.lost/);
+        assert.equal(item.payload.embeds[0].footer, undefined);
         assert.match(item.payload.embeds[0].title, /ขาดการเชื่อมต่อ/);
 
         // P0 Renovation: Single primary embed by default (no automatic continuation spam)
@@ -74,7 +74,7 @@ describe("Database Webhooks Alert Lifecycle Suite", () => {
         const item = primaryAlerts[0];
         assert.equal(item.target, "ALERT");
         assert.equal(item.options.eventCode, "mongo.connection.error");
-        assert.match(item.payload.embeds[0].footer.text, /mongo\.connection\.error/);
+        assert.equal(item.payload.embeds[0].footer, undefined);
 
         const errorField = item.payload.embeds[0].fields.find(f => f.name === "ข้อความ Error");
         assert.ok(errorField);
@@ -96,7 +96,7 @@ describe("Database Webhooks Alert Lifecycle Suite", () => {
         const item = primaryAlerts[0];
         assert.equal(item.target, "ALERT");
         assert.equal(item.options.eventCode, "mongo.connection.restored");
-        assert.match(item.payload.embeds[0].footer.text, /mongo\.connection\.restored/);
+        assert.equal(item.payload.embeds[0].footer, undefined);
         assert.match(item.payload.embeds[0].title, /กลับมาเชื่อมต่อแล้ว/);
     });
 
@@ -127,7 +127,7 @@ describe("Database Webhooks Alert Lifecycle Suite", () => {
         const item = getPrimaryAlerts()[0];
         assert.equal(item.target, "ALERT");
         assert.equal(item.options.eventCode, "sqlite.integrity.corrupted");
-        assert.match(item.payload.embeds[0].footer.text, /sqlite\.integrity\.corrupted/);
+        assert.equal(item.payload.embeds[0].footer, undefined);
         assert.match(item.payload.embeds[0].title, /ความเสียหายในไฟล์ฐานข้อมูล/);
 
         // 2nd immediate dispatch: should be suppressed by throttle
@@ -150,7 +150,7 @@ describe("Database Webhooks Alert Lifecycle Suite", () => {
         const item = getPrimaryAlerts()[0];
         assert.equal(item.target, "ALERT");
         assert.equal(item.options.eventCode, "sqlite.telemetry.buffer_dropped");
-        assert.match(item.payload.embeds[0].footer.text, /sqlite\.telemetry\.buffer_dropped/);
+        assert.equal(item.payload.embeds[0].footer, undefined);
         assert.match(item.payload.embeds[0].title, /คิวพักข้อมูล Telemetry ล้น/);
 
         const repoField = item.payload.embeds[0].fields.find(f => f.name === "Repository");
@@ -170,6 +170,7 @@ describe("Database Webhooks Alert Lifecycle Suite", () => {
         const { VoiceEventRepository } = require("../../database/sqlite/repositories/history/VoiceEventRepository");
         const repo = new VoiceEventRepository();
         repo.stopFlusher(); // prevent background flushing during test
+        repo.flush = () => {};
 
         // Fill buffer to capacity
         for (let i = 0; i < 2000; i++) {

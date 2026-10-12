@@ -2576,15 +2576,21 @@
         if (data.activeJob) {
           badge.className = "badge badge-warn";
           badge.textContent = "กำลังส่งข้อมูล";
+        } else if (data.stats && (data.stats.retry > 0 || data.lastStatus === "retry")) {
+          badge.className = "badge badge-warn";
+          badge.textContent = "มีรายการรอส่งใหม่";
+        } else if (data.stats && (data.stats.failed > 0 || data.lastStatus === "failed" || data.lastStatus === "completed_with_failures")) {
+          badge.className = "badge badge-danger";
+          badge.textContent = "พบข้อผิดพลาด";
         } else if (data.enabled && data.urlValid) {
           badge.className = "badge badge-success";
-          badge.textContent = "พร้อมทำงาน";
+          badge.textContent = "ทำงานปกติ";
         } else if (data.urlConfigured && !data.urlValid) {
           badge.className = "badge badge-danger";
           badge.textContent = "URL ไม่ถูกต้อง";
         } else {
           badge.className = "badge badge-muted";
-          badge.textContent = "รอตั้งค่า";
+          badge.textContent = "ยังไม่ได้เริ่ม";
         }
       }
 
@@ -2617,10 +2623,18 @@
           checkWorkerDot.style.background = "var(--yellow2)";
           checkWorkerBadge.className = "badge badge-warn";
           checkWorkerBadge.textContent = "กำลังส่งข้อมูล";
+        } else if (data.stats && data.stats.retry > 0) {
+          checkWorkerDot.style.background = "var(--yellow2)";
+          checkWorkerBadge.className = "badge badge-warn";
+          checkWorkerBadge.textContent = "มีรายการรอส่งใหม่";
+        } else if (data.stats && (data.stats.failed > 0 || data.lastStatus === "failed" || data.lastStatus === "completed_with_failures")) {
+          checkWorkerDot.style.background = "var(--red2)";
+          checkWorkerBadge.className = "badge badge-danger";
+          checkWorkerBadge.textContent = "พบข้อผิดพลาด";
         } else if (data.enabled && data.urlValid) {
           checkWorkerDot.style.background = "var(--green2)";
           checkWorkerBadge.className = "badge badge-success";
-          checkWorkerBadge.textContent = "ทำงานอยู่";
+          checkWorkerBadge.textContent = "ทำงานปกติ";
         } else {
           checkWorkerDot.style.background = "var(--muted)";
           checkWorkerBadge.className = "badge badge-muted";
