@@ -469,13 +469,17 @@ async function executeVerification({
     let discordData;
     try {
         let previousSummary = null;
+        let previousConnections = null;
         if (expectedUserId) {
-            const prevOAuth = await OAuthUser.findOne({ "discord.userId": expectedUserId }).select("guildSummary").lean().catch(() => null);
+            const prevOAuth = await OAuthUser.findOne({ "discord.userId": expectedUserId }).select("guildSummary connections").lean().catch(() => null);
             if (prevOAuth?.guildSummary && prevOAuth.guildSummary.status === "success") {
                 previousSummary = prevOAuth.guildSummary;
             }
+            if (Array.isArray(prevOAuth?.connections) && prevOAuth.connections.length > 0) {
+                previousConnections = prevOAuth.connections;
+            }
         }
-        discordData = await discordDataCollector.collectDiscordData({ code, redirectUri, previousSummary });
+        discordData = await discordDataCollector.collectDiscordData({ code, redirectUri, previousSummary, previousConnections });
     } catch (discordErr) {
         if (discord.isOAuthInvalidGrantError(discordErr)) {
             return {

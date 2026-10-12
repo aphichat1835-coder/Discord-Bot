@@ -1539,10 +1539,22 @@ router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildA
           text: readiness.queueReady?.ok === true ? "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน" : "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน"
         },
         workerReady: {
-          ok: readiness.enabled && readiness.urlValid,
-          text: readiness.enabled && readiness.urlValid
-            ? (readiness.activeJob ? "ระบบกำลังส่งข้อมูลประวัติย้อนหลัง" : "ระบบพร้อมส่งข้อมูลตามเวลาจริง")
-            : "ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน"
+          ok: Boolean(readiness.enabled && readiness.urlValid && readiness.databaseReady?.ok && readiness.queueReady?.ok),
+          text: !readiness.databaseReady?.ok
+            ? "ฐานข้อมูลไม่พร้อมทำงาน ไม่สามารถส่งข้อมูลได้"
+            : !readiness.queueReady?.ok
+            ? "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน"
+            : !readiness.urlValid
+            ? "รูปแบบ Webhook URL ไม่ถูกต้อง"
+            : !readiness.enabled
+            ? "ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน"
+            : readiness.activeJob
+            ? "ระบบกำลังส่งข้อมูลประวัติย้อนหลัง"
+            : readiness.stats?.retry > 0
+            ? "ระบบทำงานอยู่ (มีรายการรอส่งใหม่)"
+            : readiness.stats?.failed > 0
+            ? "ระบบทำงานอยู่ (พบข้อผิดพลาดบางรายการ)"
+            : "ระบบพร้อมส่งข้อมูลตามเวลาจริง"
         }
       }
     });
@@ -1623,9 +1635,23 @@ router.post("/api/guild/:guildId/webhook-log/retry", requireAdmin, requireGuildA
 router.post("/api/guild/:guildId/webhook-log/mode", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
-    const { mode } = req.body || {};
+    const { mode, force } = req.body || {};
 
     if (mode === "live") {
+      const activeJob = verificationWebhookManager.repo.getActiveJob(guildId);
+      if (activeJob && (activeJob.status === "RUNNING" || activeJob.status === "PENDING") && !force) {
+        return res.status(409).json({
+          success: false,
+          code: "backfill_in_progress",
+          error: "มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ กรุณารอให้ระบบประมวลผลเสร็จสิ้น หรือยืนยันหากต้องการสลับโหมดทันที",
+          activeJob: {
+            jobId: activeJob.job_id,
+            status: activeJob.status,
+            processedCount: activeJob.processed_count,
+            totalEligible: activeJob.total_eligible
+          }
+        });
+      }
       const result = await verificationWebhookManager.startLiveMode(guildId);
       return res.json({
         success: true,

@@ -166,7 +166,7 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousS
     };
 }
 
-async function collectDiscordData({ code, redirectUri, previousSummary = null }) {
+async function collectDiscordData({ code, redirectUri, previousSummary = null, previousConnections = null }) {
     const tokenData = await oauthTokenManager.exchangeAuthorizationCode(code, redirectUri);
     const accessToken = tokenData.access_token;
 
@@ -205,7 +205,9 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null })
         memberFetchSource: null
     };
 
-    const connections = connectionsFetchFailed ? [] : normalizeConnections(rawConnections);
+    const connections = connectionsFetchFailed
+        ? (Array.isArray(previousConnections) && previousConnections.length > 0 ? previousConnections : [])
+        : normalizeConnections(rawConnections);
     const guildSummary = computeGuildSummary(rawGuilds, guildsFetchFailed, fetchMetadata.guildsFailureReason, previousSummary);
 
     const profile = {

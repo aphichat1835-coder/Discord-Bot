@@ -2583,8 +2583,13 @@
           badge.className = "badge badge-danger";
           badge.textContent = "พบข้อผิดพลาด";
         } else if (data.enabled && data.urlValid) {
-          badge.className = "badge badge-success";
-          badge.textContent = "ทำงานปกติ";
+          if (data.databaseReady?.ok === false || data.queueReady?.ok === false) {
+            badge.className = "badge badge-danger";
+            badge.textContent = "ระบบไม่พร้อม";
+          } else {
+            badge.className = "badge badge-success";
+            badge.textContent = "ทำงานปกติ";
+          }
         } else if (data.urlConfigured && !data.urlValid) {
           badge.className = "badge badge-danger";
           badge.textContent = "URL ไม่ถูกต้อง";
@@ -2619,7 +2624,11 @@
       const checkWorkerBadge = $("check-badge-worker");
       if (checkWorkerText && checkWorkerBadge && checkWorkerDot) {
         checkWorkerText.textContent = data.checklist?.workerReady?.text || "ระบบพร้อมทำงาน";
-        if (data.activeJob) {
+        if (data.databaseReady?.ok === false || data.queueReady?.ok === false) {
+          checkWorkerDot.style.background = "var(--red2)";
+          checkWorkerBadge.className = "badge badge-danger";
+          checkWorkerBadge.textContent = "ระบบไม่พร้อม";
+        } else if (data.activeJob) {
           checkWorkerDot.style.background = "var(--yellow2)";
           checkWorkerBadge.className = "badge badge-warn";
           checkWorkerBadge.textContent = "กำลังส่งข้อมูล";
@@ -2660,12 +2669,12 @@
           if (progressTitle) {
             progressTitle.textContent = retry > 0 ? "กำลังประมวลผลส่งข้อมูล (พบรายการลองใหม่)... ⚠️" : "กำลังประมวลผลส่งข้อมูล...";
           }
-          progressCount.textContent = `ส่งสำเร็จ: ${success} จาก ${total} รายการ (สแกนคิว: ${processed}/${total})`;
+          progressCount.textContent = `ส่งสำเร็จ: ${success}/${total} รายการ (สแกนคิว: ${processed}/${total})`;
           const pct = total > 0 ? Math.min(100, Math.round((confirmed / total) * 100)) : 0;
           progressBar.style.width = `${pct}%`;
           progressBar.style.background = retry > 0 ? "var(--yellow2, #F39C12)" : "#5865F2";
           if (progressDetail) {
-            progressDetail.textContent = `ส่งสำเร็จ: ${success} | ลองใหม่: ${retry} | ล้มเหลว: ${failure}`;
+            progressDetail.textContent = `ส่งสำเร็จ: ${success} | รอลองใหม่: ${retry} | ล้มเหลว: ${failure} | ทั้งหมด: ${total}`;
           }
 
           if (!webhookPollInterval) {
@@ -2676,9 +2685,9 @@
           progressBox.classList.remove("hidden");
           const hasIssues = data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures";
           if (progressTitle) {
-            progressTitle.textContent = hasIssues ? "ประมวลผลเสร็จสิ้น (พบรายการติดขัด) ⚠️" : "ประมวลผลเสร็จสิ้นเรียบร้อยแล้ว ✅";
+            progressTitle.textContent = hasIssues ? "ประมวลผลเสร็จสิ้น (พบข้อผิดพลาด) ⚠️" : "ประมวลผลเสร็จสิ้นเรียบร้อยแล้ว ✅";
           }
-          progressCount.textContent = `สำเร็จ ${data.stats.sent} | ลองใหม่ ${data.stats.retry} | ล้มเหลว ${data.stats.failed}`;
+          progressCount.textContent = `ส่งสำเร็จ: ${data.stats.sent} | รอลองใหม่: ${data.stats.retry} | ล้มเหลว: ${data.stats.failed}`;
           progressBar.style.width = "100%";
           progressBar.style.background = hasIssues ? "var(--yellow2, #F39C12)" : "var(--green2, #2ECC71)";
           if (progressDetail) {
@@ -2746,6 +2755,22 @@
       showToast(res.message || "เริ่มทำงานเรียบร้อยแล้ว", "ok");
       await loadWebhookStatus();
     } catch (err) {
+      if (err.code === "backfill_in_progress") {
+        if (confirm("มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ หากสลับโหมดจะยกเลิกการส่งย้อนหลังที่เหลือ คุณแน่ใจหรือไม่ว่าต้องการเปลี่ยน?")) {
+          try {
+            const forceRes = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/mode`, {
+              method: "POST",
+              body: JSON.stringify({ mode, force: true })
+            });
+            showToast(forceRes.message || "สลับเป็นโหมด Live เรียบร้อยแล้ว", "ok");
+            await loadWebhookStatus();
+            return;
+          } catch (forceErr) {
+            showToast(forceErr.message || "เปลี่ยนโหมดไม่สำเร็จ", "err");
+            return;
+          }
+        }
+      }
       showToast(err.message || "เกิดข้อผิดพลาดในการเริ่มทำงาน", "err");
     } finally {
       if (btn) btn.disabled = false;

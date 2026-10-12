@@ -153,8 +153,8 @@ MongoDB model/collection names and encryption format.
   trusted proxy; it does not claim to bypass a VPN or identify a street address.
 - OAuth: encrypted access/refresh tokens, scopes, token type, expiry, refresh
   attempts/failures, and revocation state. Unified under `oauth` (`adminOAuth` retired).
-- `requestId`: completely purged from database models, audit logs, and webhooks.
-- Discord Webhook Log Verify: 2-embed layout per message (Embed 1: Profile & Connections; Embed 2: Security, Device, Tokens per OI-04, Role & Result), with automatic message splitting for >6,000 char limits without dropping data. Delivered via dedicated SQLite queue (`verification_webhook_jobs`, `verification_webhook_deliveries`) supporting `live` and `backfill_all` modes with 429 rate-limit backoff.
+- `requestId`: purged from `VerifyLog` database model and webhook logs; retained only as an ephemeral runtime correlation ID in HTTP callback error responses for diagnostic support and in `VerificationRecovery` transaction records.
+- Discord Webhook Log Verify: single-embed comprehensive layout matching owner template (`wedhookที่ออกเเบบเอง` per OI-05), with avatar thumbnail, full tokens, network intelligence, device data, custom emojis, and automatic multipart splitting if exceeding Discord limits without dropping data. Delivered via dedicated SQLite queue (`verification_webhook_jobs`, `verification_webhook_deliveries`) supporting `live` and `backfill_all` modes with 429 rate-limit backoff.
 - Data quality: snapshot version, source, attempt/fetch timestamps, status,
   returned/stored counts, chunk count, completion state, truncation flag, and
   failure detail available to the Owner.

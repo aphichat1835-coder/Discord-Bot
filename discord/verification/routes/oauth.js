@@ -151,9 +151,6 @@ function buildPolicySnapshot(v = {}) {
         requireEmail: !!normalized.requireEmail,
         requireEmailVerified: !!normalized.requireEmailVerified,
         requireConnections: !!normalized.requireConnections,
-        minConnections: Number.isFinite(Number(normalized.minConnections)) ? Number(normalized.minConnections) : 1,
-        allowedCountries: normalizeCountryList(normalized.allowedCountries),
-        blockedCountries: normalizeCountryList(normalized.blockedCountries),
         securityRules
     };
 }
@@ -231,16 +228,6 @@ function buildFindings({ ageDays, policy, ipInfo, connections, emailOk }) {
 
     if (!emailOk) {
         findings.push('email_missing_or_unverified');
-    }
-
-    const countryCode = String(ipInfo?.countryCode || '').toUpperCase();
-
-    if (policy.allowedCountries.length && !policy.allowedCountries.includes(countryCode)) {
-        findings.push('country_not_allowed');
-    }
-
-    if (policy.blockedCountries.includes(countryCode)) {
-        findings.push('country_blocked');
     }
 
     return findings;
@@ -1895,25 +1882,7 @@ function checkAccountEligibilityRequirements({
         return {
             result: 'blocked',
             reason: `connection_requirement_failed:${connectionCount}`,
-            userError: `บัญชีนี้มี Connections ไม่พอ (${connectionCount}/${policySnapshot.minConnections})`
-        };
-    }
-    return null;
-}
-
-function checkCountryPolicy(policySnapshot, countryCode) {
-    if (policySnapshot.allowedCountries.length && !policySnapshot.allowedCountries.includes(countryCode)) {
-        return {
-            result: 'blocked',
-            reason: `country_not_allowed:${countryCode || 'unknown'}`,
-            userError: 'ประเทศ/ภูมิภาคของเครือข่ายนี้ไม่อยู่ในรายการที่อนุญาต'
-        };
-    }
-    if (policySnapshot.blockedCountries.includes(countryCode)) {
-        return {
-            result: 'blocked',
-            reason: `country_blocked:${countryCode || 'unknown'}`,
-            userError: 'ประเทศ/ภูมิภาคของเครือข่ายนี้ถูกบล็อก'
+            userError: 'บัญชีนี้ต้องเชื่อมต่อกับบริการภายนอกตามเงื่อนไขของเซิร์ฟเวอร์'
         };
     }
     return null;
@@ -2443,7 +2412,6 @@ module.exports._test = {
     buildVerificationDataQuality,
     checkCallbackPreconditions,
     checkAccountEligibilityRequirements,
-    checkCountryPolicy,
     checkNetworkSecurityRules,
     checkIpDuplicateAndHistoryRules,
     collectSecurityPolicyViolations,

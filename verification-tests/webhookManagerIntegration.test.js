@@ -1264,6 +1264,7 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             userId: "user_retry",
             jobId
         });
+        repo.updateJobProgress(jobId, { processedCount: 1 });
 
         // Claim and mark retry
         repo.claimNextDeliveries(guildId, 1);
@@ -1995,6 +1996,177 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
         // Failed or blocked verifications
         assert.equal(isEligibleVerifyLog({ result: "failed", roleAssignResult: { ok: false } }), false);
         assert.equal(isEligibleVerifyLog({ result: "blocked", roleAssignResult: { ok: false } }), false);
+    });
+
+    await t.test("47. P0: executeBackfill multi-batch pagination with BSON ObjectId cursor and restart resumption", async () => {
+        const mongoose = require("mongoose");
+        const VerifyLog = require("../discord/verification/models/VerifyLog");
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+
+        const guildId = "g_backfill_cursor_" + Date.now();
+        const jobId = "job_bf_cursor_" + Date.now();
+        const totalItems = 15;
+
+        // Generate 15 fake logs in chronological order with genuine ObjectIds
+        const fakeLogs = [];
+        const baseTime = Math.floor(Date.now() / 1000) - 1000;
+        for (let i = 0; i < totalItems; i++) {
+            const hexSeconds = (baseTime + i * 10).toString(16).padStart(8, "0");
+            const hexRest = i.toString(16).padStart(16, "0");
+            const oid = new mongoose.Types.ObjectId(`${hexSeconds}${hexRest}`);
+            fakeLogs.push({
+                _id: oid,
+                guildId,
+                userId: `u_cursor_${i}`,
+                result: "success",
+                roleAssignResult: { ok: true }
+            });
+        }
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: totalItems
+        });
+
+        const originalFind = VerifyLog.find;
+        const originalCountDocuments = VerifyLog.countDocuments;
+        const originalFindOne = GuildConfig.findOne;
+        const originalUpdateOne = GuildConfig.updateOne;
+
+        let findQueryHist = [];
+
+        // Mock VerifyLog.find respecting ObjectId $gt comparison
+        let currentLogs = fakeLogs;
+        VerifyLog.find = (query) => ({
+            sort: () => ({
+                limit: (lim) => ({
+                    lean: () => {
+                        findQueryHist.push(query);
+                        let matched = currentLogs.filter(log => {
+                            if (query._id && query._id.$gt) {
+                                if (query._id.$gt instanceof mongoose.Types.ObjectId) {
+                                    return log._id.toString() > query._id.$gt.toString();
+                                }
+                                return log._id > query._id.$gt;
+                            }
+                            return true;
+                        });
+                        return Promise.resolve(matched.slice(0, lim));
+                    }
+                })
+            })
+        });
+
+        VerifyLog.countDocuments = () => Promise.resolve(totalItems);
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/cursor/mock",
+                                enabled: true,
+                                mode: "backfill_live",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+        GuildConfig.updateOne = () => Promise.resolve({ acknowledged: true });
+
+        // Spy drainDeliveries to simulate immediate delivery of all claimed deliveries
+        const originalDrain = manager.drainDeliveries;
+        manager.drainDeliveries = async (gId) => {
+            while (true) {
+                const claim = repo.claimNextDeliveries(gId, 5);
+                if (!claim.length) break;
+                for (const d of claim) {
+                    repo.markDeliverySent(d.delivery_id, d.destination_version);
+                    const j = repo.getJobById(d.job_id);
+                    if (j) {
+                        repo.updateJobProgress(d.job_id, {
+                            successCount: (j.success_count || 0) + 1
+                        });
+                    }
+                }
+            }
+        };
+
+        try {
+            // First execution run:
+            const jobBefore = repo.getJobById(jobId);
+            await manager.executeBackfill(guildId, jobBefore, "lease_token_1");
+
+            // Verify all 15 items were processed across 3 batches of 5
+            const jobAfter = repo.getJobById(jobId);
+            assert.equal(jobAfter.processed_count, 15, "All 15 items processed");
+            assert.equal(jobAfter.success_count, 15, "All 15 items sent successfully");
+            assert.equal(jobAfter.status, "COMPLETED", "Job status completed");
+
+            // Verify query history: queries after batch 1 used an ObjectId $gt
+            assert.ok(findQueryHist.length >= 4, "Queried in batches until empty batch returned");
+            const secondQuery = findQueryHist[1];
+            assert.ok(secondQuery._id && secondQuery._id.$gt, "Second batch used _id.$gt");
+            assert.ok(secondQuery._id.$gt instanceof mongoose.Types.ObjectId, "Second batch cursor is a BSON ObjectId instance");
+
+            // Now test resumption from cursor:
+            // Create a second job where last_cursor_id is set to item 4 (end of batch 1) and processed_count is 5
+            const guildIdResume = "g_backfill_resume_" + Date.now();
+            const resumeJobId = "job_bf_resume_" + Date.now();
+            const fakeLogsResume = [];
+            for (let i = 0; i < totalItems; i++) {
+                const hexSeconds = (baseTime + i * 10).toString(16).padStart(8, "0");
+                const hexRest = (i + 100).toString(16).padStart(16, "0");
+                const oid = new mongoose.Types.ObjectId(`${hexSeconds}${hexRest}`);
+                fakeLogsResume.push({
+                    _id: oid,
+                    guildId: guildIdResume,
+                    userId: `u_cursor_resume_${i}`,
+                    result: "success",
+                    roleAssignResult: { ok: true }
+                });
+            }
+
+            repo.createJob({
+                jobId: resumeJobId,
+                guildId: guildIdResume,
+                destinationVersion: 1,
+                mode: "BACKFILL_LIVE",
+                totalEligible: totalItems
+            });
+
+            // Simulate that 5 items were already processed before process restart
+            const item4IdStr = fakeLogsResume[4]._id.toString();
+            repo.updateJobProgress(resumeJobId, {
+                processedCount: 5,
+                successCount: 5,
+                lastCursorId: item4IdStr
+            });
+
+            findQueryHist = [];
+            currentLogs = fakeLogsResume;
+            const resumeJob = repo.getJobById(resumeJobId);
+            await manager.executeBackfill(guildIdResume, resumeJob, "lease_resume");
+
+            const finalResumeJob = repo.getJobById(resumeJobId);
+            assert.equal(finalResumeJob.processed_count, 15, "Resumed job finished remaining items up to 15");
+            assert.equal(finalResumeJob.success_count, 15, "All 15 items counted as successful");
+            assert.equal(finalResumeJob.status, "COMPLETED", "Resumed job status completed");
+            assert.ok(findQueryHist[0]._id.$gt instanceof mongoose.Types.ObjectId, "First query of resumed job converted string cursor to ObjectId");
+            assert.equal(findQueryHist[0]._id.$gt.toString(), item4IdStr, "Resumed from exact lastCursorId");
+        } finally {
+            VerifyLog.find = originalFind;
+            VerifyLog.countDocuments = originalCountDocuments;
+            GuildConfig.findOne = originalFindOne;
+            GuildConfig.updateOne = originalUpdateOne;
+            manager.drainDeliveries = originalDrain;
+        }
     });
 });
 

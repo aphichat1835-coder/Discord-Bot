@@ -1129,7 +1129,11 @@ class VerificationWebhookManager {
                 deletedAt: { $exists: false }
             };
             if (lastCursorId) {
-                query._id = { $gt: lastCursorId };
+                if (mongoose.Types.ObjectId.isValid(lastCursorId)) {
+                    query._id = { $gt: new mongoose.Types.ObjectId(lastCursorId) };
+                } else {
+                    query._id = { $gt: lastCursorId };
+                }
             }
 
             const batch = await VerifyLog.find(query)
@@ -1138,6 +1142,21 @@ class VerificationWebhookManager {
                 .lean();
 
             if (!batch.length) {
+                // If there were eligible documents counted, but we didn't process them all,
+                // log a warning to ensure full traceability
+                if (processed < (job.total_eligible || 0)) {
+                    const remainingQuery = { ...query };
+                    delete remainingQuery._id;
+                    const actualRemaining = await VerifyLog.countDocuments(remainingQuery).catch(() => 0);
+                    if (actualRemaining > processed) {
+                        console.warn(`[VerificationWebhook] Backfill batch empty but ${actualRemaining} items remain in DB (processed: ${processed}/${job.total_eligible}).`);
+                    }
+                }
+                this.repo.updateJobProgress(job.job_id, {
+                    processedCount: processed,
+                    lastCursorId,
+                    leaseToken
+                });
                 // All historical items have been enqueued. Now drain any remaining deliveries (P1-4).
                 await this.drainDeliveries(guildId);
                 await this.checkAndCompleteJobIfDone(job.job_id, guildId, leaseToken);
@@ -1161,6 +1180,11 @@ class VerificationWebhookManager {
                 if (!isEligibleVerifyLog(log)) {
                     processed++;
                     lastCursorId = eventId;
+                    this.repo.updateJobProgress(job.job_id, {
+                        processedCount: processed,
+                        lastCursorId,
+                        leaseToken
+                    });
                     continue;
                 }
 
@@ -1177,6 +1201,11 @@ class VerificationWebhookManager {
                     if (existing.status === "SENT" || existing.status === "SENDING") {
                         processed++;
                         lastCursorId = eventId;
+                        this.repo.updateJobProgress(job.job_id, {
+                            processedCount: processed,
+                            lastCursorId,
+                            leaseToken
+                        });
                         continue;
                     }
                 }
@@ -1457,6 +1486,11 @@ class VerificationWebhookManager {
 
         const job = this.repo.getJobById(jobId);
         if (!job || job.status !== "RUNNING") return;
+
+        if (job.total_eligible > 0 && (job.processed_count || 0) < job.total_eligible) {
+            console.warn(`[VerificationWebhook] Job ${jobId} has processed ${job.processed_count}/${job.total_eligible} items; not completing yet`);
+            return;
+        }
 
         const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
         if (currentConfig?.verification?.webhookLog?.mode !== "backfill_live") return;

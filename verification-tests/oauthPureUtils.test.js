@@ -530,7 +530,6 @@ describe('decomposed OAuth callback helpers', () => {
         buildVerificationDataQuality,
         checkCallbackPreconditions,
         checkAccountEligibilityRequirements,
-        checkCountryPolicy,
         checkNetworkSecurityRules,
         checkIpDuplicateAndHistoryRules,
         collectSecurityPolicyViolations,
@@ -559,17 +558,15 @@ describe('decomposed OAuth callback helpers', () => {
         expect(normalizeCountryList('TH')).toEqual([]);
     });
 
-    test('buildPolicySnapshot normalizes security rules and countries', () => {
+    test('buildPolicySnapshot normalizes security rules and account age', () => {
         const snapshot = buildPolicySnapshot({
-            blockVPN: false,
             minAccountAgeDays: 14,
-            allowedCountries: ['th'],
-            blockedCountries: ['ru']
+            requireEmail: true,
+            requireConnections: true
         });
-        expect(snapshot.blockVPN).toBe(false);
         expect(snapshot.minAccountAgeDays).toBe(14);
-        expect(snapshot.allowedCountries).toEqual(['TH']);
-        expect(snapshot.blockedCountries).toEqual(['RU']);
+        expect(snapshot.requireEmail).toBe(true);
+        expect(snapshot.requireConnections).toBe(true);
         expect(snapshot.securityRules).toBeDefined();
     });
 
@@ -831,8 +828,7 @@ describe('decomposed OAuth callback helpers', () => {
         const policy = {
             minAccountAgeDays: 7,
             requireEmail: true,
-            requireConnections: true,
-            minConnections: 2
+            requireConnections: true
         };
         expect(checkAccountEligibilityRequirements({
             accountAgeDays: 3,
@@ -855,8 +851,8 @@ describe('decomposed OAuth callback helpers', () => {
             policySnapshot: policy,
             emailOk: true,
             connectionOk: false,
-            connectionCount: 1
-        })?.reason).toBe('connection_requirement_failed:1');
+            connectionCount: 0
+        })?.reason).toBe('connection_requirement_failed:0');
 
         expect(checkAccountEligibilityRequirements({
             accountAgeDays: 10,
@@ -865,16 +861,6 @@ describe('decomposed OAuth callback helpers', () => {
             connectionOk: true,
             connectionCount: 2
         })).toBeNull();
-    });
-
-    test('checkCountryPolicy checks allowed and blocked countries', () => {
-        const policy = {
-            allowedCountries: ['TH', 'SG'],
-            blockedCountries: ['CN']
-        };
-        expect(checkCountryPolicy(policy, 'US')?.reason).toBe('country_not_allowed:US');
-        expect(checkCountryPolicy({ allowedCountries: [], blockedCountries: ['CN'] }, 'CN')?.reason).toBe('country_blocked:CN');
-        expect(checkCountryPolicy(policy, 'TH')).toBeNull();
     });
 
     test('checkNetworkSecurityRules reports vpn, proxy, tor, and hosting flags', () => {
