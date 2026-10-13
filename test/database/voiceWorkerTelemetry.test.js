@@ -4,13 +4,14 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 
 const { openDatabase, closeDatabase } = require("../../database/sqlite/connection");
 const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
 const database = require("../../database/index");
 const { pushVoiceLog, getVoiceLogs } = require("../../discord/voiceWorker/eventLog");
 
-const TEST_DB_PATH = path.join(__dirname, `test_voice_telemetry_${Date.now()}_${process.pid}.sqlite`);
+const TEST_DB_PATH = path.join(os.tmpdir(), `test_voice_telemetry_${Date.now()}_${process.pid}.sqlite`);
 
 describe("Voice Worker Telemetry Integration", () => {
     let db;

@@ -191,10 +191,18 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
     const connectionsFetchFailed = rawConnections?.fetchFailed === true || !Array.isArray(rawConnections);
     const guildsFetchFailed = rawGuilds?.fetchFailed === true || !Array.isArray(rawGuilds);
 
+    const isConnectionsFallback = Boolean(connectionsFetchFailed && Array.isArray(previousConnections) && previousConnections.length > 0);
+    const connections = connectionsFetchFailed
+        ? (isConnectionsFallback ? previousConnections : [])
+        : normalizeConnections(rawConnections);
+
     const fetchMetadata = {
         connectionsFetchFailed,
         connectionsFetchStatus: rawConnections?.fetchStatus || (connectionsFetchFailed ? 500 : 200),
         connectionsFailureReason: rawConnections?.fetchFailureReason || null,
+        isConnectionsFresh: !connectionsFetchFailed,
+        isConnectionsFallback,
+        connectionsSource: isConnectionsFallback ? "fallback_previous" : (connectionsFetchFailed ? "failed_empty" : "live_api"),
         guildsFetchFailed,
         guildsFetchStatus: rawGuilds?.fetchStatus || (guildsFetchFailed ? 500 : 200),
         guildsFailureReason: rawGuilds?.fetchFailureReason || null,
@@ -205,9 +213,6 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
         memberFetchSource: null
     };
 
-    const connections = connectionsFetchFailed
-        ? (Array.isArray(previousConnections) && previousConnections.length > 0 ? previousConnections : [])
-        : normalizeConnections(rawConnections);
     const guildSummary = computeGuildSummary(rawGuilds, guildsFetchFailed, fetchMetadata.guildsFailureReason, previousSummary);
 
     const profile = {

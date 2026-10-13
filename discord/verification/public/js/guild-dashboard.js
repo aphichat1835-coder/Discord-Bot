@@ -356,7 +356,11 @@
     const data = await res.json().catch(() => null);
 
     if (!res.ok || !data || data.success === false) {
-      throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+      const err = new Error(data?.error || data?.message || `HTTP ${res.status}`);
+      err.code = data?.code || (res.status === 409 ? "backfill_in_progress" : undefined);
+      err.status = res.status;
+      err.data = data;
+      throw err;
     }
 
     return data;
@@ -653,7 +657,13 @@
   function oauthStatusRows(token = {}) {
     const oauth = token.oauth || {};
     const now = Date.now();
-    const tokenAge = oauth.issuedAt ? Math.max(0, now - Number(oauth.issuedAt)) : null;
+    const issuedAt = Number(oauth.issuedAt);
+    const tokenAge = Number.isFinite(issuedAt) && issuedAt > 0
+      ? Math.max(0, now - issuedAt)
+      : null;
+    const expiresAt = Number(oauth.expiresAt);
+    const hasValidExpiry = Number.isFinite(expiresAt) && expiresAt > 0;
+    const remaining = hasValidExpiry ? expiresAt - now : null;
     let remainingText = "—";
     if (remaining !== null) {
       remainingText = remaining > 0 ? fmtDuration(remaining) : `หมดอายุแล้ว ${fmtDuration(-remaining)}`;
@@ -2619,6 +2629,40 @@
         }
       }
 
+      const checkDbDot = $("check-icon-db");
+      const checkDbText = $("check-text-db");
+      const checkDbBadge = $("check-badge-db");
+      if (checkDbText && checkDbBadge && checkDbDot) {
+        const isDbOk = data.checklist?.databaseReady?.ok ?? (data.databaseReady?.ok !== false);
+        checkDbText.textContent = data.checklist?.databaseReady?.text || (isDbOk ? "ระบบฐานข้อมูลเชื่อมต่อเรียบร้อย" : "การเชื่อมต่อฐานข้อมูลไม่พร้อมทำงาน");
+        if (isDbOk) {
+          checkDbDot.style.background = "var(--green2)";
+          checkDbBadge.className = "badge badge-success";
+          checkDbBadge.textContent = "พร้อมใช้งาน";
+        } else {
+          checkDbDot.style.background = "var(--red2)";
+          checkDbBadge.className = "badge badge-danger";
+          checkDbBadge.textContent = "ไม่พร้อม";
+        }
+      }
+
+      const checkQueueDot = $("check-icon-queue");
+      const checkQueueText = $("check-text-queue");
+      const checkQueueBadge = $("check-badge-queue");
+      if (checkQueueText && checkQueueBadge && checkQueueDot) {
+        const isQueueOk = data.checklist?.queueReady?.ok ?? (data.queueReady?.ok !== false);
+        checkQueueText.textContent = data.checklist?.queueReady?.text || (isQueueOk ? "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน" : "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน");
+        if (isQueueOk) {
+          checkQueueDot.style.background = "var(--green2)";
+          checkQueueBadge.className = "badge badge-success";
+          checkQueueBadge.textContent = "พร้อมใช้งาน";
+        } else {
+          checkQueueDot.style.background = "var(--red2)";
+          checkQueueBadge.className = "badge badge-danger";
+          checkQueueBadge.textContent = "ไม่พร้อม";
+        }
+      }
+
       const checkWorkerDot = $("check-icon-worker");
       const checkWorkerText = $("check-text-worker");
       const checkWorkerBadge = $("check-badge-worker");
@@ -2685,7 +2729,13 @@
           progressBox.classList.remove("hidden");
           const hasIssues = data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures";
           if (progressTitle) {
-            progressTitle.textContent = hasIssues ? "ประมวลผลเสร็จสิ้น (พบข้อผิดพลาด) ⚠️" : "ประมวลผลเสร็จสิ้นเรียบร้อยแล้ว ✅";
+            if (data.stats.retry > 0) {
+              progressTitle.textContent = "มีรายการรอลองใหม่ตามกำหนดเวลา... ⏳";
+            } else if (hasIssues) {
+              progressTitle.textContent = "ประมวลผลเสร็จสิ้น (พบข้อผิดพลาด) ⚠️";
+            } else {
+              progressTitle.textContent = "ประมวลผลเสร็จสิ้นเรียบร้อยแล้ว ✅";
+            }
           }
           progressCount.textContent = `ส่งสำเร็จ: ${data.stats.sent} | รอลองใหม่: ${data.stats.retry} | ล้มเหลว: ${data.stats.failed}`;
           progressBar.style.width = "100%";
@@ -2713,6 +2763,11 @@
       }
     } catch (err) {
       console.warn("Failed to load webhook status:", err);
+      const badge = $("webhook-status-badge");
+      if (badge) {
+        badge.className = "badge badge-danger";
+        badge.textContent = "เชื่อมต่อระบบไม่ได้";
+      }
     }
   }
 
@@ -2755,7 +2810,8 @@
       showToast(res.message || "เริ่มทำงานเรียบร้อยแล้ว", "ok");
       await loadWebhookStatus();
     } catch (err) {
-      if (err.code === "backfill_in_progress") {
+      const isBackfillInProgress = err.code === "backfill_in_progress" || err.status === 409 || err.data?.code === "backfill_in_progress";
+      if (isBackfillInProgress) {
         if (confirm("มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ หากสลับโหมดจะยกเลิกการส่งย้อนหลังที่เหลือ คุณแน่ใจหรือไม่ว่าต้องการเปลี่ยน?")) {
           try {
             const forceRes = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/mode`, {
@@ -2769,6 +2825,8 @@
             showToast(forceErr.message || "เปลี่ยนโหมดไม่สำเร็จ", "err");
             return;
           }
+        } else {
+          return;
         }
       }
       showToast(err.message || "เกิดข้อผิดพลาดในการเริ่มทำงาน", "err");

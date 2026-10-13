@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const crypto = require("node:crypto");
 const { getFilesystemFreeSpace, getDatabaseFootprint } = require("../maintenance/quota");
 
@@ -81,7 +82,14 @@ function resolveBackupDir(customDir = null) {
             return path.resolve("/persistent", "backups");
         }
     } catch (_) {}
-    return path.resolve(process.cwd(), "backups");
+    const localDir = path.resolve(process.cwd(), "backups");
+    try {
+        if (!fs.existsSync(localDir)) fs.mkdirSync(localDir, { recursive: true });
+        fs.accessSync(localDir, fs.constants.R_OK | fs.constants.W_OK);
+        return localDir;
+    } catch (_) {
+        return path.resolve(os.tmpdir(), "backups");
+    }
 }
 
 function resolvePreMigrationRetention(customRetention = null) {
@@ -140,7 +148,7 @@ function createPreMigrationBackup(db, migrationItem, options = {}) {
     let backupDir = options.backupDir ? path.resolve(options.backupDir) : null;
     if (!backupDir) {
         // If db is located in a test or scratch directory, isolate backups there
-        if (db.name && (db.name.includes("/test/") || db.name.includes("/scratch") || db.name.includes("/temp"))) {
+        if (db.name && (db.name.includes("/test/") || db.name.includes("/scratch") || db.name.includes("/temp") || db.name.includes("/tmp") || db.name.startsWith(os.tmpdir()))) {
             backupDir = path.join(path.dirname(path.resolve(db.name)), "backups");
         } else {
             backupDir = resolveBackupDir();

@@ -292,7 +292,11 @@ async function runVerificationMaintenance(options = {}) {
             } catch (err) {
                 lastOAuthRefreshError = safeError(err);
             }
-            if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
+            if (typeof verificationWebhookManager?.performStartupRecovery === "function" && !verificationWebhookManager?.startupRecoveryCompleted) {
+                try {
+                    await verificationWebhookManager.performStartupRecovery();
+                } catch (_) {}
+            } else if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
                 try {
                     const recovery = verificationWebhookManager.repo.recoverStuckSendingDeliveries(300000);
                     const stuckGuilds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];

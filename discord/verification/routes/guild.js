@@ -399,6 +399,10 @@ function sanitizeVerificationBasicFlags(input = {}) {
     out.minAccountAgeDays = Math.max(0, Math.min(3650, Number.parseInt(input.minAccountAgeDays, 10) || 0));
   }
 
+  if ("minConnections" in input) {
+    out.minConnections = Math.max(0, Math.min(100, Number.parseInt(input.minConnections, 10) || 0));
+  }
+
   const SNOWFLAKE_FIELDS = ["roleId", "channelId", "messageId"];
   for (const field of SNOWFLAKE_FIELDS) {
     if (field in input) out[field] = cleanOptionalSnowflake(input[field]);
@@ -691,19 +695,18 @@ function makePanelPayload(req, { guildId, verification }) {
 }
 
 async function ensureGuildConfig(guildId, guildName = "") {
-  let config = await GuildConfig.findOne({ guildId });
-
-  if (!config) {
-    config = await GuildConfig.create({
-      guildId,
-      guildName,
-      verification: normalizeVerificationConfig({}),
-      createdAt: now(),
-      updatedAt: now()
-    });
-  }
-
-  return config;
+  return await GuildConfig.findOneAndUpdate(
+    { guildId },
+    {
+      $setOnInsert: {
+        guildId,
+        guildName: guildName || "",
+        verification: normalizeVerificationConfig({}),
+        createdAt: now()
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }
 
 async function loadValidationContext(guildId, verification) {

@@ -30,7 +30,7 @@ function securityRuleSchema({ enabled = false, action = 'deny_role', threshold }
 }
 
 const schema = new mongoose.Schema({
-    guildId:   { type: String, required: true, unique: true, index: true },
+    guildId:   { type: String, required: true, unique: true },
     guildName: String,
 
     verification: {
@@ -78,6 +78,7 @@ const schema = new mongoose.Schema({
         requireEmailVerified: { type: Boolean, default: false },
 
         requireConnections:   { type: Boolean, default: false },
+        minConnections:       { type: Number,  default: 0 },
 
         // แต่ละกฎเปิด/ปิดและเลือกการทำงานได้อย่างอิสระ
         securityRules: {

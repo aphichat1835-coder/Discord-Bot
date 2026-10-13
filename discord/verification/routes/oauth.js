@@ -151,6 +151,9 @@ function buildPolicySnapshot(v = {}) {
         requireEmail: !!normalized.requireEmail,
         requireEmailVerified: !!normalized.requireEmailVerified,
         requireConnections: !!normalized.requireConnections,
+        minConnections: Number.isFinite(Number(normalized.minConnections)) && Number(normalized.minConnections) > 0
+            ? Number(normalized.minConnections)
+            : (normalized.requireConnections ? 1 : 0),
         securityRules
     };
 }
@@ -2276,8 +2279,11 @@ function checkAccountEligibility({ profile, policySnapshot, connections }) {
             ? profile.verified === true
             : true
     );
-    const connectionCount = connections.length;
-    const connectionOk = connectionCount >= policySnapshot.minConnections;
+    const connectionCount = Array.isArray(connections) ? connections.length : 0;
+    const requiredMinConnections = Number.isFinite(Number(policySnapshot?.minConnections)) && Number(policySnapshot.minConnections) >= 0
+        ? Math.floor(Number(policySnapshot.minConnections))
+        : (policySnapshot?.requireConnections ? 1 : 0);
+    const connectionOk = !policySnapshot?.requireConnections || (connectionCount >= requiredMinConnections);
 
     return checkAccountEligibilityRequirements({
         accountAgeDays,
@@ -2411,6 +2417,7 @@ module.exports._test = {
     buildNetworkQuality,
     buildVerificationDataQuality,
     checkCallbackPreconditions,
+    checkAccountEligibility,
     checkAccountEligibilityRequirements,
     checkNetworkSecurityRules,
     checkIpDuplicateAndHistoryRules,

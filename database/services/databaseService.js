@@ -56,14 +56,18 @@ const ALLOWED_MONGO_COLLECTIONS = Object.freeze([
     "VerificationMigrationState"
 ]);
 
+function getSqliteDb() {
+    return getDatabase();
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  📊 1. OVERVIEW & HEALTH
 // ════════════════════════════════════════════════════════════════════════════
 
-async function getDatabaseOverview() {
+async function getDatabaseOverview(customDb = null) {
     const startTime = Date.now();
-    const dbPath = getCurrentDbPath() || resolveDbPath();
-    const db = getDatabase();
+    const db = customDb || (module.exports && typeof module.exports.getSqliteDb === "function" ? module.exports.getSqliteDb() : getDatabase());
+    const dbPath = (customDb && customDb.name && customDb.name !== ":memory:" ? customDb.name : null) || getCurrentDbPath() || resolveDbPath();
 
     // 1. SQLite Status & Quota + Filesystem Health Aggregation
     const quota = evaluateQuota(dbPath);
@@ -238,9 +242,9 @@ async function getDatabaseOverview() {
 //  🗄️ 2. SQLITE DETAILED STATUS & CATEGORIES
 // ════════════════════════════════════════════════════════════════════════════
 
-async function getSqliteDetailedStatus() {
-    const dbPath = getCurrentDbPath() || resolveDbPath();
-    const db = getDatabase();
+async function getSqliteDetailedStatus(customDb = null) {
+    const db = customDb || (module.exports && typeof module.exports.getSqliteDb === "function" ? module.exports.getSqliteDb() : getDatabase());
+    const dbPath = (customDb && customDb.name && customDb.name !== ":memory:" ? customDb.name : null) || getCurrentDbPath() || resolveDbPath();
     const quota = evaluateQuota(dbPath);
     const storageCheck = evaluateStoragePaths({ dbPath });
 
@@ -1179,6 +1183,7 @@ module.exports = {
     notifyIntegrityCorrupted,
     recordMaintenanceAudit,
     recordAudit: recordMaintenanceAudit,
+    getSqliteDb: () => getDatabase(),
     CONSOLE_COMMANDS,
     ALLOWED_MONGO_COLLECTIONS
 };

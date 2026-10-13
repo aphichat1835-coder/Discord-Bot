@@ -4,6 +4,7 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { TABLE_CATEGORIES, getCategoryForTable } = require("../../database/sqlite/tableCategories");
@@ -19,7 +20,7 @@ describe("Production Audit 15-Item Remediation Verification Suite", () => {
     let testDb;
 
     before(() => {
-        tempDir = path.join(__dirname, "temp-remediation-" + Date.now());
+        tempDir = path.join(os.tmpdir(), "temp-remediation-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
 
         testDb = new Database(path.join(tempDir, "test.sqlite"));

@@ -662,20 +662,40 @@ async function runMemberPrivacyDeletion({
     let result = null;
     try {
         dbSession = await mongooseInstance.startSession();
-        await dbSession.withTransaction(async () => {
-            await executePrivacyDeletionTransaction({
-                models,
-                safeGuildId,
-                safeUserId,
-                safeRequestedBy,
-                hash,
-                jobId,
-                operationKey,
-                now,
-                manifest,
-                dbSession
+        try {
+            await dbSession.withTransaction(async () => {
+                await executePrivacyDeletionTransaction({
+                    models,
+                    safeGuildId,
+                    safeUserId,
+                    safeRequestedBy,
+                    hash,
+                    jobId,
+                    operationKey,
+                    now,
+                    manifest,
+                    dbSession
+                });
             });
-        });
+        } catch (txError) {
+            if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
+                dbSession = null;
+                await executePrivacyDeletionTransaction({
+                    models,
+                    safeGuildId,
+                    safeUserId,
+                    safeRequestedBy,
+                    hash,
+                    jobId,
+                    operationKey,
+                    now,
+                    manifest,
+                    dbSession: null
+                });
+            } else {
+                throw txError;
+            }
+        }
         result = { success: true, jobId, manifest, reused: false, status: "completed", pending: false };
     } catch (error) {
         operationError = error;

@@ -4,6 +4,7 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
@@ -21,7 +22,7 @@ describe("Deep Audit Hardening Suite", () => {
     let tempDir;
 
     before(() => {
-        tempDir = path.join(__dirname, "temp-audit-hardening-" + Date.now());
+        tempDir = path.join(os.tmpdir(), "temp-audit-hardening-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
 
         testDb = new Database(path.join(tempDir, "test.sqlite"));

@@ -2,7 +2,7 @@
 
 const { getDatabase } = require("../../connection");
 const { resolvePriority, evictWithPriority, notifyBufferDropped, notifyP1Dropped, sanitizeDetails, SENSITIVE_KEY_REGEX } = require("./bufferPolicy");
-const { spoolP0Event, drainP0Spool } = require("./p0Journal");
+const p0Journal = require("./p0Journal");
 const writePolicy = require("../../maintenance/writePolicy");
 
 class CommandEventRepository {
@@ -38,8 +38,19 @@ class CommandEventRepository {
             this.flushInterval = null;
         }
         if (this.criticalRetryQueue.length > 0) {
-            for (const cItem of this.criticalRetryQueue.splice(0)) {
-                try { this._insertSingle(cItem); } catch (_) {}
+            while (this.criticalRetryQueue.length > 0) {
+                const cItem = this.criticalRetryQueue[0];
+                try {
+                    this._insertSingle(cItem);
+                    this.criticalRetryQueue.shift();
+                } catch (_) {
+                    const spooled = p0Journal.spoolP0Event("command_events", cItem);
+                    if (spooled) {
+                        this.criticalRetryQueue.shift();
+                    } else {
+                        break;
+                    }
+                }
             }
         }
         let flushed = 0;
@@ -91,7 +102,10 @@ class CommandEventRepository {
                 if (this.criticalRetryQueue.length < 100) {
                     this.criticalRetryQueue.push(item);
                 } else {
-                    spoolP0Event("command_events", item);
+                    const spooled = p0Journal.spoolP0Event("command_events", item);
+                    if (!spooled) {
+                        this.criticalRetryQueue.push(item);
+                    }
                 }
                 console.error(`[COMMAND_EVENT_BUFFER] 🚨 CRITICAL P0 event insert failed (queued for retry): ${err.message}`);
             }
@@ -147,19 +161,18 @@ class CommandEventRepository {
     flush() {
         // Retry queued P0 events if any
         if (this.criticalRetryQueue.length > 0) {
-            const retryItems = this.criticalRetryQueue.splice(0, 50);
-            for (const cItem of retryItems) {
+            while (this.criticalRetryQueue.length > 0) {
+                const cItem = this.criticalRetryQueue[0];
                 try {
                     this._insertSingle(cItem);
+                    this.criticalRetryQueue.shift();
                 } catch (_) {
-                    this.criticalRetryQueue.unshift(cItem);
                     break;
                 }
             }
         } else {
             try {
-                const db = this.getDb();
-                drainP0Spool(db, { command_events: this });
+                p0Journal.drainP0Spool(this.db, { command_events: this });
             } catch (_) {}
         }
 

@@ -4,6 +4,7 @@ const { test, describe, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const crypto = require("node:crypto");
 const Database = require("better-sqlite3");
 
@@ -14,9 +15,10 @@ describe("Auto-Backup Metadata & Webhook Safety Suite", () => {
     let db;
     let tempDbFile;
     let testBackupDir;
+    let scratchDir;
 
     before(() => {
-        const scratchDir = path.join(__dirname, "scratch-backup-test");
+        scratchDir = path.join(os.tmpdir(), "scratch-backup-test-" + Date.now());
         if (fs.existsSync(scratchDir)) {
             fs.rmSync(scratchDir, { recursive: true, force: true });
         }
@@ -32,8 +34,7 @@ describe("Auto-Backup Metadata & Webhook Safety Suite", () => {
 
     after(() => {
         if (db) db.close();
-        const scratchDir = path.join(__dirname, "scratch-backup-test");
-        if (fs.existsSync(scratchDir)) {
+        if (scratchDir && fs.existsSync(scratchDir)) {
             fs.rmSync(scratchDir, { recursive: true, force: true });
         }
     });

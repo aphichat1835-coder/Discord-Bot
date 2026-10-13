@@ -4,6 +4,7 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { TABLE_CATEGORIES } = require("../../database/sqlite/tableCategories");
@@ -20,7 +21,7 @@ describe("Audit Findings Remediation Verification (Items 1-7)", () => {
     let testDb;
 
     before(() => {
-        tempDir = path.join(__dirname, "temp-findings-" + Date.now());
+        tempDir = path.join(os.tmpdir(), "temp-findings-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
 
         testDbPath = path.join(tempDir, "test.sqlite");
@@ -245,6 +246,9 @@ describe("Audit Findings Remediation Verification (Items 1-7)", () => {
     describe("Item 6: Persistent Storage Label", () => {
         test("storage label displays 'Owner-Confirmed Persistent Path'", async () => {
             const originalGetSqlite = databaseService.getSqliteDb;
+            if (!testDb || !testDb.open) {
+                testDb = openDatabase({ path: testDbPath });
+            }
             databaseService.getSqliteDb = () => testDb;
 
             try {

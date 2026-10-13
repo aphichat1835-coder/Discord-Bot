@@ -181,13 +181,23 @@ async function handleRoleInteraction(interaction) {
 }
 
 async function toggleRole(interaction, member, guild, roleId) {
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+    }
+    const sendResponse = async (payload) => {
+        if (interaction.deferred || interaction.replied) {
+            return interaction.editReply(payload);
+        }
+        return interaction.reply({ ...payload, ephemeral: true });
+    };
+
     const role = guild.roles.cache.get(roleId);
     if (!role) {
-        return interaction.reply({ content: `> ${config.emojis?.error || '❌'} ไม่พบยศนี้`, ephemeral: true });
+        return sendResponse({ content: `> ${config.emojis?.error || '❌'} ไม่พบยศนี้` });
     }
     const check = validateRoleChange(guild, member, role);
     if (!check.ok) {
-        return interaction.reply({ content: `> ${config.emojis?.error || '❌'} จัดการยศไม่ได้: ${check.reason}`, ephemeral: true });
+        return sendResponse({ content: `> ${config.emojis?.error || '❌'} จัดการยศไม่ได้: ${check.reason}` });
     }
 
     try {
@@ -199,7 +209,7 @@ async function toggleRole(interaction, member, guild, roleId) {
                 .setTitle(`${config.emojis?.disable || config.emojis?.success || '✅'} ปลดยศเรียบร้อย`)
                 .setDescription(`ปลดยศ ${role.toString()} ออกจากบัญชีของคุณแล้ว`)
                 .setTimestamp();
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+            return sendResponse({ embeds: [embed] });
         } else {
             await member.roles.add(roleId);
             const embed = new MessageEmbed()
@@ -207,10 +217,10 @@ async function toggleRole(interaction, member, guild, roleId) {
                 .setTitle(`${config.emojis?.activate || config.emojis?.check_alt || config.emojis?.success || '✅'} รับยศเรียบร้อย`)
                 .setDescription(`เพิ่มยศ ${role.toString()} ให้บัญชีของคุณแล้ว`)
                 .setTimestamp();
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+            return sendResponse({ embeds: [embed] });
         }
     } catch (err) {
-        return interaction.reply({ content: `> ${config.emojis?.error || '❌'} ไม่สามารถจัดการยศได้ในขณะนี้ โปรดตรวจสอบสิทธิ์ของบอทหรือติดต่อผู้ดูแลระบบ`, ephemeral: true });
+        return sendResponse({ content: `> ${config.emojis?.error || '❌'} ไม่สามารถจัดการยศได้ในขณะนี้ โปรดตรวจสอบสิทธิ์ของบอทหรือติดต่อผู้ดูแลระบบ` });
     }
 }
 

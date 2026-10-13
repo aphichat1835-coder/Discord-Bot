@@ -58,7 +58,7 @@ const MIME_EXT_MAP = {
 class AssetCacheManager {
     constructor(db = null, options = {}) {
         this._db = db;
-        this.assetDir = options.assetDir || resolveAssetDir();
+        this.assetDir = options.assetDir || options.cacheDir || resolveAssetDir();
         this.maxQuotaBytes = options.maxQuotaBytes || resolveMaxQuotaBytes();
         this._ensureDirectory();
 
@@ -414,12 +414,14 @@ let defaultAssetCacheManager = null;
 
 function getAssetCacheManager(db = null, options = {}) {
     if (db) {
-        if (!assetManagerInstances.has(db)) {
-            assetManagerInstances.set(db, new AssetCacheManager(db, options));
+        if (!assetManagerInstances.has(db) || (options && Object.keys(options).length > 0)) {
+            const instance = new AssetCacheManager(db, options);
+            assetManagerInstances.set(db, instance);
+            return instance;
         }
         return assetManagerInstances.get(db);
     }
-    if (!defaultAssetCacheManager) {
+    if (!defaultAssetCacheManager || (options && Object.keys(options).length > 0)) {
         defaultAssetCacheManager = new AssetCacheManager(null, options);
     }
     return defaultAssetCacheManager;

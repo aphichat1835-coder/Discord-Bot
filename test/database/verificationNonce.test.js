@@ -4,12 +4,13 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 
 const { openDatabase, closeDatabase } = require("../../database/sqlite/connection");
 const VerificationStateNonceRepository = require("../../database/sqlite/repositories/temp/VerificationStateNonceRepository");
 const VerificationStateNonce = require("../../discord/verification/models/VerificationStateNonce");
 
-const TEST_DB_PATH = path.join(__dirname, `test_nonce_${Date.now()}_${process.pid}.sqlite`);
+const TEST_DB_PATH = path.join(os.tmpdir(), `test_nonce_${Date.now()}_${process.pid}.sqlite`);
 const genHash = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
 describe("VerificationStateNonceRepository & Facade Tests", () => {

@@ -42,7 +42,7 @@
     "sonar": "sonar-scanner-npm",
     "check:discord14": "node scripts/checkDiscordV14Compatibility.js",
     "check:coverage": "node scripts/checkCoverageThresholds.js",
-    "check:release": "npm run check && npm run test:coverage:discord && npm run test:coverage:voice && npm run test:coverage:verification && npm run check:coverage && node scripts/checkAudit.js"
+    "check:release": "npm run check && npm run test:coverage:discord && npm run test:coverage:voice && npm run test:coverage:verification && npm run test:database && npm run check:coverage && node scripts/checkAudit.js"
   },
   "engines": {
     "node": ">=24.18.0 <25",

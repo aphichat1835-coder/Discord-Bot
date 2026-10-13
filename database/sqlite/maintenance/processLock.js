@@ -53,6 +53,26 @@ function tryWriteLockFile(filePath, payload) {
     }
 }
 
+const activeLocks = new Set();
+const activeRestoreLocks = new Set();
+
+process.on("exit", () => {
+    for (const lockPath of activeLocks) {
+        try {
+            const raw = fs.readFileSync(lockPath, "utf8");
+            const data = JSON.parse(raw);
+            if (data.pid === process.pid) fs.unlinkSync(lockPath);
+        } catch (_) {}
+    }
+    for (const restorePath of activeRestoreLocks) {
+        try {
+            const raw = fs.readFileSync(restorePath, "utf8");
+            const data = JSON.parse(raw);
+            if (data.pid === process.pid) fs.unlinkSync(restorePath);
+        } catch (_) {}
+    }
+});
+
 function acquireProcessLock(dbPath) {
     const lockPath = getLockFilePath(dbPath);
     const lockDir = path.dirname(lockPath);
@@ -68,6 +88,7 @@ function acquireProcessLock(dbPath) {
     // Attempt 1: Atomic exclusive create
     let writeRes = tryWriteLockFile(lockPath, payload);
     if (writeRes.success) {
+        activeLocks.add(lockPath);
         return { acquired: true, pid: process.pid };
     }
 
@@ -77,6 +98,7 @@ function acquireProcessLock(dbPath) {
             const raw = fs.readFileSync(lockPath, "utf8");
             const data = JSON.parse(raw);
             if (data.pid === process.pid) {
+                activeLocks.add(lockPath);
                 return { acquired: true, pid: process.pid };
             }
             if (data.pid && isPidAlive(data.pid)) {
@@ -96,6 +118,7 @@ function acquireProcessLock(dbPath) {
         // Retry atomic exclusive create once after clearing stale lock
         writeRes = tryWriteLockFile(lockPath, payload);
         if (writeRes.success) {
+            activeLocks.add(lockPath);
             return { acquired: true, pid: process.pid, reclaimedStale: true };
         }
     }
@@ -106,6 +129,7 @@ function acquireProcessLock(dbPath) {
 function releaseProcessLock(dbPath) {
     if (!dbPath) return;
     const lockPath = getLockFilePath(dbPath);
+    activeLocks.delete(lockPath);
     if (!fs.existsSync(lockPath)) return;
 
     try {

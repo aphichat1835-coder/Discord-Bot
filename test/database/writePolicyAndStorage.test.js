@@ -4,6 +4,7 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { canWrite, resetWritePolicyCache } = require("../../database/sqlite/maintenance/writePolicy");
@@ -17,7 +18,7 @@ describe("Pass 1: Write Policy, Asset Accounting & Storage Semantics Suite", () 
     let tempDir;
 
     before(() => {
-        tempDir = path.join(__dirname, "temp-pass1-" + Date.now());
+        tempDir = path.join(os.tmpdir(), "temp-pass1-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
 
         testDb = new Database(path.join(tempDir, "test.sqlite"));

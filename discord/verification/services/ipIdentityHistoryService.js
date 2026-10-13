@@ -528,15 +528,27 @@ async function backfillVerifyLog(log, models, now, session = null) {
 
 async function withMigrationTransaction(VerifyLogModel, operation, transactionRunner = null) {
     if (typeof transactionRunner === "function") return transactionRunner(operation);
-    const session = await VerifyLogModel.db.startSession();
+    let session = null;
+    try {
+        session = await VerifyLogModel.db.startSession();
+    } catch (_) {
+        return operation(null);
+    }
     let result;
     try {
         await session.withTransaction(async () => {
             result = await operation(session);
         });
         return result;
+    } catch (err) {
+        if (/replica set|standalone|Transaction numbers/i.test(err?.message || "")) {
+            return operation(null);
+        }
+        throw err;
     } finally {
-        await session.endSession();
+        if (session) {
+            try { await session.endSession(); } catch (_) {}
+        }
     }
 }
 

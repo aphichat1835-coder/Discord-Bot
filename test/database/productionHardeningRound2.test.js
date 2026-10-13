@@ -4,6 +4,7 @@ const { test, describe, before, after, beforeEach, afterEach } = require("node:t
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
@@ -32,13 +33,26 @@ const scheduler = require("../../database/sqlite/maintenance/scheduler");
 
 describe("Production Hardening Round 2 Audit Fixes Suite", () => {
     let tempDir;
+    let prevDbPath;
 
     before(() => {
-        tempDir = path.join(__dirname, "temp-round2-test-" + Date.now());
+        tempDir = path.join(os.tmpdir(), "temp-round2-test-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
+        prevDbPath = process.env.SQLITE_DB_PATH;
+        process.env.SQLITE_DB_PATH = path.join(tempDir, "test.sqlite");
+        const { getDatabase } = require("../../database/sqlite/connection");
+        const db = getDatabase();
+        runMigrations(db);
     });
 
     after(() => {
+        const { closeDatabase } = require("../../database/sqlite/connection");
+        closeDatabase();
+        if (prevDbPath !== undefined) {
+            process.env.SQLITE_DB_PATH = prevDbPath;
+        } else {
+            delete process.env.SQLITE_DB_PATH;
+        }
         if (fs.existsSync(tempDir)) {
             try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (_) {}
         }

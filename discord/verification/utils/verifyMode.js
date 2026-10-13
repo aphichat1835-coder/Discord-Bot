@@ -188,6 +188,13 @@ function normalizeVerificationConfig(config = {}) {
 
   next.blockHosting = next.blockHosting === true;
 
+  if (next.minConnections !== undefined && next.minConnections !== null) {
+    const parsed = Number(next.minConnections);
+    next.minConnections = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : (next.requireConnections ? 1 : 0);
+  } else {
+    next.minConnections = next.requireConnections ? 1 : 0;
+  }
+
   delete next[["anti", "Alt"].join("")];
   const ruleInput = next.securityRules && typeof next.securityRules === "object"
     ? { ...next.securityRules }

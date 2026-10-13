@@ -4,6 +4,7 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
@@ -21,7 +22,7 @@ describe("Operational Hardening Suite (Graceful Drain, Auto-Backup, Type TTL)", 
         testDb.pragma("foreign_keys = ON");
         runMigrations(testDb);
 
-        testAssetDir = path.join(__dirname, "test-hardening-assets");
+        testAssetDir = path.join(os.tmpdir(), "test-hardening-assets-" + Date.now());
         if (fs.existsSync(testAssetDir)) {
             fs.rmSync(testAssetDir, { recursive: true, force: true });
         }

@@ -4,6 +4,7 @@ const { test, describe, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
@@ -21,7 +22,7 @@ describe("Emergency Auto-Trim & Resilience Suite", () => {
     let testAssetDir;
 
     before(() => {
-        testAssetDir = path.join(__dirname, "test-emergency-assets");
+        testAssetDir = path.join(os.tmpdir(), "test-emergency-assets-" + Date.now());
         if (fs.existsSync(testAssetDir)) {
             fs.rmSync(testAssetDir, { recursive: true, force: true });
         }

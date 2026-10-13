@@ -2,6 +2,19 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const os = require("node:os");
+const path = require("node:path");
+const fs = require("node:fs");
+
+const testDir = path.join(os.tmpdir(), "temp-joincampaign-test-" + Date.now());
+fs.mkdirSync(testDir, { recursive: true });
+const testDbPath = path.join(testDir, "test.sqlite");
+process.env.SQLITE_DB_PATH = testDbPath;
+
+const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
+const { openDatabase, closeDatabase } = require("../../database/sqlite/connection");
+const testDb = openDatabase({ path: testDbPath });
+runMigrations(testDb);
 
 const modeRegistry = require("../features/joinCampaign/modes/modeRegistry");
 const { buildBaseSetupModal, buildStartOptionsModal, CUSTOM_IDS } = require("../features/joinCampaign/ui/modals");
@@ -27,11 +40,9 @@ test.beforeEach(() => {
 });
 
 test.after(() => {
-    try {
-        const repo = database.repositories.joinCampaign;
-        repo.db.prepare("DELETE FROM join_campaign_jobs").run();
-        repo.db.prepare("DELETE FROM join_campaign_items").run();
-    } catch (_) {}
+    closeDatabase();
+    delete process.env.SQLITE_DB_PATH;
+    try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
 });
 
 test("Join Campaign: Mode registry lists modes and retrieves by id", () => {

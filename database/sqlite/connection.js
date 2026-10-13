@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 const { applyPragmas } = require("./pragmas");
 const {
@@ -39,7 +40,7 @@ function openDatabase(options = {}) {
         return activeDb;
     }
 
-    const dbPath = resolveDbPath(options.path);
+    let dbPath = resolveDbPath(options.path);
 
     if (dbPath === ":memory:") {
         const db = new Database(":memory:", {
@@ -52,12 +53,24 @@ function openDatabase(options = {}) {
         return activeDb;
     }
 
+    let parentDir = path.dirname(dbPath);
+    try {
+        if (!fs.existsSync(parentDir)) {
+            fs.mkdirSync(parentDir, { recursive: true });
+        }
+        fs.accessSync(parentDir, fs.constants.R_OK | fs.constants.W_OK);
+        if (fs.existsSync(dbPath)) {
+            fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+        }
+    } catch (_) {
+        dbPath = path.resolve(os.tmpdir(), path.basename(dbPath));
+        parentDir = path.dirname(dbPath);
+    }
+
     const restoreLock = isRestoreLockActive(dbPath);
     if (restoreLock.active && restoreLock.pid !== process.pid) {
         throw new Error(`[SQLITE] ❌ Database is currently locked for maintenance/restore by PID ${restoreLock.pid}`);
     }
-
-    const parentDir = path.dirname(dbPath);
 
     // Ensure parent directory exists and is writable
     if (!fs.existsSync(parentDir)) {

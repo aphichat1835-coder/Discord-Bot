@@ -571,7 +571,10 @@ async function executeVerification({
         deviceSummary: deviceContext
     });
 
-    const allFindings = securityEval.findings;
+    const allFindings = [...(securityEval.findings || [])];
+    if (fetchMetadata?.isConnectionsFallback === true && !allFindings.includes("connections_fallback_used")) {
+        allFindings.push("connections_fallback_used");
+    }
 
     // --- Step 5: Handle Security Enforcement (If Blocked) ---
     if (securityEval.isBlocked) {

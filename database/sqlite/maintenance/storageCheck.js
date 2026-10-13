@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const { getFilesystemFreeSpace } = require("./quota");
 
 function isPathInside(childPath, parentPath) {
@@ -23,19 +24,31 @@ function evaluateStoragePaths(options = {}) {
     } catch (_) {}
 
     const defaultDbPath = hasPhysicalPersistentMount ? "/persistent/discordbot.sqlite" : path.join(repoRoot, "data", "discordbot.sqlite");
-    const defaultBackupDir = hasPhysicalPersistentMount ? "/persistent/backups" : path.join(repoRoot, "backups");
-    const defaultAssetDir = hasPhysicalPersistentMount ? "/persistent/cache-assets" : path.join(repoRoot, "data", "cache-assets");
+    let defaultBackupDir = hasPhysicalPersistentMount ? "/persistent/backups" : path.join(repoRoot, "backups");
+    let defaultAssetDir = hasPhysicalPersistentMount ? "/persistent/cache-assets" : path.join(repoRoot, "data", "cache-assets");
 
     const rawDbPath = options.dbPath || process.env.SQLITE_DB_PATH || defaultDbPath;
+    const isMemory = rawDbPath === ":memory:";
+    const isTempDb = typeof rawDbPath === "string" && rawDbPath.startsWith(os.tmpdir());
+
+    if (isTempDb || isMemory) {
+        if (!options.backupDir && !process.env.SQLITE_BACKUP_DIR) {
+            defaultBackupDir = path.join(os.tmpdir(), "backups");
+        }
+        if (!options.assetDir && !process.env.SQLITE_ASSET_DIR) {
+            defaultAssetDir = path.join(os.tmpdir(), "cache-assets");
+        }
+    }
+
     const rawBackupDir = options.backupDir || process.env.SQLITE_BACKUP_DIR || defaultBackupDir;
     const rawAssetDir = options.assetDir || process.env.SQLITE_ASSET_DIR || defaultAssetDir;
 
-    const resolvedDbPath = path.resolve(rawDbPath);
-    const resolvedDbDir = path.dirname(resolvedDbPath);
+    const resolvedDbPath = isMemory ? ":memory:" : path.resolve(rawDbPath);
+    const resolvedDbDir = isMemory ? os.tmpdir() : path.dirname(resolvedDbPath);
     const resolvedBackupDir = path.resolve(rawBackupDir);
     const resolvedAssetDir = path.resolve(rawAssetDir);
 
-    const dbInSource = isPathInside(resolvedDbPath, repoRoot);
+    const dbInSource = !isMemory && isPathInside(resolvedDbPath, repoRoot);
     const backupInSource = isPathInside(resolvedBackupDir, repoRoot);
     const assetInSource = isPathInside(resolvedAssetDir, repoRoot);
     const hasInSource = dbInSource || backupInSource || assetInSource;
@@ -142,6 +155,11 @@ function evaluateStoragePaths(options = {}) {
 
             results.permissions[target.key] = { readable: true, writable: true };
         } catch (err) {
+            if (err.code === "EROFS" && isPathInside(target.dir, repoRoot)) {
+                results.permissions[target.key] = { readable: true, writable: false, readOnly: true };
+                results.warnings.push(`[STORAGE] ℹ️ In-source ${target.name} (${target.dir}) is mounted read-only in this environment.`);
+                continue;
+            }
             results.readable = false;
             results.writable = false;
             results.filesystemCritical = true;

@@ -11,29 +11,45 @@ const { decryptToken, decryptIP } = require("../../utils/crypto");
 
 const alertDedupMap = new Map();
 
-function sendThrottledAlert({ key, severity = "ERROR", code, title, description, guildId = null }) {
-    const now = Date.now();
-    const lastSent = alertDedupMap.get(key) || 0;
-    if (now - lastSent < 60000) return;
-    alertDedupMap.set(key, now);
-
-    if (alertDedupMap.size > 200) {
-        for (const [k, ts] of alertDedupMap.entries()) {
-            if (now - ts > 300000) alertDedupMap.delete(k);
+function safeSlice(str, start, end) {
+    if (!str) return "";
+    let sliceEnd = end;
+    if (sliceEnd < str.length) {
+        const code = str.charCodeAt(sliceEnd - 1);
+        if (code >= 0xD800 && code <= 0xDBFF) {
+            sliceEnd -= 1;
         }
     }
+    return str.slice(start, sliceEnd);
+}
 
-    if (typeof sendWebhookEvent === "function") {
-        sendWebhookEvent({
-            target: "ALERT",
-            severity,
-            category: "VERIFICATION",
-            code,
-            state: "OPEN",
-            guildId,
-            title,
-            description
-        }).catch(() => {});
+function sendThrottledAlert({ key, severity = "ERROR", code, title, description, guildId = null }) {
+    try {
+        const now = Date.now();
+        const lastSent = alertDedupMap.get(key) || 0;
+        if (now - lastSent < 60000) return;
+        alertDedupMap.set(key, now);
+
+        if (alertDedupMap.size > 200) {
+            for (const [k, ts] of alertDedupMap.entries()) {
+                if (now - ts > 300000) alertDedupMap.delete(k);
+            }
+        }
+
+        if (typeof sendWebhookEvent === "function") {
+            sendWebhookEvent({
+                target: "ALERT",
+                severity,
+                category: "VERIFICATION",
+                code,
+                state: "OPEN",
+                guildId,
+                title,
+                description
+            }).catch(() => {});
+        }
+    } catch {
+        // Never allow alerting failure to crash worker or caller
     }
 }
 
@@ -80,8 +96,9 @@ function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
         } else {
             let offset = 0;
             while (offset < s.length) {
-                normalizedLines.push(s.slice(offset, offset + maxChars));
-                offset += maxChars;
+                const chunk = safeSlice(s, offset, offset + maxChars);
+                normalizedLines.push(chunk);
+                offset += chunk.length || maxChars;
             }
         }
     }
@@ -131,8 +148,8 @@ function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
     let remaining = s;
     let part = 1;
     while (remaining.length > 0) {
-        const chunk = remaining.slice(0, maxChars);
-        remaining = remaining.slice(maxChars);
+        const chunk = safeSlice(remaining, 0, maxChars);
+        remaining = remaining.slice(chunk.length || maxChars);
         fields.push({
             name: truncate(`${safeTitle}${part > 1 ? ` (ส่วนที่ ${part})` : ""}`, 250),
             value: chunk,
@@ -678,6 +695,7 @@ class VerificationWebhookManager {
         this.retryTimers = new Map(); // guildId -> setTimeout timer
         this.pendingWakeups = new Set(); // guildId set for lost-wakeup prevention
         this.isRecovering = false;
+        this.startupRecoveryCompleted = false;
 
         // Startup recovery is now explicitly invoked by verificationLifecycle.startVerificationRuntime()
         // after MongoDB and SQLite connections are fully open and ready (P1-2).
@@ -691,9 +709,22 @@ class VerificationWebhookManager {
      * 4. Schedules timers for future RETRY deliveries
      */
     async performStartupRecovery() {
-        if (this.isRecovering) return;
+        if (this.isRecovering) return false;
         this.isRecovering = true;
         try {
+            // Guard: ensure SQLite database connection is initialized and open
+            let sqliteReady = false;
+            try {
+                const probe = this.repo.db.prepare("SELECT 1 as ok").get();
+                sqliteReady = probe?.ok === 1;
+            } catch {
+                sqliteReady = false;
+            }
+            if (!sqliteReady) {
+                this.isRecovering = false;
+                return false;
+            }
+
             // 1. Recover stuck SENDING deliveries from node crashes immediately (maxAgeMs: 0)
             const recovery = this.repo.recoverStuckSendingDeliveries(0);
             const stuckGuildIds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
@@ -705,7 +736,19 @@ class VerificationWebhookManager {
                     try {
                         const config = await GuildConfig.findOne().where("guildId").equals(job.guild_id).lean();
                         if (config?.verification?.webhookLog?.enabled && config?.verification?.webhookLog?.mode === "backfill_live") {
-                            this.triggerWorker(job.guild_id, job.job_id);
+                            const now = Date.now();
+                            const leaseExpiresAt = Number(job.lease_expires_at) || 0;
+                            if (leaseExpiresAt <= now) {
+                                if (typeof this.repo.resetJobLease === "function") {
+                                    this.repo.resetJobLease(job.job_id);
+                                }
+                                this.triggerWorker(job.guild_id, job.job_id);
+                            } else {
+                                const waitMs = Math.max(1000, leaseExpiresAt - now + 500);
+                                setTimeout(() => {
+                                    this.triggerWorker(job.guild_id, job.job_id);
+                                }, waitMs).unref?.();
+                            }
                         } else {
                             if (typeof this.repo.cancelJob === "function") {
                                 this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
@@ -721,6 +764,9 @@ class VerificationWebhookManager {
                             description: `การกู้คืนงานประมวลผลย้อนหลังล้มเหลว (jobId=${job.job_id}, guildId=${job.guild_id}): ${jobErr?.message || jobErr}`,
                             guildId: job.guild_id
                         });
+                        if (typeof this.repo.resetJobLease === "function") {
+                            this.repo.resetJobLease(job.job_id);
+                        }
                         this.triggerWorker(job.guild_id, job.job_id);
                     }
                 }
@@ -742,6 +788,9 @@ class VerificationWebhookManager {
             for (const gId of retryGuildIds) {
                 this.scheduleNextRetry(gId);
             }
+
+            this.startupRecoveryCompleted = true;
+            return true;
         } catch (err) {
             console.error("[VerificationWebhook] performStartupRecovery failed:", err);
             sendThrottledAlert({
@@ -751,6 +800,7 @@ class VerificationWebhookManager {
                 title: "STARTUP RECOVERY FAILED",
                 description: `การกู้คืนระบบคิว Webhook ตอนเริ่มระบบล้มเหลว: ${err?.message || err}`
             });
+            return false;
         } finally {
             this.isRecovering = false;
         }
@@ -943,11 +993,12 @@ class VerificationWebhookManager {
         const safeGuildId = String(guildId);
 
         // P0-1: Guard centrally against non-success or unassigned events using unified eligibility
+        let loadedLog = null;
         if (eventData) {
             if (!isEligibleVerifyLog(eventData)) return null;
         } else if (logId) {
-            const log = await VerifyLog.findById(logId).lean();
-            if (!isEligibleVerifyLog(log)) return null;
+            loadedLog = await VerifyLog.findById(logId).lean();
+            if (!isEligibleVerifyLog(loadedLog)) return null;
         } else {
             return null;
         }
@@ -962,7 +1013,7 @@ class VerificationWebhookManager {
 
         // P1-4: Live-Only boundary check
         const liveStartedAt = Number(webhookConfig.liveStartedAt) || 0;
-        const eventTime = eventData?.verifiedAt || Date.now();
+        const eventTime = Number(eventData?.verifiedAt || loadedLog?.verifiedAt || loadedLog?.createdAt || Date.now());
         if (liveStartedAt > 0 && eventTime < liveStartedAt - 5000) {
             return null; // Event occurred before live mode started
         }
@@ -993,6 +1044,9 @@ class VerificationWebhookManager {
      */
     triggerWorker(guildId, backfillJobId = null) {
         const safeGuildId = String(guildId);
+        if (!this.startupRecoveryCompleted) {
+            this.performStartupRecovery().catch(() => {});
+        }
         if (this.activeWorkers.has(safeGuildId)) {
             this.pendingWakeups.add(safeGuildId);
             return;
@@ -1153,13 +1207,14 @@ class VerificationWebhookManager {
                     }
                 }
                 this.repo.updateJobProgress(job.job_id, {
+                    totalEligible: processed,
                     processedCount: processed,
                     lastCursorId,
                     leaseToken
                 });
                 // All historical items have been enqueued. Now drain any remaining deliveries (P1-4).
                 await this.drainDeliveries(guildId);
-                await this.checkAndCompleteJobIfDone(job.job_id, guildId, leaseToken);
+                await this.checkAndCompleteJobIfDone(job.job_id, guildId, leaseToken, { cursorExhausted: true });
                 break;
             }
 
@@ -1199,6 +1254,29 @@ class VerificationWebhookManager {
                 const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
                 if (existing) {
                     if (existing.status === "SENT" || existing.status === "SENDING") {
+                        processed++;
+                        lastCursorId = eventId;
+                        this.repo.updateJobProgress(job.job_id, {
+                            processedCount: processed,
+                            lastCursorId,
+                            leaseToken
+                        });
+                        continue;
+                    }
+                    if (existing.status === "PENDING" || existing.status === "RETRY") {
+                        processed++;
+                        lastCursorId = eventId;
+                        this.repo.updateJobProgress(job.job_id, {
+                            processedCount: processed,
+                            lastCursorId,
+                            leaseToken
+                        });
+                        continue;
+                    }
+                    if (existing.status === "FAILED") {
+                        if (typeof this.repo.requeueFailedDelivery === "function") {
+                            this.repo.requeueFailedDelivery(existing.delivery_id, job.job_id);
+                        }
                         processed++;
                         lastCursorId = eventId;
                         this.repo.updateJobProgress(job.job_id, {
@@ -1248,9 +1326,10 @@ class VerificationWebhookManager {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
         const initialWebhookUrl = config?.verification?.webhookLog?.url;
         if (!initialWebhookUrl) return;
+        const initialVersion = Number(config?.verification?.webhookLog?.destinationVersion) || 1;
 
         while (true) {
-            const deliveries = this.repo.claimNextDeliveries(guildId, 5);
+            const deliveries = this.repo.claimNextDeliveries(guildId, 5, initialVersion);
             if (!deliveries.length) break;
 
             for (const item of deliveries) {
@@ -1456,7 +1535,9 @@ class VerificationWebhookManager {
                             }).catch(() => {});
                         }
                     } else {
-                        this.repo.markDeliveryRetry(item.delivery_id, 10000, "retry", sendErr.message, item.destination_version);
+                        const attempt = Math.max(1, Number(item.attempt_count) || 1);
+                        const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 1000);
+                        this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
                         if (item.job_id) {
                             const j = this.repo.getJobById(item.job_id);
                             if (j) {
@@ -1479,7 +1560,7 @@ class VerificationWebhookManager {
     /**
      * Checks if all deliveries for a backfill job are finished and completes the job if so (P1-1).
      */
-    async checkAndCompleteJobIfDone(jobId, guildId, leaseToken = null) {
+    async checkAndCompleteJobIfDone(jobId, guildId, leaseToken = null, options = {}) {
         if (!jobId) return;
         const remainingForJob = this.repo.countPendingDeliveriesForJob(jobId);
         if (remainingForJob > 0) return;
@@ -1487,7 +1568,8 @@ class VerificationWebhookManager {
         const job = this.repo.getJobById(jobId);
         if (!job || job.status !== "RUNNING") return;
 
-        if (job.total_eligible > 0 && (job.processed_count || 0) < job.total_eligible) {
+        const cursorExhausted = Boolean(options.cursorExhausted);
+        if (!cursorExhausted && job.total_eligible > 0 && (job.processed_count || 0) < job.total_eligible) {
             console.warn(`[VerificationWebhook] Job ${jobId} has processed ${job.processed_count}/${job.total_eligible} items; not completing yet`);
             return;
         }

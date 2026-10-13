@@ -80,6 +80,7 @@ class VerificationWebhookRepository {
     }
 
     updateJobProgress(jobId, {
+        totalEligible,
         processedCount,
         successCount,
         failureCount,
@@ -92,7 +93,8 @@ class VerificationWebhookRepository {
         if (leaseToken) {
             const stmt = this.db.prepare(`
                 UPDATE verification_webhook_jobs
-                SET processed_count = COALESCE(?, processed_count),
+                SET total_eligible = COALESCE(?, total_eligible),
+                    processed_count = COALESCE(?, processed_count),
                     success_count = COALESCE(?, success_count),
                     failure_count = COALESCE(?, failure_count),
                     retry_count = COALESCE(?, retry_count),
@@ -102,6 +104,7 @@ class VerificationWebhookRepository {
                 WHERE job_id = ? AND status = 'RUNNING' AND lease_token = ? AND lease_expires_at >= ?
             `);
             return stmt.run(
+                totalEligible !== undefined ? Number(totalEligible) : null,
                 processedCount !== undefined ? Number(processedCount) : null,
                 successCount !== undefined ? Number(successCount) : null,
                 failureCount !== undefined ? Number(failureCount) : null,
@@ -116,7 +119,8 @@ class VerificationWebhookRepository {
         }
         const stmt = this.db.prepare(`
             UPDATE verification_webhook_jobs
-            SET processed_count = COALESCE(?, processed_count),
+            SET total_eligible = COALESCE(?, total_eligible),
+                processed_count = COALESCE(?, processed_count),
                 success_count = COALESCE(?, success_count),
                 failure_count = COALESCE(?, failure_count),
                 retry_count = COALESCE(?, retry_count),
@@ -126,6 +130,7 @@ class VerificationWebhookRepository {
             WHERE job_id = ? AND status = 'RUNNING'
         `);
         return stmt.run(
+            totalEligible !== undefined ? Number(totalEligible) : null,
             processedCount !== undefined ? Number(processedCount) : null,
             successCount !== undefined ? Number(successCount) : null,
             failureCount !== undefined ? Number(failureCount) : null,
@@ -135,6 +140,16 @@ class VerificationWebhookRepository {
             now,
             String(jobId)
         );
+    }
+
+    resetJobLease(jobId) {
+        const now = Date.now();
+        const stmt = this.db.prepare(`
+            UPDATE verification_webhook_jobs
+            SET lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+            WHERE job_id = ? AND status = 'RUNNING'
+        `);
+        return stmt.run(now, String(jobId));
     }
 
     acquireJobLease(jobId, leaseToken, ttlMs = 30000) {
@@ -300,11 +315,20 @@ class VerificationWebhookRepository {
         this.ensureDeliverySchema();
         const now = Date.now();
         const stmt = this.db.prepare(`
-            INSERT OR IGNORE INTO verification_webhook_deliveries (
+            INSERT INTO verification_webhook_deliveries (
                 delivery_id, job_id, guild_id, destination_version, event_id,
                 user_id, status, attempt_count, next_retry_at, last_attempt_at,
                 error_code, error_message, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 0, ?, NULL, NULL, NULL, ?, ?)
+            ON CONFLICT(delivery_id) DO UPDATE SET
+                status = 'PENDING',
+                job_id = COALESCE(excluded.job_id, verification_webhook_deliveries.job_id),
+                attempt_count = 0,
+                next_retry_at = excluded.next_retry_at,
+                error_code = NULL,
+                error_message = NULL,
+                updated_at = excluded.updated_at
+            WHERE verification_webhook_deliveries.status = 'FAILED'
         `);
         return stmt.run(
             String(deliveryId),
@@ -319,18 +343,43 @@ class VerificationWebhookRepository {
         );
     }
 
-    claimNextDeliveries(guildId, limit = 10) {
+    requeueFailedDelivery(deliveryId, jobId = null) {
         this.ensureDeliverySchema();
         const now = Date.now();
-        const selectStmt = this.db.prepare(`
-            SELECT * FROM verification_webhook_deliveries
-            WHERE guild_id = ? AND status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at <= ?)
-            ORDER BY created_at ASC
-            LIMIT ?
+        const stmt = this.db.prepare(`
+            UPDATE verification_webhook_deliveries
+            SET status = 'PENDING',
+                job_id = COALESCE(?, job_id),
+                attempt_count = 0,
+                next_retry_at = NULL,
+                error_code = NULL,
+                error_message = NULL,
+                updated_at = ?
+            WHERE delivery_id = ? AND status = 'FAILED'
         `);
+        return stmt.run(jobId ? String(jobId) : null, now, String(deliveryId));
+    }
+
+    claimNextDeliveries(guildId, limit = 10, destinationVersion = null) {
+        this.ensureDeliverySchema();
+        const now = Date.now();
+        const hasVersion = destinationVersion !== null && Number(destinationVersion) > 0;
+        const query = hasVersion
+            ? `SELECT * FROM verification_webhook_deliveries
+               WHERE guild_id = ? AND destination_version = ? AND status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at <= ?)
+               ORDER BY created_at ASC
+               LIMIT ?`
+            : `SELECT * FROM verification_webhook_deliveries
+               WHERE guild_id = ? AND status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at <= ?)
+               ORDER BY created_at ASC
+               LIMIT ?`;
+        const selectStmt = this.db.prepare(query);
 
         return this.db.transaction(() => {
-            const rows = selectStmt.all(String(guildId), now, Math.max(1, Number(limit) || 10));
+            const params = hasVersion
+                ? [String(guildId), Number(destinationVersion), now, Math.max(1, Number(limit) || 10)]
+                : [String(guildId), now, Math.max(1, Number(limit) || 10)];
+            const rows = selectStmt.all(...params);
             if (!rows.length) return [];
             const markStmt = this.db.prepare(`
                 UPDATE verification_webhook_deliveries
@@ -339,6 +388,8 @@ class VerificationWebhookRepository {
             `);
             for (const row of rows) {
                 markStmt.run(now, now, row.delivery_id);
+                row.attempt_count = (Number(row.attempt_count) || 0) + 1;
+                row.last_attempt_at = now;
             }
             return rows;
         })();
@@ -499,6 +550,14 @@ class VerificationWebhookRepository {
             WHERE guild_id = ? AND status = 'RETRY' AND next_retry_at IS NOT NULL
         `).get(String(guildId));
         return row?.next_retry || null;
+    }
+
+    getDeliveryById(deliveryId) {
+        if (!deliveryId) return null;
+        return this.db.prepare(`
+            SELECT * FROM verification_webhook_deliveries
+            WHERE delivery_id = ?
+        `).get(String(deliveryId)) || null;
     }
 
     getDeliveryByEventId(guildId, destinationVersion, eventId) {

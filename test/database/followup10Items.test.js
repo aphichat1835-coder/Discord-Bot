@@ -4,6 +4,7 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { evaluateStoragePaths } = require("../../database/sqlite/maintenance/storageCheck");
@@ -24,7 +25,7 @@ describe("Follow-Up 10 Audit Items Suite", () => {
     let tempDir;
 
     before(() => {
-        tempDir = path.join(__dirname, "temp-followup10-" + Date.now());
+        tempDir = path.join(os.tmpdir(), "temp-followup10-" + Date.now());
         fs.mkdirSync(tempDir, { recursive: true });
 
         testDb = new Database(path.join(tempDir, "test.sqlite"));
@@ -201,7 +202,7 @@ describe("Follow-Up 10 Audit Items Suite", () => {
 
     describe("Item 7: Database Center Observability (dbstat, db.stats, scheduler nextRunAt)", () => {
         test("getSqliteDetailedStatus returns categories with count, bytes, and sizeMb", async () => {
-            const status = await databaseService.getSqliteDetailedStatus();
+            const status = await databaseService.getSqliteDetailedStatus(testDb);
             assert.ok(status.categories);
             assert.ok(status.categories.core);
             assert.ok(status.categories.temporary);
