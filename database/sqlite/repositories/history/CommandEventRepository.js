@@ -62,10 +62,14 @@ class CommandEventRepository {
     getBufferStats() {
         return {
             bufferedCount: this.buffer.length,
+            criticalQueueCount: this.criticalRetryQueue.length,
             maxQueueCap: this.maxQueueCap,
+            maxCriticalCap: 500,
             flushSizeThreshold: this.flushSizeThreshold,
             isDegraded: this.isDegraded,
-            droppedEventsCount: this.droppedEventsCount
+            droppedEventsCount: this.droppedEventsCount,
+            p0StorageFailureCount: this.p0StorageFailureCount || 0,
+            p0Guaranteed: (this.p0StorageFailureCount || 0) === 0
         };
     }
 
@@ -104,7 +108,12 @@ class CommandEventRepository {
                 } else {
                     const spooled = p0Journal.spoolP0Event("command_events", item);
                     if (!spooled) {
-                        this.criticalRetryQueue.push(item);
+                        if (this.criticalRetryQueue.length < 500) {
+                            this.criticalRetryQueue.push(item);
+                        } else {
+                            this.p0StorageFailureCount = (this.p0StorageFailureCount || 0) + 1;
+                            console.error(`[COMMAND_EVENT_BUFFER] 🚨 CRITICAL P0 STORAGE FAILURE: SQLite insert failed, memory retry queue full (500), and emergency journal spool failed! Event persistence cannot be guaranteed.`);
+                        }
                     }
                 }
                 console.error(`[COMMAND_EVENT_BUFFER] 🚨 CRITICAL P0 event insert failed (queued for retry): ${err.message}`);

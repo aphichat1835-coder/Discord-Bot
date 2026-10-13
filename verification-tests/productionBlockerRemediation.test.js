@@ -112,55 +112,167 @@ test('PHASE 2 (SEC-01): checkAccountEligibility enforces minConnections correctl
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PHASE 3: Dashboard DASH-01 & DASH-02 Logic Verification
+const {
+    fmtDuration,
+    computeOauthExpiryStatus,
+    oauthStatusRows,
+    executeWebhookModeSwitch
+} = require('../discord/verification/public/js/guild-dashboard');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 3: Dashboard DASH-01 & DASH-02 Logic Verification (Real Code)
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('PHASE 3 (DASH-01): oauthStatusRows logic calculates remaining and handles edge cases', () => {
-    // Pure replica of the hardened oauthStatusRows logic in guild-dashboard.js
-    function fmtDuration(ms) {
-        const value = Number(ms);
-        if (!Number.isFinite(value)) return '—';
-        const seconds = Math.max(0, Math.floor(Math.abs(value) / 1000));
-        return `${seconds} วินาที`;
-    }
-
-    function oauthStatusRowsLogic(token = {}) {
-        const oauth = token.oauth || {};
-        const now = 1000000;
-        const issuedAt = Number(oauth.issuedAt);
-        const tokenAge = Number.isFinite(issuedAt) && issuedAt > 0
-            ? Math.max(0, now - issuedAt)
-            : null;
-        const expiresAt = Number(oauth.expiresAt);
-        const hasValidExpiry = Number.isFinite(expiresAt) && expiresAt > 0;
-        const remaining = hasValidExpiry ? expiresAt - now : null;
-        let remainingText = '—';
-        if (remaining !== null) {
-            remainingText = remaining > 0 ? fmtDuration(remaining) : `หมดอายุแล้ว ${fmtDuration(-remaining)}`;
-        }
-        return { tokenAge, remaining, remainingText };
-    }
+test('PHASE 3 (DASH-01): real computeOauthExpiryStatus and oauthStatusRows calculates remaining and handles edge cases', () => {
+    const fixedNow = 1000000;
 
     // 1. Valid future expiresAt
-    const validFuture = oauthStatusRowsLogic({ oauth: { expiresAt: 1060000, issuedAt: 900000 } });
+    const validFuture = computeOauthExpiryStatus({ oauth: { expiresAt: 1060000, issuedAt: 900000 } }, fixedNow);
     assert.equal(validFuture.remaining, 60000);
-    assert.equal(validFuture.remainingText, '60 วินาที');
+    assert.equal(validFuture.remainingText, '1 นาที');
     assert.equal(validFuture.tokenAge, 100000);
 
+    const validFutureSeconds = computeOauthExpiryStatus({ oauth: { expiresAt: 1030000, issuedAt: 900000 } }, fixedNow);
+    assert.equal(validFutureSeconds.remaining, 30000);
+    assert.equal(validFutureSeconds.remainingText, '30 วินาที');
+
+    const rowsFuture = oauthStatusRows({ oauth: { expiresAt: 1060000, issuedAt: 900000 } }, fixedNow);
+    const remainingRow = rowsFuture.find(([label]) => label === 'เวลาคงเหลือ');
+    assert.ok(remainingRow);
+    assert.equal(remainingRow[1], '1 นาที');
+
     // 2. Past expiresAt (expired)
-    const pastExpired = oauthStatusRowsLogic({ oauth: { expiresAt: 950000 } });
+    const pastExpired = computeOauthExpiryStatus({ oauth: { expiresAt: 950000 } }, fixedNow);
     assert.equal(pastExpired.remaining, -50000);
     assert.equal(pastExpired.remainingText, 'หมดอายุแล้ว 50 วินาที');
 
     // 3. Missing expiresAt
-    const missingExp = oauthStatusRowsLogic({ oauth: {} });
+    const missingExp = computeOauthExpiryStatus({ oauth: {} }, fixedNow);
     assert.equal(missingExp.remaining, null);
     assert.equal(missingExp.remainingText, '—');
 
     // 4. Invalid non-numeric expiresAt
-    const invalidExp = oauthStatusRowsLogic({ oauth: { expiresAt: 'not-a-number' } });
+    const invalidExp = computeOauthExpiryStatus({ oauth: { expiresAt: 'not-a-number' } }, fixedNow);
     assert.equal(invalidExp.remaining, null);
     assert.equal(invalidExp.remainingText, '—');
+
+    // 5. Zero / negative expiresAt
+    const zeroExp = computeOauthExpiryStatus({ oauth: { expiresAt: 0 } }, fixedNow);
+    assert.equal(zeroExp.remaining, null);
+    assert.equal(zeroExp.remainingText, '—');
+});
+
+test('PHASE 3 (DASH-02): executeWebhookModeSwitch handles 409 conflict, user confirmation, force request, and button state', async () => {
+    // 1. Successful non-conflicting mode switch
+    let apiCalls = [];
+    let toasts = [];
+    let reloads = 0;
+    const fakeBtn = { disabled: false };
+
+    const successRes = await executeWebhookModeSwitch({
+        mode: 'live',
+        guildId: '123456',
+        apiFn: async (url, opts) => {
+            apiCalls.push({ url, opts });
+            return { success: true, message: 'สลับโหมดสำเร็จ' };
+        },
+        showToastFn: (msg, type) => toasts.push({ msg, type }),
+        loadWebhookStatusFn: async () => { reloads++; },
+        btn: fakeBtn
+    });
+
+    assert.equal(successRes.ok, true);
+    assert.equal(successRes.forced, false);
+    assert.equal(fakeBtn.disabled, false, 'Button must be re-enabled after completion');
+    assert.equal(reloads, 1);
+    assert.equal(apiCalls.length, 1);
+    assert.deepEqual(JSON.parse(apiCalls[0].opts.body), { mode: 'live' });
+    assert.equal(toasts[0].type, 'ok');
+
+    // 2. HTTP 409 with backfill_in_progress - User confirms force switch
+    apiCalls = [];
+    toasts = [];
+    reloads = 0;
+    let confirmedCount = 0;
+
+    const forceConfirmedRes = await executeWebhookModeSwitch({
+        mode: 'live',
+        guildId: '123456',
+        apiFn: async (url, opts) => {
+            apiCalls.push({ url, opts });
+            const body = JSON.parse(opts.body);
+            if (!body.force) {
+                const err = new Error('มีงานส่งข้อมูลย้อนหลังกำลังทำงานอยู่');
+                err.status = 409;
+                err.code = 'backfill_in_progress';
+                throw err;
+            }
+            return { success: true, message: 'สลับเป็นโหมด Live เรียบร้อยแล้ว' };
+        },
+        confirmFn: () => {
+            confirmedCount++;
+            return true; // user confirms!
+        },
+        showToastFn: (msg, type) => toasts.push({ msg, type }),
+        loadWebhookStatusFn: async () => { reloads++; },
+        btn: fakeBtn
+    });
+
+    assert.equal(forceConfirmedRes.ok, true);
+    assert.equal(forceConfirmedRes.forced, true);
+    assert.equal(confirmedCount, 1);
+    assert.equal(apiCalls.length, 2, 'Must issue initial request, then force request on 409');
+    assert.deepEqual(JSON.parse(apiCalls[1].opts.body), { mode: 'live', force: true });
+    assert.equal(reloads, 1);
+    assert.equal(fakeBtn.disabled, false);
+    assert.equal(toasts.some(t => t.type === 'ok'), true);
+
+    // 3. HTTP 409 with backfill_in_progress - User cancels confirmation
+    apiCalls = [];
+    toasts = [];
+    reloads = 0;
+
+    const cancelledRes = await executeWebhookModeSwitch({
+        mode: 'live',
+        guildId: '123456',
+        apiFn: async (url, opts) => {
+            apiCalls.push({ url, opts });
+            const err = new Error('มีงานส่งข้อมูลย้อนหลังกำลังทำงานอยู่');
+            err.status = 409;
+            err.code = 'backfill_in_progress';
+            throw err;
+        },
+        confirmFn: () => false, // user cancels!
+        showToastFn: (msg, type) => toasts.push({ msg, type }),
+        loadWebhookStatusFn: async () => { reloads++; },
+        btn: fakeBtn
+    });
+
+    assert.equal(cancelledRes.ok, false);
+    assert.equal(cancelledRes.cancelled, true);
+    assert.equal(apiCalls.length, 1, 'Must NOT issue second request when user cancels');
+    assert.equal(reloads, 0);
+    assert.equal(fakeBtn.disabled, false);
+
+    // 4. Unexpected server error
+    apiCalls = [];
+    toasts = [];
+
+    const serverErrRes = await executeWebhookModeSwitch({
+        mode: 'live',
+        guildId: '123456',
+        apiFn: async () => {
+            const err = new Error('Internal Server Error');
+            err.status = 500;
+            throw err;
+        },
+        showToastFn: (msg, type) => toasts.push({ msg, type }),
+        btn: fakeBtn
+    });
+
+    assert.equal(serverErrRes.ok, false);
+    assert.equal(toasts[0].type, 'err');
+    assert.equal(fakeBtn.disabled, false);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

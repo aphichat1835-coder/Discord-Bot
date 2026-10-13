@@ -735,7 +735,8 @@ class VerificationWebhookManager {
                 for (const job of activeJobs) {
                     try {
                         const config = await GuildConfig.findOne().where("guildId").equals(job.guild_id).lean();
-                        if (config?.verification?.webhookLog?.enabled && config?.verification?.webhookLog?.mode === "backfill_live") {
+                        const webhookConfig = config?.verification?.webhookLog;
+                        if (webhookConfig?.enabled && webhookConfig?.mode === "backfill_live" && webhookConfig?.url) {
                             const now = Date.now();
                             const leaseExpiresAt = Number(job.lease_expires_at) || 0;
                             if (leaseExpiresAt <= now) {
@@ -746,7 +747,10 @@ class VerificationWebhookManager {
                             } else {
                                 const waitMs = Math.max(1000, leaseExpiresAt - now + 500);
                                 setTimeout(() => {
-                                    this.triggerWorker(job.guild_id, job.job_id);
+                                    const currentJob = this.repo.getJobById(job.job_id);
+                                    if (currentJob && currentJob.status === "RUNNING") {
+                                        this.triggerWorker(job.guild_id, job.job_id);
+                                    }
                                 }, waitMs).unref?.();
                             }
                         } else {
@@ -1137,8 +1141,13 @@ class VerificationWebhookManager {
      */
     async executeBackfill(guildId, job, leaseToken) {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-        const webhookUrl = config?.verification?.webhookLog?.url;
-        if (!webhookUrl) return;
+        const webhookConfig = config?.verification?.webhookLog;
+        const webhookUrl = webhookConfig?.url;
+        if (!webhookConfig?.enabled || !webhookUrl) {
+            console.warn(`[VerificationWebhook] Guild ${guildId} backfill job ${job.job_id} aborted: webhook disabled or missing URL`);
+            this.repo.cancelJob(job.job_id, !webhookUrl ? "webhook_url_missing" : "webhook_disabled");
+            return;
+        }
 
         let lastCursorId = job.last_cursor_id || null;
         let processed = job.processed_count || 0;
@@ -1152,22 +1161,33 @@ class VerificationWebhookManager {
             }
 
             const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-            const currentMode = currentConfig?.verification?.webhookLog?.mode;
+            const currentWebhook = currentConfig?.verification?.webhookLog;
+            const currentMode = currentWebhook?.mode;
             if (currentMode !== "backfill_live") {
                 console.warn(`[VerificationWebhook] Guild ${guildId} mode changed to ${currentMode || "off"}, halting backfill`);
                 this.repo.cancelJob(job.job_id, `mode_changed_to_${currentMode || "live"}`);
                 break;
             }
+            if (!currentWebhook?.url) {
+                console.warn(`[VerificationWebhook] Guild ${guildId} webhook URL removed during backfill`);
+                this.repo.cancelJob(job.job_id, "webhook_url_removed_during_backfill");
+                break;
+            }
 
-            const currentDestVersion = Number(currentConfig?.verification?.webhookLog?.destinationVersion) || 1;
+            const currentDestVersion = Number(currentWebhook?.destinationVersion) || 1;
             if (currentDestVersion !== destinationVersion) {
-                console.warn(`[VerificationWebhook] Destination version changed for guild=${guildId} during backfill`);
+                console.warn(`[VerificationWebhook] Destination version changed for guild=${guildId} during backfill (from v${destinationVersion} to v${currentDestVersion})`);
+                this.repo.cancelJob(job.job_id, `destination_version_changed_to_${currentDestVersion}`);
                 break;
             }
 
             const hasLease = this.repo.acquireJobLease(job.job_id, leaseToken, 30000);
             if (!hasLease) {
-                console.warn(`[VerificationWebhook] Lease lost for job=${job.job_id}`);
+                console.warn(`[VerificationWebhook] Lease lost or held by another worker for job=${job.job_id}`);
+                const currentJobCheck = this.repo.getJobById(job.job_id);
+                if (currentJobCheck && currentJobCheck.status === "RUNNING") {
+                    this.scheduleNextRetry(guildId);
+                }
                 break;
             }
 
@@ -1196,8 +1216,6 @@ class VerificationWebhookManager {
                 .lean();
 
             if (!batch.length) {
-                // If there were eligible documents counted, but we didn't process them all,
-                // log a warning to ensure full traceability
                 if (processed < (job.total_eligible || 0)) {
                     const remainingQuery = { ...query };
                     delete remainingQuery._id;
@@ -1229,6 +1247,10 @@ class VerificationWebhookManager {
                     this.repo.cancelJob(job.job_id, `mode_changed_to_${checkConfig?.verification?.webhookLog?.mode || "live"}`);
                     return;
                 }
+                if (!checkConfig?.verification?.webhookLog?.url) {
+                    this.repo.cancelJob(job.job_id, "webhook_url_missing_during_processing");
+                    return;
+                }
 
                 const eventId = String(log._id);
 
@@ -1247,6 +1269,7 @@ class VerificationWebhookManager {
                 const renewed = this.repo.renewJobLease(job.job_id, leaseToken, 30000);
                 if (!renewed) {
                     console.warn(`[VerificationWebhook] Lease renewal failed for job ${job.job_id}; halting backfill to prevent conflict`);
+                    this.scheduleNextRetry(guildId);
                     return;
                 }
 

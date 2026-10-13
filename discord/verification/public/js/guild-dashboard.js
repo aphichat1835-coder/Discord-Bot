@@ -47,7 +47,7 @@
     "unknownLookup"
   ];
 
-  const $ = (id) => document.getElementById(id);
+  const $ = (id) => (typeof document !== "undefined" ? document.getElementById(id) : null);
 
   const SELECTORS = {
     sidebarToggle: "sidebar-toggle",
@@ -654,9 +654,8 @@
     ];
   }
 
-  function oauthStatusRows(token = {}) {
+  function computeOauthExpiryStatus(token = {}, now = Date.now()) {
     const oauth = token.oauth || {};
-    const now = Date.now();
     const issuedAt = Number(oauth.issuedAt);
     const tokenAge = Number.isFinite(issuedAt) && issuedAt > 0
       ? Math.max(0, now - issuedAt)
@@ -668,6 +667,12 @@
     if (remaining !== null) {
       remainingText = remaining > 0 ? fmtDuration(remaining) : `หมดอายุแล้ว ${fmtDuration(-remaining)}`;
     }
+    return { tokenAge, remaining, remainingText };
+  }
+
+  function oauthStatusRows(token = {}, now = Date.now()) {
+    const oauth = token.oauth || {};
+    const { tokenAge, remainingText } = computeOauthExpiryStatus(token, now);
     return [
       ["OAuth scope", oauth.scope || "—"],
       ["Token type", oauth.tokenType || "—"],
@@ -2799,40 +2804,59 @@
     }
   }
 
-  async function startWebhookMode(mode) {
-    const btn = mode === "live" ? $("btn-start-live-only") : $("btn-start-backfill-all");
+  async function executeWebhookModeSwitch({
+    mode,
+    guildId,
+    apiFn = api,
+    confirmFn = (typeof confirm !== "undefined" ? confirm : () => false),
+    showToastFn = showToast,
+    loadWebhookStatusFn = loadWebhookStatus,
+    btn = null
+  }) {
     if (btn) btn.disabled = true;
     try {
-      const res = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/mode`, {
+      const res = await apiFn(`/api/guild/${encodeURIComponent(guildId)}/webhook-log/mode`, {
         method: "POST",
         body: JSON.stringify({ mode })
       });
-      showToast(res.message || "เริ่มทำงานเรียบร้อยแล้ว", "ok");
-      await loadWebhookStatus();
+      showToastFn(res?.message || "เริ่มทำงานเรียบร้อยแล้ว", "ok");
+      if (loadWebhookStatusFn) await loadWebhookStatusFn();
+      return { ok: true, forced: false, res };
     } catch (err) {
       const isBackfillInProgress = err.code === "backfill_in_progress" || err.status === 409 || err.data?.code === "backfill_in_progress";
       if (isBackfillInProgress) {
-        if (confirm("มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ หากสลับโหมดจะยกเลิกการส่งย้อนหลังที่เหลือ คุณแน่ใจหรือไม่ว่าต้องการเปลี่ยน?")) {
+        const confirmed = confirmFn("มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ หากสลับโหมดจะยกเลิกการส่งย้อนหลังที่เหลือ คุณแน่ใจหรือไม่ว่าต้องการเปลี่ยน?");
+        if (confirmed) {
           try {
-            const forceRes = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/mode`, {
+            const forceRes = await apiFn(`/api/guild/${encodeURIComponent(guildId)}/webhook-log/mode`, {
               method: "POST",
               body: JSON.stringify({ mode, force: true })
             });
-            showToast(forceRes.message || "สลับเป็นโหมด Live เรียบร้อยแล้ว", "ok");
-            await loadWebhookStatus();
-            return;
+            showToastFn(forceRes?.message || "สลับเป็นโหมด Live เรียบร้อยแล้ว", "ok");
+            if (loadWebhookStatusFn) await loadWebhookStatusFn();
+            return { ok: true, forced: true, res: forceRes };
           } catch (forceErr) {
-            showToast(forceErr.message || "เปลี่ยนโหมดไม่สำเร็จ", "err");
-            return;
+            showToastFn(forceErr?.message || "เปลี่ยนโหมดไม่สำเร็จ", "err");
+            return { ok: false, forced: true, error: forceErr };
           }
         } else {
-          return;
+          return { ok: false, cancelled: true };
         }
       }
-      showToast(err.message || "เกิดข้อผิดพลาดในการเริ่มทำงาน", "err");
+      showToastFn(err?.message || "เกิดข้อผิดพลาดในการเริ่มทำงาน", "err");
+      return { ok: false, error: err };
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  async function startWebhookMode(mode) {
+    const btn = mode === "live" ? $("btn-start-live-only") : $("btn-start-backfill-all");
+    return executeWebhookModeSwitch({
+      mode,
+      guildId: state.guildId,
+      btn
+    });
   }
 
   function bindWebhookControls() {
@@ -3059,9 +3083,20 @@
     bootInitialData();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  }
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      fmtDuration,
+      computeOauthExpiryStatus,
+      oauthStatusRows,
+      executeWebhookModeSwitch
+    };
   }
 })();

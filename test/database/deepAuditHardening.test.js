@@ -43,7 +43,7 @@ describe("Deep Audit Hardening Suite", () => {
 
     test("1. Migration Runner executes PRAGMA user_version after transaction commit", () => {
         const userVersion = testDb.pragma("user_version", { simple: true });
-        assert.equal(userVersion, 10, "user_version should be version 10 after migration");
+        assert.equal(userVersion, 11, "user_version should be version 11 after migration");
     });
 
     test("2. Emergency Trim invokes incremental vacuum and cleans up without errors", async () => {

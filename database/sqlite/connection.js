@@ -40,9 +40,9 @@ function openDatabase(options = {}) {
         return activeDb;
     }
 
-    let dbPath = resolveDbPath(options.path);
+    const requestedPath = resolveDbPath(options.path);
 
-    if (dbPath === ":memory:") {
+    if (requestedPath === ":memory:") {
         const db = new Database(":memory:", {
             timeout: options.timeout || 5000,
             verbose: options.verbose || null
@@ -53,43 +53,73 @@ function openDatabase(options = {}) {
         return activeDb;
     }
 
+    let dbPath = requestedPath;
     let parentDir = path.dirname(dbPath);
+
+    // Fail-fast check 1: Check if dbPath itself is already a directory
+    if (fs.existsSync(dbPath)) {
+        let stats;
+        try {
+            stats = fs.statSync(dbPath);
+        } catch (err) {
+            const error = new Error(`[SQLITE] ❌ Database path cannot be inspected: ${dbPath} (${err.message})`);
+            error.code = "SQLITE_PATH_INACCESSIBLE";
+            throw error;
+        }
+        if (stats.isDirectory()) {
+            const error = new Error(`[SQLITE] ❌ Database path is a directory, not a database file: ${dbPath}`);
+            error.code = "SQLITE_PATH_IS_DIRECTORY";
+            throw error;
+        }
+    }
+
+    // Fail-fast check 2: Check / create parent directory
     try {
         if (!fs.existsSync(parentDir)) {
             fs.mkdirSync(parentDir, { recursive: true });
         }
         fs.accessSync(parentDir, fs.constants.R_OK | fs.constants.W_OK);
-        if (fs.existsSync(dbPath)) {
-            fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (err) {
+        const allowTemp = Boolean(options.allowTempFallback || process.env.SQLITE_ALLOW_TEMP_FALLBACK === "true");
+        if (allowTemp) {
+            console.warn(`[SQLITE] ⚠️ Parent directory unwritable (${parentDir}). Explicit fallback allowed, switching to temp directory.`);
+            dbPath = path.resolve(os.tmpdir(), path.basename(dbPath));
+            parentDir = path.dirname(dbPath);
+            if (!fs.existsSync(parentDir)) {
+                fs.mkdirSync(parentDir, { recursive: true });
+            }
+            fs.accessSync(parentDir, fs.constants.R_OK | fs.constants.W_OK);
+        } else {
+            const error = new Error(`[SQLITE] ❌ Database parent directory is not readable/writable: ${parentDir} (${err.message})`);
+            error.code = "SQLITE_DIR_NOT_WRITABLE";
+            throw error;
         }
-    } catch (_) {
-        dbPath = path.resolve(os.tmpdir(), path.basename(dbPath));
-        parentDir = path.dirname(dbPath);
+    }
+
+    // Fail-fast check 3: If database file already exists, verify readability and writability
+    if (fs.existsSync(dbPath)) {
+        try {
+            fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+        } catch (err) {
+            const error = new Error(`[SQLITE] ❌ Database file exists but is not readable/writable: ${dbPath} (${err.message})`);
+            error.code = "SQLITE_FILE_NOT_WRITABLE";
+            throw error;
+        }
     }
 
     const restoreLock = isRestoreLockActive(dbPath);
     if (restoreLock.active && restoreLock.pid !== process.pid) {
-        throw new Error(`[SQLITE] ❌ Database is currently locked for maintenance/restore by PID ${restoreLock.pid}`);
-    }
-
-    // Ensure parent directory exists and is writable
-    if (!fs.existsSync(parentDir)) {
-        fs.mkdirSync(parentDir, { recursive: true });
-    }
-
-    try {
-        fs.accessSync(parentDir, fs.constants.R_OK | fs.constants.W_OK);
-        if (fs.existsSync(dbPath)) {
-            fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
-        }
-    } catch (err) {
-        throw new Error(`[SQLITE] ❌ Database target or parent directory is not readable/writable: ${parentDir} (${err.message})`);
+        const error = new Error(`[SQLITE] ❌ Database is currently locked for maintenance/restore by PID ${restoreLock.pid}`);
+        error.code = "SQLITE_RESTORE_LOCKED";
+        throw error;
     }
 
     // Atomic Process Lock: ensure no other bot process holds lock before opening
     const lockRes = acquireProcessLock(dbPath);
     if (!lockRes.acquired) {
-        throw new Error(`[SQLITE] ❌ Failed to acquire process lock: database is already locked by active process PID ${lockRes.pid} (${dbPath})`);
+        const error = new Error(`[SQLITE] ❌ Failed to acquire process lock: database is already locked by active process PID ${lockRes.pid} (${dbPath})`);
+        error.code = "SQLITE_PROCESS_LOCKED";
+        throw error;
     }
 
     const isNew = !fs.existsSync(dbPath) || fs.statSync(dbPath).size === 0;
