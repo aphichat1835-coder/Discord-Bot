@@ -25,6 +25,7 @@ const {
 const { readFiniteInteger } = require("../core/numbers");
 const { sendWebhookEvent } = require("../core/webhooks");
 const { verificationWebhookManager } = require("./services/webhook/verificationWebhookManager");
+const { recoverPendingPrivacyDeletions } = require("./services/privacyDeletion");
 
 const RETENTION_CONFIG_SCAN_MAX = readFiniteInteger(process.env.RETENTION_CONFIG_SCAN_MAX, { fallback: 1000, min: 50, max: 10000 });
 const RETENTION_ERROR_MAX = readFiniteInteger(process.env.RETENTION_ERROR_MAX, { fallback: 50, min: 5, max: 1000 });
@@ -45,6 +46,10 @@ let lastSummary = null;
 let lastOAuthRefreshAt = null;
 let lastOAuthRefreshError = null;
 let lastOAuthRefreshSummary = null;
+let privacyDeletionRecoveryInFlight = false;
+let lastPrivacyDeletionRecoveryAt = null;
+let lastPrivacyDeletionRecoveryError = null;
+let lastPrivacyDeletionRecoverySummary = null;
 let runCount = 0;
 let failCount = 0;
 let maintenanceWaiters = [];
@@ -255,6 +260,30 @@ async function processGuildRetention(config, { now, dryRun, summary }) {
     }
 }
 
+async function runPrivacyDeletionRecoverySafe(options = {}) {
+    if (privacyDeletionRecoveryInFlight) {
+        return { skipped: true, reason: "in_flight" };
+    }
+    privacyDeletionRecoveryInFlight = true;
+    try {
+        const recoveryFn = options.recoverPendingPrivacyDeletionsFn || recoverPendingPrivacyDeletions;
+        const result = await recoveryFn(options.privacyDeletionOptions || {});
+        lastPrivacyDeletionRecoveryAt = Date.now();
+        lastPrivacyDeletionRecoverySummary = {
+            recoveredCount: Array.isArray(result) ? result.length : 0,
+            jobs: Array.isArray(result) ? result : []
+        };
+        lastPrivacyDeletionRecoveryError = null;
+        return lastPrivacyDeletionRecoverySummary;
+    } catch (err) {
+        lastPrivacyDeletionRecoveryError = safeError(err);
+        console.error("[VERIFICATION] privacy deletion recovery failed:", lastPrivacyDeletionRecoveryError);
+        return { error: lastPrivacyDeletionRecoveryError };
+    } finally {
+        privacyDeletionRecoveryInFlight = false;
+    }
+}
+
 async function runVerificationMaintenance(options = {}) {
     if (maintenanceInFlight) {
         return { skipped: true, reason: "maintenance_in_flight" };
@@ -285,6 +314,7 @@ async function runVerificationMaintenance(options = {}) {
         }
 
         if (!dryRun) {
+            summary.privacyDeletionRecovery = await runPrivacyDeletionRecoverySafe(options);
             try {
                 lastOAuthRefreshSummary = await oauthTokenManager.refreshDueTokens();
                 lastOAuthRefreshAt = Date.now();
@@ -351,6 +381,7 @@ async function startVerificationRuntime(options = {}) {
                 console.error("[VERIFICATION] webhook startup recovery failed:", recoveryErr);
             }
         }
+        await runPrivacyDeletionRecoverySafe(options);
         if (typeof tokenManager.start === "function") {
             try {
                 await tokenManager.start();
@@ -417,6 +448,11 @@ function getVerificationDiagnostics() {
         failCount,
         lastError,
         lastSummary,
+        privacyDeletionRecovery: {
+            lastRunAt: lastPrivacyDeletionRecoveryAt,
+            lastError: lastPrivacyDeletionRecoveryError,
+            lastSummary: lastPrivacyDeletionRecoverySummary
+        },
         retentionCursor: retentionCursor ? String(retentionCursor) : null,
         snapshotCleanup: {
             config: getSnapshotCleanupConfig(),
@@ -449,6 +485,7 @@ module.exports = {
     startVerificationRuntime,
     stopVerificationRuntime,
     runVerificationMaintenance,
+    runPrivacyDeletionRecoverySafe,
     getVerificationDiagnostics,
     waitForMaintenanceIdle,
     retentionDays,

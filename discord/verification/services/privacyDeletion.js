@@ -781,70 +781,311 @@ async function runMemberPrivacyDeletion({
 async function recoverPendingPrivacyDeletions({
     models = DEFAULT_MODELS,
     now = Date.now(),
-    staleJobMs = DEFAULT_PRIVACY_DELETION_STALE_MS
+    staleJobMs = DEFAULT_PRIVACY_DELETION_STALE_MS,
+    mongooseInstance = mongoose
 } = {}) {
     const { PrivacyDeletionJob: PrivacyDeletionJobModel } = models;
-    let pendingJobs = [];
+    if (!PrivacyDeletionJobModel || typeof PrivacyDeletionJobModel.find !== "function") {
+        return [];
+    }
+
+    if (PrivacyDeletionJobModel.db && typeof PrivacyDeletionJobModel.db.readyState === "number" && PrivacyDeletionJobModel.db.readyState !== 1) {
+        return [];
+    }
+
+    const safeStaleJobMs = Number.isFinite(Number(staleJobMs)) && Number(staleJobMs) >= 0
+        ? Number(staleJobMs)
+        : DEFAULT_PRIVACY_DELETION_STALE_MS;
+
+    let candidateJobs = [];
     try {
         const query = PrivacyDeletionJobModel.find({
-            status: { $in: ["running", "failed"] }
+            status: { $in: ["pending", "running", "failed"] }
         });
-        pendingJobs = await (typeof query.lean === "function" ? query.lean() : query);
+        candidateJobs = await (typeof query.lean === "function" ? query.lean() : query);
     } catch (_) {
         return [];
     }
 
+    if (!Array.isArray(candidateJobs) || candidateJobs.length === 0) {
+        return [];
+    }
+
     const recovered = [];
-    for (const job of pendingJobs) {
-        const manifest = job.manifest && typeof job.manifest === "object" ? job.manifest : {};
-        const phases = manifest.phases || {};
-        // If MongoDB phase succeeded but SQLite did not:
-        if (phases.mongo === "completed" && phases.sqlite !== "completed") {
-            const safeGuildId = String(job.guildId);
-            const safeUserId = String(job.userId);
-            const hash = job.subjectHash || subjectHash(safeGuildId, safeUserId);
+    for (const job of candidateJobs) {
+        const safeGuildId = String(job.guildId || "");
+        const safeUserId = String(job.userId || "");
+        if (!safeGuildId || !safeUserId || safeUserId.startsWith("deleted:")) {
+            continue;
+        }
+
+        const status = String(job.status || "");
+        let manifest = job.manifest && typeof job.manifest === "object"
+            ? structuredClone(job.manifest)
+            : createManifest();
+        manifest.phases = manifest.phases || {};
+        manifest.counts = manifest.counts || {};
+        const phases = manifest.phases;
+
+        // Eligibility Evaluation:
+        // 1. Failed jobs: ONLY eligible if Mongo completed but SQLite did not complete
+        // 2. Pending or running jobs: eligible IF stale (older than staleJobMs or abandoned)
+        let isEligible = false;
+        if (status === "failed") {
+            if (phases.mongo === "completed" && phases.sqlite !== "completed") {
+                isEligible = true;
+            }
+        } else if (status === "pending" || status === "running" || !status) {
+            const updatedAt = Number(job.updatedAt || job.createdAt || 0);
+            const isStale = !Number.isFinite(updatedAt) || updatedAt <= 0 || (now - updatedAt) >= safeStaleJobMs;
+            if (isStale) {
+                isEligible = true;
+            }
+        }
+
+        if (!isEligible) {
+            continue;
+        }
+
+        const opKey = job.operationKey || deletionOperationKey(safeGuildId, safeUserId);
+        const claimTime = Date.now();
+
+        // Atomic Concurrency Claim:
+        // Optimistic locking using status + updatedAt. If activeKey was unset (e.g. from a failed job),
+        // we claim activeKey to prevent any new job for this guild+user from starting concurrently.
+        const claimFilter = { jobId: job.jobId };
+        if (job.status !== undefined) claimFilter.status = job.status;
+        if (job.updatedAt !== undefined) claimFilter.updatedAt = job.updatedAt;
+
+        const claimUpdate = {
+            $set: {
+                status: "running",
+                updatedAt: claimTime
+            }
+        };
+        if (opKey && !job.activeKey) {
+            claimUpdate.$set.activeKey = opKey;
+        }
+
+        try {
+            const claimResult = await PrivacyDeletionJobModel.updateOne(claimFilter, claimUpdate);
+            if (resultCount(claimResult) === 0) {
+                // Claim failed due to concurrent modification or another worker claiming it
+                continue;
+            }
+        } catch (err) {
+            if (isMongoDuplicateKey(err)) {
+                // Another active job already holds activeKey for this guild+user
+                continue;
+            }
+            console.error(`[PRIVACY_DELETION_RECOVERY] Failed to claim job ${job.jobId}:`, err);
+            continue;
+        }
+
+        const hash = job.subjectHash || subjectHash(safeGuildId, safeUserId);
+        let memberVersions = [];
+
+        // Phase A: Complete MongoDB deletion if not already completed
+        if (manifest.phases.mongo !== "completed") {
+            let dbSession = null;
+            let mongoError = null;
+            try {
+                if (mongooseInstance && typeof mongooseInstance.startSession === "function") {
+                    try {
+                        dbSession = await mongooseInstance.startSession();
+                    } catch (_) {
+                        dbSession = null;
+                    }
+                }
+
+                if (dbSession) {
+                    try {
+                        await dbSession.withTransaction(async () => {
+                            const txResult = await executePrivacyDeletionTransaction({
+                                models,
+                                safeGuildId,
+                                safeUserId,
+                                safeRequestedBy: job.requestedBy || "recovery-worker",
+                                hash,
+                                jobId: job.jobId,
+                                operationKey: opKey,
+                                now: claimTime,
+                                manifest,
+                                dbSession
+                            });
+                            if (Array.isArray(txResult?.memberVersions)) {
+                                memberVersions = txResult.memberVersions;
+                            }
+                        });
+                    } catch (txError) {
+                        if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
+                            dbSession = null;
+                            const txResult = await executePrivacyDeletionTransaction({
+                                models,
+                                safeGuildId,
+                                safeUserId,
+                                safeRequestedBy: job.requestedBy || "recovery-worker",
+                                hash,
+                                jobId: job.jobId,
+                                operationKey: opKey,
+                                now: claimTime,
+                                manifest,
+                                dbSession: null
+                            });
+                            if (Array.isArray(txResult?.memberVersions)) {
+                                memberVersions = txResult.memberVersions;
+                            }
+                        } else {
+                            throw txError;
+                        }
+                    }
+                } else {
+                    const txResult = await executePrivacyDeletionTransaction({
+                        models,
+                        safeGuildId,
+                        safeUserId,
+                        safeRequestedBy: job.requestedBy || "recovery-worker",
+                        hash,
+                        jobId: job.jobId,
+                        operationKey: opKey,
+                        now: claimTime,
+                        manifest,
+                        dbSession: null
+                    });
+                    if (Array.isArray(txResult?.memberVersions)) {
+                        memberVersions = txResult.memberVersions;
+                    }
+                }
+            } catch (err) {
+                mongoError = err;
+            } finally {
+                if (dbSession) {
+                    try { await dbSession.endSession(); } catch (_) {}
+                }
+            }
+
+            if (mongoError) {
+                manifest.phases.mongo = "failed";
+                const errCode = mongoError.code || mongoError.name || "PRIVACY_DELETION_FAILED";
+                await PrivacyDeletionJobModel.updateOne(
+                    { jobId: job.jobId },
+                    {
+                        $set: {
+                            status: "failed",
+                            errorCode: errCode,
+                            manifest,
+                            updatedAt: Date.now()
+                        },
+                        $unset: { activeKey: "" }
+                    }
+                ).catch(() => {});
+                recovered.push({ jobId: job.jobId, status: "failed", errorCode: errCode });
+                continue;
+            }
+        }
+
+        // Phase B: Execute SQLite Deletion outside Mongo transaction
+        if (manifest.phases.sqlite !== "completed") {
             try {
                 const recoveryResult = await models.VerificationRecovery.deleteMany({
                     guildId: safeGuildId,
                     userId: safeUserId
                 });
-                manifest.counts = manifest.counts || {};
                 manifest.counts.verificationRecovery = resultCount(recoveryResult);
-                manifest.phases = manifest.phases || {};
                 manifest.phases.sqlite = "completed";
-
-                const verification = await verifyNoRemainingReferences({
-                    models,
-                    guildId: safeGuildId,
-                    userId: safeUserId,
-                    memberVersions: [],
-                    session: null
-                });
-                manifest.verification = verification;
-                manifest.deletedCount = totalDeletionCount(manifest.counts);
-
-                if (verification.remainingReferences === 0) {
-                    await PrivacyDeletionJobModel.updateOne(
-                        { jobId: job.jobId },
-                        {
-                            $set: {
-                                userId: deletedSubjectId(hash),
-                                subjectHash: hash,
-                                status: "completed",
-                                manifest,
-                                completedAt: now,
-                                updatedAt: now
-                            },
-                            $unset: { activeKey: "" }
-                        }
-                    );
-                    recovered.push({ jobId: job.jobId, status: "completed" });
-                }
-            } catch (err) {
-                console.error(`[PRIVACY_DELETION_RECOVERY] Failed to recover job ${job.jobId}:`, err);
+            } catch (sqliteErr) {
+                manifest.phases.sqlite = "failed";
+                const errCode = "PRIVACY_DELETION_SQLITE_FAILED";
+                await PrivacyDeletionJobModel.updateOne(
+                    { jobId: job.jobId },
+                    {
+                        $set: {
+                            status: "failed",
+                            errorCode: errCode,
+                            manifest,
+                            updatedAt: Date.now()
+                        },
+                        $unset: { activeKey: "" }
+                    }
+                ).catch(() => {});
+                recovered.push({ jobId: job.jobId, status: "failed", errorCode: errCode });
+                continue;
             }
         }
+
+        // Phase C: Verification across all storages - fail closed if references remain
+        let verification;
+        try {
+            verification = await verifyNoRemainingReferences({
+                models,
+                guildId: safeGuildId,
+                userId: safeUserId,
+                memberVersions,
+                session: null
+            });
+        } catch (vErr) {
+            const errCode = vErr.code || vErr.name || "PRIVACY_DELETION_VERIFICATION_FAILED";
+            await PrivacyDeletionJobModel.updateOne(
+                { jobId: job.jobId },
+                {
+                    $set: {
+                        status: "failed",
+                        errorCode: errCode,
+                        manifest,
+                        updatedAt: Date.now()
+                    },
+                    $unset: { activeKey: "" }
+                }
+            ).catch(() => {});
+            recovered.push({ jobId: job.jobId, status: "failed", errorCode: errCode });
+            continue;
+        }
+
+        manifest.verification = verification;
+        manifest.deletedCount = totalDeletionCount(manifest.counts);
+
+        if (verification.remainingReferences !== 0) {
+            const errCode = "PRIVACY_DELETION_INCOMPLETE";
+            await PrivacyDeletionJobModel.updateOne(
+                { jobId: job.jobId },
+                {
+                    $set: {
+                        status: "failed",
+                        errorCode: errCode,
+                        manifest,
+                        updatedAt: Date.now()
+                    },
+                    $unset: { activeKey: "" }
+                }
+            ).catch(() => {});
+            recovered.push({
+                jobId: job.jobId,
+                status: "failed",
+                errorCode: errCode,
+                remainingReferences: verification.remainingReferences
+            });
+            continue;
+        }
+
+        // Phase D: Atomically mark completed
+        const completedNow = Date.now();
+        await PrivacyDeletionJobModel.updateOne(
+            { jobId: job.jobId },
+            {
+                $set: {
+                    userId: deletedSubjectId(hash),
+                    subjectHash: hash,
+                    status: "completed",
+                    manifest,
+                    completedAt: completedNow,
+                    updatedAt: completedNow
+                },
+                $unset: { activeKey: "" }
+            }
+        );
+        recovered.push({ jobId: job.jobId, status: "completed" });
     }
+
     return recovered;
 }
 

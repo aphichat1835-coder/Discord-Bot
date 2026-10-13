@@ -2,10 +2,31 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+const { openDatabase, closeDatabase } = require("../../database/sqlite/connection");
+const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
 const { buildDatabaseCenterPage } = require("../index/databaseCenterPage");
 const { registerDatabaseRoutes } = require("../index/databaseRoutes");
 
 test("Database Center Views & Routes Suite", async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "db-center-test-"));
+    const testDbPath = path.join(tempDir, "test.sqlite");
+    const prevDbPath = process.env.SQLITE_DB_PATH;
+    process.env.SQLITE_DB_PATH = testDbPath;
+
+    const db = openDatabase({ path: testDbPath });
+    runMigrations(db, { migrationsDir: path.resolve(__dirname, "../../database/sqlite/migrations") });
+
+    t.after(() => {
+        closeDatabase();
+        if (prevDbPath) process.env.SQLITE_DB_PATH = prevDbPath;
+        else delete process.env.SQLITE_DB_PATH;
+        try {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch (_) {}
+    });
     await t.test("buildDatabaseCenterPage renders complete SPA markup", () => {
         const html = buildDatabaseCenterPage();
         assert.match(html, /🗄️ ศูนย์จัดการฐานข้อมูล \(Database Center\)/);
