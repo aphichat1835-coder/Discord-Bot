@@ -374,6 +374,31 @@ test('command and button guards prevent non-owner execution', async () => { // N
     assert.equal(ownerReplyPayload.files.length, 1);
 });
 
+test('handleDmPanelCommand defers reply and transitions via editReply to prevent timeouts', async () => {
+    const ownerId = config.system?.ownerId || '661415152146710558';
+    let deferred = false;
+    let editReplyPayload = null;
+
+    const ownerInteraction = {
+        user: { id: ownerId },
+        deferred: false,
+        replied: false,
+        deferReply: async () => {
+            deferred = true;
+            ownerInteraction.deferred = true;
+        },
+        editReply: async (p) => {
+            editReplyPayload = p;
+            return p;
+        }
+    };
+
+    await handleDmPanelCommand(ownerInteraction);
+    assert.equal(deferred, true);
+    assert.ok(editReplyPayload);
+    assert.ok(editReplyPayload.files && editReplyPayload.files.length > 0);
+});
+
 test('handleDmPanelModal validates empty message and invalid image URL for owner', async () => { // NOSONAR
     const ownerId = config.system?.ownerId || '661415152146710558';
     let editReplyPayload = null;

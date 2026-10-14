@@ -11,7 +11,7 @@ const {
 const config = require('../config.json');
 const { IDS } = require('./customIds');
 const { isConfiguredOwner } = require('../core/env');
-const { safeReply } = require('../guards/commandGuards');
+const { safeReply, safeDefer } = require('../guards/commandGuards');
 
 const DM_PANEL_BANNER_ATTACHMENT_NAME = 'dm-panel-banner.gif';
 
@@ -151,6 +151,8 @@ async function handleDmPanelCommand(interaction) {
         });
     }
 
+    await safeDefer(interaction);
+
     const bannerPath = getDmPanelBannerPath();
     const hasAttachment = Boolean(bannerPath);
     const embed = buildDmPanelEmbed({ hasAttachment });
@@ -165,7 +167,7 @@ async function handleDmPanelCommand(interaction) {
         payload.files = [new AttachmentBuilder(bannerPath, { name: DM_PANEL_BANNER_ATTACHMENT_NAME })];
     }
 
-    return interaction.reply(payload);
+    return safeReply(interaction, payload);
 }
 
 async function handleDmPanelButton(interaction) {

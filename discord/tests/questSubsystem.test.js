@@ -295,6 +295,35 @@ test('handleQuestCommand renders AUTO DAILY button when auto_daily option is tru
     assert.equal(buttons[2].data.custom_id, 'quest_panel:stop');
 });
 
+test('handleQuestCommand defers reply and transitions via editReply to prevent timeouts', async () => {
+    const ownerId = process.env.OWNER_ID || require('../config.json').system?.ownerId || '661415152146710558';
+    let deferred = false;
+    let editReplyPayload = null;
+
+    const ownerInteraction = {
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: () => null
+        },
+        deferred: false,
+        replied: false,
+        deferReply: async () => {
+            deferred = true;
+            ownerInteraction.deferred = true;
+        },
+        editReply: async (p) => {
+            editReplyPayload = p;
+            return p;
+        }
+    };
+
+    await handleQuestCommand(ownerInteraction);
+    assert.equal(deferred, true);
+    assert.ok(editReplyPayload);
+    assert.ok(editReplyPayload.files && editReplyPayload.files.length > 0);
+});
+
 test('buildQuestPanelRow respects showDaily option', () => {
     const defaultRow = buildQuestPanelRow();
     assert.equal(defaultRow.components.length, 2);

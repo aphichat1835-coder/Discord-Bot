@@ -12,7 +12,7 @@ const {
 const config = require('../config.json');
 const { IDS } = require('./customIds');
 const { isConfiguredOwner } = require('../core/env');
-const { safeReply } = require('../guards/commandGuards');
+const { safeReply, safeDefer } = require('../guards/commandGuards');
 const {
     getUserJobs,
     stopJob,
@@ -192,6 +192,7 @@ async function handleQuestCommand(interaction) {
                 flags: 64
             });
         }
+        await safeDefer(interaction);
         const showDaily = interaction.options?.getBoolean?.('auto_daily') === true;
         const bannerPath = getQuestBannerPath();
         const hasAttachment = Boolean(bannerPath);
@@ -201,7 +202,7 @@ async function handleQuestCommand(interaction) {
         if (hasAttachment) {
             payload.files = [new AttachmentBuilder(bannerPath, { name: QUEST_BANNER_ATTACHMENT_NAME })];
         }
-        return interaction.reply(payload);
+        return safeReply(interaction, payload);
     }
 
     return safeReply(interaction, {
