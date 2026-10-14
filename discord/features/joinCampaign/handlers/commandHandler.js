@@ -113,7 +113,8 @@ async function handleJoinPanelCommand(interaction, client) {
         readyCount,
         liveJob: null,
         sourceGuildName,
-        targetGuildName
+        targetGuildName,
+        includeFiles: true
     });
 
     // 6. Send Panel to Channel

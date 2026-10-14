@@ -1,12 +1,17 @@
 "use strict";
 
+const path = require("path");
+const fs = require("fs");
 const {
     EmbedBuilder,
     ActionRowBuilder,
     StringSelectMenuBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    AttachmentBuilder
 } = require("discord.js");
+const config = require("../../../config.json");
+const { getPrimaryOwnerId } = require("../../../core/env");
 const emoji = require("./emojis");
 const { listModes } = require("../modes/modeRegistry");
 
@@ -16,22 +21,53 @@ const IDS = Object.freeze({
     BTN_RUNNING: "join_camp_btn_running"
 });
 
+const JOIN_PANEL_BANNER_ATTACHMENT_NAME = "join-panel-banner.gif";
+
+function getJoinPanelBannerPath() {
+    try {
+        const resolved = path.resolve(__dirname, "../../../assets/join-panel-banner.gif");
+        if (fs.existsSync(resolved)) {
+            return resolved;
+        }
+        return require.resolve("../../../assets/join-panel-banner.gif");
+    } catch {
+        return null;
+    }
+}
+
 function buildPanelPayload({
     mode,
     panelState = {},
     readyCount = null,
     liveJob = null,
     sourceGuildName = null,
-    targetGuildName = null
+    targetGuildName = null,
+    includeFiles = false
 }) {
     const isRunning = Boolean(liveJob && liveJob.status === "RUNNING");
+    const primaryOwnerId = getPrimaryOwnerId(process.env, config) || config.system?.ownerId || "661415152146710558";
+    const bannerPath = getJoinPanelBannerPath();
+    const hasAttachment = Boolean(bannerPath);
 
     // 1. Embed Build
     const embed = new EmbedBuilder()
-        .setTitle(`${emoji.boost} จัดการดึงสมาชิกเข้าเซิร์ฟเวอร์`)
-        .setDescription("ช่วยนำสมาชิกที่ยืนยันตัวตนเข้าสู่เซิร์ฟเวอร์เป้าหมายอย่างปลอดภัย สามารถเลือกรูปแบบและตั้งค่าเซิร์ฟเวอร์ได้จากเมนูด้านล่าง")
+        .setTitle(`${emoji.universe || emoji.sparkle} : Phomueangtai จัดการดึงสมาชิกเข้าเซิร์ฟเวอร์`)
+        .setDescription(
+            `ระบบจัดการดึงสมาชิกเข้าเซิร์ฟเวอร์ ${emoji.dreamworld}\n\n` +
+            `นำสมาชิกที่ยืนยันตัวตนเข้าสู่เซิร์ฟเวอร์อย่างปลอดภัย ${emoji.dreamworld}\n\n` +
+            `เลือกรูปแบบและตั้งค่าควบคุมผ่านปุ่มข้างล่าง ${emoji.dreamworld}\n\n` +
+            `*Developed by <@${primaryOwnerId}>*`
+        )
         .setColor(isRunning ? 0xFEE75C : 0x57F287)
         .setTimestamp();
+
+    if (hasAttachment) {
+        embed.setImage(`attachment://${JOIN_PANEL_BANNER_ATTACHMENT_NAME}`);
+    } else if (config.system?.joinCampaignBannerUrl) {
+        embed.setImage(config.system.joinCampaignBannerUrl);
+    } else if (config.system?.bannerUrl) {
+        embed.setImage(config.system.bannerUrl);
+    }
 
     // Add fields specific to the mode
     const modeFields = mode.formatPanelFields({
@@ -101,13 +137,21 @@ function buildPanelPayload({
         actionRow.addComponents(btnStart);
     }
 
-    return {
+    const payload = {
         embeds: [embed],
         components: [selectRow, actionRow]
     };
+
+    if (includeFiles && hasAttachment) {
+        payload.files = [new AttachmentBuilder(bannerPath, { name: JOIN_PANEL_BANNER_ATTACHMENT_NAME })];
+    }
+
+    return payload;
 }
 
 module.exports = {
     IDS,
+    JOIN_PANEL_BANNER_ATTACHMENT_NAME,
+    getJoinPanelBannerPath,
     buildPanelPayload
 };

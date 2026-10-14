@@ -15,6 +15,8 @@ module.exports = {
     online: emojis.status_online || "🟢",
     offline: emojis.status_offline || "🔴",
     sparkle: emojis.universe || "✨",
+    universe: emojis.universe || "✨",
+    dreamworld: emojis.dreamworld || "🌌",
     key: emojis.key || "🔑",
     shield: emojis.shield || "🛡️",
     no_entry: emojis.no_entry || "⛔",

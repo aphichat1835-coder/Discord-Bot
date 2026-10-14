@@ -111,6 +111,19 @@ test("Join Campaign: Panel builder constructs embed and rows reflecting state", 
     const runningButtonRow = payloadRunning.components[1];
     assert.equal(runningButtonRow.components[0].data.disabled, true);
     assert.match(payloadRunning.embeds[0].data.fields.find(f => f.name.includes("สถานะ")).value, /กำลังดึงสมาชิก/);
+
+    // Standard branding & banner attachment verification
+    assert.match(payloadIdle.embeds[0].data.title, /Phomueangtai จัดการดึงสมาชิกเข้าเซิร์ฟเวอร์/);
+    assert.match(payloadIdle.embeds[0].data.description, /Developed by/);
+    assert.equal(payloadIdle.embeds[0].data.image?.url, "attachment://join-panel-banner.gif");
+
+    const payloadWithFiles = buildPanelPayload({
+        mode: allMode,
+        panelState: { mode: "ALL_TO_TARGET", targetGuildId: "123456789012345678" },
+        includeFiles: true
+    });
+    assert.ok(payloadWithFiles.files?.length === 1);
+    assert.equal(payloadWithFiles.files[0].name, "join-panel-banner.gif");
 });
 
 test("Join Campaign: Confirmation builder formats ephemeral confirmation with single confirm button", () => {
