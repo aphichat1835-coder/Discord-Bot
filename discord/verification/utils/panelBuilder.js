@@ -5,20 +5,32 @@
 ================================================================================
 */
 
+const fs = require("fs");
+const path = require("path");
 const config = require("../../config.json");
 const { normalizeVerifyMode } = require("./verifyMode");
 
+const VERIFY_PANEL_BANNER_ATTACHMENT_NAME = "verification-panel-banner.webp";
+
+function getVerifyPanelBannerPath() {
+  try {
+    return path.resolve(__dirname, "../../assets/verification-panel-banner.webp");
+  } catch {
+    return null;
+  }
+}
+
 const DEFAULT_PANEL = Object.freeze({
   content: "",
-  title: `${config.emojis?.lock || "🔐"} ยืนยันตัวตนเพื่อเข้าดิส`,
-  description: "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2",
+  title: "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
+  description: "",
   color: "#5865F2",
-  imageUrl: "",
+  imageUrl: `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`,
   thumbnailUrl: "",
   footerText: "",
   titleUrl: "",
-  buttonText: "✅ ยืนยันตัวตน ✅",
-  buttonLabel: "✅ ยืนยันตัวตน ✅",
+  buttonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
+  buttonLabel: "<a:ddd_pmt:1553844572873040044> vfy (user)",
   verifyType: "oauth",
   showTimestamp: false
 });
@@ -31,6 +43,10 @@ function sanitizeUrl(value) {
   const raw = String(value || "").trim();
 
   if (!raw) return "";
+
+  if (raw.startsWith("attachment://")) {
+    return raw;
+  }
 
   try {
     const u = new URL(raw);
@@ -75,10 +91,11 @@ function normalizePanelInput(panel = {}) {
 
   next.content = sanitizeText(next.content, 2000);
   next.title = sanitizeText(next.title, 256) || DEFAULT_PANEL.title;
-  next.description = sanitizeText(next.description, 4000) || DEFAULT_PANEL.description;
-  next.color = sanitizeText(next.color, 16) || DEFAULT_PANEL.color;
-
-  next.imageUrl = sanitizeUrl(next.imageUrl || next.image || next.gifUrl);
+  next.description = sanitizeText(next.description, 4000);
+  const explicitImage = panel.imageUrl ?? panel.image ?? panel.gifUrl;
+  next.imageUrl = explicitImage !== undefined
+    ? sanitizeUrl(explicitImage)
+    : sanitizeUrl(DEFAULT_PANEL.imageUrl);
   next.thumbnailUrl = sanitizeUrl(next.thumbnailUrl || next.thumbnail);
   next.titleUrl = sanitizeUrl(next.titleUrl || next.url);
 
@@ -148,9 +165,12 @@ function buildButtonUrl({ panel, oauthUrl, directCustomId }) {
 function buildEmbed(panel) {
   const embed = {
     title: panel.title,
-    description: panel.description,
     color: parseEmbedColor(panel.color)
   };
+
+  if (panel.description) {
+    embed.description = panel.description;
+  }
 
   const cleanTitleUrl = sanitizeUrl(panel.titleUrl);
   if (cleanTitleUrl) {
@@ -205,12 +225,21 @@ function buildPanelPayload({
     }
   ];
 
-  return {
+  const payload = {
     content: cleanPanel.content || "",
     embeds: [buildEmbed(cleanPanel)],
     components,
     allowed_mentions: allowedMentions
   };
+
+  if (cleanPanel.imageUrl === `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`) {
+    const bannerPath = getVerifyPanelBannerPath();
+    if (bannerPath && fs.existsSync(bannerPath)) {
+      payload.files = [{ path: bannerPath, name: VERIFY_PANEL_BANNER_ATTACHMENT_NAME }];
+    }
+  }
+
+  return payload;
 }
 
 function buildValidationSummary({ ok, checks = [], warnings = [], errors = [] }) {
@@ -224,6 +253,8 @@ function buildValidationSummary({ ok, checks = [], warnings = [], errors = [] })
 
 module.exports = {
   DEFAULT_PANEL,
+  VERIFY_PANEL_BANNER_ATTACHMENT_NAME,
+  getVerifyPanelBannerPath,
   sanitizeText,
   sanitizeUrl,
   parseEmbedColor,

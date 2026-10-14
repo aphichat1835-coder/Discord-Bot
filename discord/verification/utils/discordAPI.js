@@ -13,6 +13,8 @@
 ================================================================================
 */
 
+const fs = require("fs");
+const crypto = require("crypto");
 const https = require("https");
 const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed } = require("../../core/discordCompat");
@@ -1230,6 +1232,34 @@ async function fetchChannelMessage(channelId, messageId) {
     };
 }
 
+function buildMultipartFormData({ payloadJson, files = [] }) {
+    const boundary = "----WebKitFormBoundary" + crypto.randomBytes(16).toString("hex");
+    const parts = [];
+
+    parts.push(Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\nContent-Type: application/json\r\n\r\n${payloadJson}\r\n`
+    ));
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const filePath = file.path || file.attachment;
+        if (filePath && fs.existsSync(filePath)) {
+            const fileData = fs.readFileSync(filePath);
+            const fileName = file.name || `file_${i}`;
+            parts.push(Buffer.from(
+                `--${boundary}\r\nContent-Disposition: form-data; name="files[${i}]"; filename="${fileName}"\r\nContent-Type: image/webp\r\n\r\n`
+            ));
+            parts.push(fileData);
+            parts.push(Buffer.from("\r\n"));
+        }
+    }
+
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    const body = Buffer.concat(parts);
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+    return { body, contentType };
+}
+
 async function createChannelMessage(channelId, payload) {
     const cid = snowflake(channelId);
 
@@ -1241,12 +1271,28 @@ async function createChannelMessage(channelId, payload) {
         };
     }
 
+    let requestBody;
+    let contentType = "application/json";
+
+    if (payload?.files && Array.isArray(payload.files) && payload.files.length > 0) {
+        const payloadJson = { ...payload };
+        delete payloadJson.files;
+        const multipart = buildMultipartFormData({
+            payloadJson: JSON.stringify(payloadJson),
+            files: payload.files
+        });
+        requestBody = multipart.body;
+        contentType = multipart.contentType;
+    } else {
+        requestBody = JSON.stringify(payload);
+    }
+
     const res = await fetchWithRetry(`/channels/${cid}/messages`, {
         method: "POST",
         headers: botHeaders({
-            "Content-Type": "application/json"
+            "Content-Type": contentType
         }),
-        body: JSON.stringify(payload)
+        body: requestBody
     });
 
     if (!res.ok) {
@@ -1278,12 +1324,28 @@ async function editChannelMessage(channelId, messageId, payload) {
         };
     }
 
+    let requestBody;
+    let contentType = "application/json";
+
+    if (payload?.files && Array.isArray(payload.files) && payload.files.length > 0) {
+        const payloadJson = { ...payload };
+        delete payloadJson.files;
+        const multipart = buildMultipartFormData({
+            payloadJson: JSON.stringify(payloadJson),
+            files: payload.files
+        });
+        requestBody = multipart.body;
+        contentType = multipart.contentType;
+    } else {
+        requestBody = JSON.stringify(payload);
+    }
+
     const res = await fetchWithRetry(`/channels/${cid}/messages/${mid}`, {
         method: "PATCH",
         headers: botHeaders({
-            "Content-Type": "application/json"
+            "Content-Type": contentType
         }),
-        body: JSON.stringify(payload)
+        body: requestBody
     });
 
     if (!res.ok) {

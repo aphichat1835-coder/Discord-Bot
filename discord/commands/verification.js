@@ -19,7 +19,9 @@
 
 const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
-const { MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
+const fs = require("node:fs");
+const path = require("node:path");
+const { AttachmentBuilder, MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../sessionManager");
@@ -41,16 +43,25 @@ const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 409
 const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 
+const VERIFY_PANEL_BANNER_ATTACHMENT_NAME = "verification-panel-banner.webp";
+
+function getVerifyPanelBannerPath() {
+    try {
+        return path.resolve(__dirname, "../assets/verification-panel-banner.webp");
+    } catch {
+        return null;
+    }
+}
+
 const DEFAULT_PANEL = {
     content: "",
-    title: "🔐 ยืนยันตัวตนเพื่อเข้าดิส",
-    description:
-        "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2\n" +
-        "ระบบจะตรวจสอบบัญชีและเพิ่มยศให้โดยอัตโนมัติเมื่อผ่านเงื่อนไข",
+    title: "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
+    description: "",
     color: "#5865F2",
     footer: "",
-    oauthButtonText: "✅ ยืนยันตัวตนเข้าดิส",
-    directButtonText: "🎭 รับยศ"
+    oauthButtonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
+    directButtonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
+    imageUrl: `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`
 };
 
 function cleanText(value, fallback = "") {
@@ -568,22 +579,22 @@ function parseVerificationButtonParts(interaction, role, verifyType) {
 
     const fallbackButtonText = verifyType
         ? DEFAULT_PANEL.oauthButtonText
-        : `${DEFAULT_PANEL.directButtonText} ${role.name}`;
+        : DEFAULT_PANEL.directButtonText;
 
     if (newButtonText) {
         return extractButtonTextParts(newButtonText, fallbackButtonText, interaction.client);
     }
     const label = cleanText(
         oldButtonLabel,
-        verifyType ? "ยืนยันตัวตนเข้าดิส" : `รับยศ ${role.name}`
+        "vfy (user)"
     );
     const emojiInput = cleanText(
         oldButtonEmoji,
-        verifyType ? "✅" : "🎭"
+        "<a:ddd_pmt:1553844572873040044>"
     );
     const resolved = resolveButtonEmoji(
         emojiInput,
-        verifyType ? "✅" : "🎭",
+        "<a:ddd_pmt:1553844572873040044>",
         interaction.client
     );
     return {
@@ -604,10 +615,15 @@ function parseVerificationPanelOptions(interaction, role, verifyType) {
 
     validatePanelText(content, "content", PANEL_LIMITS.content);
     validatePanelText(title, "title", PANEL_LIMITS.title);
-    validatePanelText(description, "description", PANEL_LIMITS.description);
-    validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
+    if (description) {
+        validatePanelText(description, "description", PANEL_LIMITS.description);
+    }
+    if (footerText) {
+        validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
+    }
 
-    const imageUrl = cleanHttpsUrl(interaction.options.getString("image"), "image");
+    const rawImage = interaction.options.getString("image");
+    const imageUrl = rawImage ? cleanHttpsUrl(rawImage, "image") : (DEFAULT_PANEL.imageUrl || null);
     const thumbUrl = cleanHttpsUrl(interaction.options.getString("thumbnail"), "thumbnail");
     const titleUrl = cleanHttpsUrl(interaction.options.getString("url"), "url");
     const buttonParts = parseVerificationButtonParts(interaction, role, verifyType);
@@ -629,8 +645,11 @@ function parseVerificationPanelOptions(interaction, role, verifyType) {
 function buildVerificationPanelComponents({ interaction, verifyType, role, panelRevision, panelOptions }) {
     const embed = new MessageEmbed()
         .setColor(panelOptions.colorHex)
-        .setTitle(panelOptions.title)
-        .setDescription(panelOptions.description);
+        .setTitle(panelOptions.title);
+
+    if (panelOptions.description) {
+        embed.setDescription(panelOptions.description);
+    }
 
     if (panelOptions.titleUrl) embed.setURL(panelOptions.titleUrl);
     if (panelOptions.imageUrl) embed.setImage(panelOptions.imageUrl);
@@ -699,10 +718,16 @@ async function sendAndPersistVerificationPanel({
         .where("guildId")
         .equals(guildId)
         .lean();
+    const bannerPath = getVerifyPanelBannerPath();
+    const isAttachmentImage = panelOptions.imageUrl === `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`;
     const panelPayload = {
         embeds: [panelComponents.embed],
         components: [panelComponents.row]
     };
+
+    if (isAttachmentImage && bannerPath && fs.existsSync(bannerPath)) {
+        panelPayload.files = [new AttachmentBuilder(bannerPath, { name: VERIFY_PANEL_BANNER_ATTACHMENT_NAME })];
+    }
 
     if (panelOptions.content) {
         panelPayload.content = panelOptions.content;

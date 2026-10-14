@@ -40,6 +40,7 @@ describe("verification panel DB/Discord consistency", () => {
             title: "ยืนยัน",
             description: "กดปุ่ม",
             color: "#5865F2",
+            imageUrl: "",
             buttonText: "ยืนยันตอนนี้",
             verifyType: "oauth"
         });

@@ -112,14 +112,14 @@ ${navBar("/verification")}
       <article class="verify-panel">
         <div class="section-title"><div><h2>เนื้อหาแผง Discord</h2><p>กำหนดข้อความ Embed รูปและปุ่ม</p></div><span class="badge badge-info">Live preview</span></div>
         <label for="p-content">ข้อความเหนือ Embed</label><textarea id="p-content" placeholder="ปล่อยว่างได้"></textarea>
-        <label for="p-title">หัวข้อ</label><input id="p-title" type="text" maxlength="256" placeholder="🔐 ยืนยันตัวตนเพื่อเข้าดิส">
-        <label for="p-description">คำอธิบาย</label><textarea id="p-description" maxlength="4000" placeholder="กดปุ่มด้านล่างเพื่อยืนยันตัวตน"></textarea>
+        <label for="p-title">หัวข้อ</label><input id="p-title" type="text" maxlength="256" placeholder="<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ">
+        <label for="p-description">คำอธิบาย</label><textarea id="p-description" maxlength="4000" placeholder="ปล่อยว่างได้ (ไม่มีคำอธิบาย)"></textarea>
         <div class="form-row form-row-2">
           <div><label for="p-color">สี Embed</label><input id="p-color" type="text" maxlength="7" placeholder="#5865F2"></div>
           <div><label for="p-verifyType">รูปแบบการยืนยัน</label><select id="p-verifyType"><option value="oauth">OAuth2 Verification</option><option value="direct">กดรับยศทันที</option></select></div>
         </div>
-        <label for="p-buttonText">ข้อความบนปุ่ม</label><input id="p-buttonText" type="text" maxlength="80" placeholder="✅ ยืนยันตัวตน ✅">
-        <label for="p-imageUrl">Image/GIF URL</label><input id="p-imageUrl" type="url" placeholder="https://…">
+        <label for="p-buttonText">ข้อความบนปุ่ม</label><input id="p-buttonText" type="text" maxlength="80" placeholder="<a:ddd_pmt:1553844572873040044> vfy (user)">
+        <label for="p-imageUrl">Image/GIF URL</label><input id="p-imageUrl" type="url" placeholder="https://… (ปล่อยว่างเพื่อใช้ภาพเริ่มต้น)">
         <label for="p-thumbnailUrl">Thumbnail URL</label><input id="p-thumbnailUrl" type="url" placeholder="https://…">
         <label for="p-footerText">Footer</label><input id="p-footerText" type="text" maxlength="2048" placeholder="Discord Verification System">
         <label for="p-titleUrl">Title URL</label><input id="p-titleUrl" type="url" placeholder="https://…">
@@ -128,7 +128,7 @@ ${navBar("/verification")}
       <div>
         <article class="verify-panel">
           <div class="section-title"><div><h2>ตัวอย่างก่อนส่ง</h2><p>จำลองพื้นที่ข้อความจริงทั้งบนคอมพิวเตอร์และมือถือ</p></div><span class="badge badge-muted">Preview</span></div>
-          <div class="discord-message-preview"><div class="discord-preview-author"><span class="discord-preview-avatar">B</span><div><b>Phomueangtai</b><small>BOT</small></div></div><div id="preview-content" class="discord-preview-content"></div><div id="embed-preview" class="embed-preview"><div class="embed-preview-title">🔐 ยืนยันตัวตนเพื่อเข้าดิส</div><div class="embed-preview-desc">กดปุ่มด้านล่างเพื่อยืนยันตัวตน</div></div><div id="button-preview"><div class="button-preview">✅ ยืนยันตัวตน ✅</div></div></div>
+          <div class="discord-message-preview"><div class="discord-preview-author"><span class="discord-preview-avatar">B</span><div><b>Phomueangtai</b><small>BOT</small></div></div><div id="preview-content" class="discord-preview-content"></div><div id="embed-preview" class="embed-preview"><div class="embed-preview-title">&lt;a:sn_pmt:1559878089750749244&gt; 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ</div><div class="embed-preview-img"><img src="/verification-assets/images/verification-panel-banner.webp" alt="Verification Banner" style="max-width:100%; border-radius:4px; display:block; margin-top:8px;"></div></div><div id="button-preview"><div class="button-preview">&lt;a:ddd_pmt:1553844572873040044&gt; vfy (user)</div></div></div>
         </article>
         <article class="verify-panel mt-14">
           <div class="section-title"><div><h2>สถานะการซิงค์กับ Discord</h2><p>ตรวจข้อความจริงโดยไม่แก้ไขข้อมูล</p></div><span id="panel-sync-badge" class="badge badge-muted">ยังไม่ได้ตรวจ</span></div>

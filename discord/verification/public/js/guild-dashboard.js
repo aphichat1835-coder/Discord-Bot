@@ -509,7 +509,7 @@
     setInput("p-thumbnailUrl", panel.thumbnailUrl || "");
     setInput("p-footerText", panel.footerText || "");
     setInput("p-titleUrl", panel.titleUrl || "");
-    setInput("p-buttonText", panel.buttonText || panel.buttonLabel || "✅ ยืนยันตัวตน ✅");
+    setInput("p-buttonText", panel.buttonText || panel.buttonLabel || "<a:ddd_pmt:1553844572873040044> vfy (user)");
     setSelect("p-verifyType", mode, "oauth");
     setChecked("p-showTimestamp", !!panel.showTimestamp);
   }
@@ -1480,8 +1480,8 @@
         thumbnailUrl: readText("p-thumbnailUrl"),
         footerText: readText("p-footerText"),
         titleUrl: readText("p-titleUrl"),
-        buttonText: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
-        buttonLabel: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
+        buttonText: readText("p-buttonText") || "<a:ddd_pmt:1553844572873040044> vfy (user)",
+        buttonLabel: readText("p-buttonText") || "<a:ddd_pmt:1553844572873040044> vfy (user)",
         verifyType: mode,
         showTimestamp: readBool("p-showTimestamp")
       }
@@ -1489,8 +1489,11 @@
   }
 
   function safeHttpUrl(value) {
+    const raw = String(value || "").trim();
+    if (raw.startsWith("/")) return raw;
+    if (raw.startsWith("attachment://")) return "/verification-assets/images/verification-panel-banner.webp";
     try {
-      const url = new URL(String(value || ""));
+      const url = new URL(raw);
       return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
     } catch {
       return "";
@@ -1512,14 +1515,14 @@
   function readEmbedPreviewPanel() {
     return {
       content: readText("p-content"),
-      title: readText("p-title") || "🔐 ยืนยันตัวตนเพื่อเข้าดิส",
-      description: readText("p-description") || "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2",
+      title: readText("p-title") || "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
+      description: readText("p-description"),
       color: readText("p-color") || "#5865F2",
-      imageUrl: readText("p-imageUrl"),
+      imageUrl: readText("p-imageUrl") || "/verification-assets/images/verification-panel-banner.webp",
       thumbnailUrl: readText("p-thumbnailUrl"),
       footerText: readText("p-footerText"),
       titleUrl: readText("p-titleUrl"),
-      buttonText: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
+      buttonText: readText("p-buttonText") || "<a:ddd_pmt:1553844572873040044> vfy (user)",
       showTimestamp: readBool("p-showTimestamp")
     };
   }
@@ -1551,6 +1554,7 @@
   }
 
   function previewDescriptionElement(descriptionText) {
+    if (!descriptionText) return null;
     const description = document.createElement("div");
     description.className = "embed-preview-desc";
     description.textContent = descriptionText;
