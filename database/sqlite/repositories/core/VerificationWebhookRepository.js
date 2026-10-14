@@ -486,13 +486,20 @@ class VerificationWebhookRepository {
         return stats;
     }
 
-    updateDeliverySentParts(deliveryId, sentParts) {
+    updateDeliverySentParts(deliveryId, sentParts, expectedDestinationVersion = null) {
         const now = Date.now();
         this.ensureDeliverySchema();
+        if (expectedDestinationVersion !== null && Number(expectedDestinationVersion) > 0) {
+            return this.db.prepare(`
+                UPDATE verification_webhook_deliveries
+                SET sent_parts = ?, updated_at = ?
+                WHERE delivery_id = ? AND status != 'FAILED' AND destination_version = ?
+            `).run(Math.max(0, Number(sentParts) || 0), now, String(deliveryId), Number(expectedDestinationVersion));
+        }
         return this.db.prepare(`
             UPDATE verification_webhook_deliveries
             SET sent_parts = ?, updated_at = ?
-            WHERE delivery_id = ?
+            WHERE delivery_id = ? AND status != 'FAILED'
         `).run(Math.max(0, Number(sentParts) || 0), now, String(deliveryId));
     }
 

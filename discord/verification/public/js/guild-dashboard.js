@@ -2730,8 +2730,12 @@
             progressDetail.textContent = `ส่งสำเร็จ: ${success} | รอลองใหม่: ${retry} | ล้มเหลว: ${failure} | ทั้งหมด: ${total}`;
           }
 
-          if (!webhookPollInterval) {
+          if (state.activeTab === "data") {
+            if (webhookPollInterval) clearInterval(webhookPollInterval);
             webhookPollInterval = setInterval(loadWebhookStatus, 3000);
+          } else if (webhookPollInterval) {
+            clearInterval(webhookPollInterval);
+            webhookPollInterval = null;
           }
         } else if (data.stats && (data.stats.sent > 0 || data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures")) {
           // Keep summary visible after job finishes (P1-10)
@@ -2776,6 +2780,33 @@
       if (badge) {
         badge.className = "badge badge-danger";
         badge.textContent = "เชื่อมต่อระบบไม่ได้";
+      }
+      const checkDbDot = $("check-icon-db");
+      const checkDbBadge = $("check-badge-db");
+      const checkDbText = $("check-text-db");
+      if (checkDbBadge && checkDbDot) {
+        checkDbDot.style.background = "var(--red2)";
+        checkDbBadge.className = "badge badge-danger";
+        checkDbBadge.textContent = "ไม่พร้อม";
+        if (checkDbText) checkDbText.textContent = "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เพื่อตรวจสอบฐานข้อมูลได้";
+      }
+      const checkQueueDot = $("check-icon-queue");
+      const checkQueueBadge = $("check-badge-queue");
+      const checkQueueText = $("check-text-queue");
+      if (checkQueueBadge && checkQueueDot) {
+        checkQueueDot.style.background = "var(--red2)";
+        checkQueueBadge.className = "badge badge-danger";
+        checkQueueBadge.textContent = "ไม่พร้อม";
+        if (checkQueueText) checkQueueText.textContent = "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เพื่อตรวจสอบคิวได้";
+      }
+      const checkWorkerDot = $("check-icon-worker");
+      const checkWorkerBadge = $("check-badge-worker");
+      const checkWorkerText = $("check-text-worker");
+      if (checkWorkerBadge && checkWorkerDot) {
+        checkWorkerDot.style.background = "var(--red2)";
+        checkWorkerBadge.className = "badge badge-danger";
+        checkWorkerBadge.textContent = "ไม่พร้อม";
+        if (checkWorkerText) checkWorkerText.textContent = "การเชื่อมต่อขัดข้อง ไม่สามารถระบุสถานะได้";
       }
     }
   }

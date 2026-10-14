@@ -172,6 +172,40 @@ describe("Production Audit 15-Item Remediation Verification Suite", () => {
                 else delete process.env.SQLITE_P0_JOURNAL_PATH;
             }
         });
+
+        test("spoolP0Event rejects when payload exceeds MAX_SPOOL_BYTES and dispatches notifyP0SpoolFailed alert", async () => {
+            const customJournalPath = path.join(tempDir, "test_p0_ceiling.jsonl");
+            const prevEnv = process.env.SQLITE_P0_JOURNAL_PATH;
+            process.env.SQLITE_P0_JOURNAL_PATH = customJournalPath;
+
+            const webhooks = require("../../discord/core/webhooks");
+            const origSend = webhooks.sendWebhookEvent;
+            const sentAlerts = [];
+            webhooks.sendWebhookEvent = async (event) => {
+                sentAlerts.push(event);
+                return { ok: true };
+            };
+
+            try {
+                // Construct payload exceeding 5MB
+                const hugeData = "A".repeat(5 * 1024 * 1024 + 100);
+                const hugeEvent = { priority: "P0", sessionId: "sess_huge", data: hugeData };
+
+                const spooled = spoolP0Event("voice_events", hugeEvent);
+                assert.equal(spooled, false, "Must reject spooling when payload exceeds MAX_SPOOL_BYTES");
+
+                // Check that Central Alert Webhook was notified
+                assert.equal(sentAlerts.length, 1, "Alert must be sent when P0 spooling is rejected");
+                assert.equal(sentAlerts[0].code, "sqlite.telemetry.p0_journal_degraded");
+                assert.equal(sentAlerts[0].severity, "CRITICAL");
+                assert.equal(sentAlerts[0].context["Repository"], "voice_events");
+                assert.equal(sentAlerts[0].context["สาเหตุ"], "payload_exceeds_max_ceiling");
+            } finally {
+                webhooks.sendWebhookEvent = origSend;
+                if (prevEnv) process.env.SQLITE_P0_JOURNAL_PATH = prevEnv;
+                else delete process.env.SQLITE_P0_JOURNAL_PATH;
+            }
+        });
     });
 
     describe("Item 13: Emergency Thresholds Return bufferThreshold", () => {

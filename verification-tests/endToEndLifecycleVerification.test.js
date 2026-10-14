@@ -30,6 +30,7 @@ const discordDataCollector = require("../discord/verification/services/collector
 
 process.env.INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || "test-internal-secret-for-tests-12345";
 process.env.API_SECRET = process.env.API_SECRET || "test-internal-secret-for-tests-12345";
+process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || "test-encryption-key-must-be-32-bytes-long!";
 
 test("End-to-End Lifecycle & Production Readiness Integration Suite", async (t) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-verify-test-"));

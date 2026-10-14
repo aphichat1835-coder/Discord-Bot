@@ -57,10 +57,25 @@ function spoolP0Event(repositoryName, item) {
             const stat = fs.statSync(journalPath);
             if (stat.size + payloadBytes > MAX_SPOOL_BYTES) {
                 console.error(`[P0_JOURNAL] ⚠️ Emergency journal reached size limit (${stat.size} + ${payloadBytes} bytes > ${MAX_SPOOL_BYTES}); rejecting new spool.`);
+                try {
+                    const { notifyP0SpoolFailed } = require("./telemetryAlert");
+                    notifyP0SpoolFailed(repositoryName, "journal_size_limit_exceeded", {
+                        currentBytes: stat.size,
+                        payloadBytes,
+                        maxBytes: MAX_SPOOL_BYTES
+                    });
+                } catch (_) {}
                 return false;
             }
         } else if (payloadBytes > MAX_SPOOL_BYTES) {
             console.error(`[P0_JOURNAL] ⚠️ Event payload exceeds emergency journal ceiling (${payloadBytes} bytes > ${MAX_SPOOL_BYTES}); rejecting new spool.`);
+            try {
+                const { notifyP0SpoolFailed } = require("./telemetryAlert");
+                notifyP0SpoolFailed(repositoryName, "payload_exceeds_max_ceiling", {
+                    payloadBytes,
+                    maxBytes: MAX_SPOOL_BYTES
+                });
+            } catch (_) {}
             return false;
         }
 
@@ -68,6 +83,12 @@ function spoolP0Event(repositoryName, item) {
         return true;
     } catch (err) {
         console.error(`[P0_JOURNAL] ❌ Failed to write P0 emergency spool: ${err.message}`);
+        try {
+            const { notifyP0SpoolFailed } = require("./telemetryAlert");
+            notifyP0SpoolFailed(repositoryName, "write_error", {
+                errorMessage: err.message
+            });
+        } catch (_) {}
         return false;
     }
 }

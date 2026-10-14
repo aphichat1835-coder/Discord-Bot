@@ -1477,7 +1477,12 @@ class VerificationWebhookManager {
                     await deliverWebhookEvent(prePostUrl, embeds, {
                         startPart: Number(item.sent_parts) || 0,
                         onPartSent: async (partIndex) => {
-                            this.repo.updateDeliverySentParts(item.delivery_id, partIndex);
+                            const updRes = this.repo.updateDeliverySentParts(item.delivery_id, partIndex, item.destination_version);
+                            if (updRes && updRes.changes === 0) {
+                                const cancelErr = new Error("delivery_cancelled_or_version_changed_during_send");
+                                cancelErr.code = "destination_changed_during_delivery";
+                                throw cancelErr;
+                            }
                         },
                         checkDestinationValid: async () => {
                             const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
@@ -1487,7 +1492,16 @@ class VerificationWebhookManager {
                             if (item.job_id && currentMode !== "backfill_live") {
                                 return false;
                             }
-                            return Boolean(currentUrl === prePostUrl && currentVer === prePostVersion);
+                            if (currentUrl !== prePostUrl || currentVer !== prePostVersion) {
+                                return false;
+                            }
+                            if (typeof this.repo.getDeliveryById === "function") {
+                                const freshDelivery = this.repo.getDeliveryById(item.delivery_id);
+                                if (freshDelivery && freshDelivery.status !== "SENDING") {
+                                    return false;
+                                }
+                            }
+                            return true;
                         }
                     });
                     const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
