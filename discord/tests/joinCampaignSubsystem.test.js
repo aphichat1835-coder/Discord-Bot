@@ -3170,3 +3170,41 @@ test("P2 Audit: sanitizeUserFacingError handles Discord API 50001, 10004, and da
     assert.equal(stackErr.includes("127.0.0.1"), false, "Must not leak internal IP addresses");
     assert.equal(stackErr.includes("TCPConnectWrap"), false, "Must not leak internal stack traces");
 });
+
+test("Join Campaign: handleJoinPanelCommand defers reply and transitions via editReply to prevent timeouts", async () => {
+    const channelId = `defer_chan_${Date.now()}`;
+    const messageId = `defer_msg_${Date.now()}`;
+    let deferred = false;
+    let editedPayload = null;
+
+    process.env.OWNER_ID = "123456789012345678";
+
+    const mockInteraction = {
+        guild: { id: "123456789012345678" },
+        guildId: "123456789012345678",
+        channelId,
+        user: { id: "123456789012345678" },
+        options: { getString: () => null },
+        channel: { messages: { delete: async () => {} } },
+        deferred: false,
+        reply: async () => ({ id: messageId }),
+        deferReply: async () => {
+            deferred = true;
+            mockInteraction.deferred = true;
+            return true;
+        },
+        editReply: async (payload) => {
+            editedPayload = payload;
+            return { id: messageId };
+        }
+    };
+
+    const repo = database.repositories.joinCampaign;
+    await handleJoinPanelCommand(mockInteraction, {});
+
+    assert.equal(deferred, true, "Must defer reply to show thinking state");
+    assert.ok(editedPayload, "Must transition via editReply");
+    assert.ok(editedPayload.embeds?.length === 1);
+    assert.equal(repo.findPanelByChannelId(channelId)?.messageId, messageId);
+});
+

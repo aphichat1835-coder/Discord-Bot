@@ -1,6 +1,7 @@
 "use strict";
 
 const { isConfiguredOwner } = require("../../../core/env");
+const { safeDefer, safeReply } = require("../../../guards/commandGuards");
 const appConfig = require("../../../config.json");
 const emoji = require("../ui/emojis");
 const { getMode } = require("../modes/modeRegistry");
@@ -64,7 +65,10 @@ async function handleJoinPanelCommand(interaction, client) {
     let targetGuildName = null;
     let sourceGuildName = null;
 
-    // 3. Strict Pre-validation if target guild is provided
+    // 3. Defer reply to prevent interaction timeout during network checks and banner upload
+    await safeDefer(interaction);
+
+    // 4. Strict Pre-validation if target guild is provided
     if (baseConfig.targetGuildId) {
         const targetValidation = await validateGuildTargets({
             client,
@@ -73,9 +77,8 @@ async function handleJoinPanelCommand(interaction, client) {
         });
 
         if (!targetValidation.ok) {
-            return interaction.reply({
-                content: `> ${emoji.no_entry} ${targetValidation.error}`,
-                ephemeral: true
+            return safeReply(interaction, {
+                content: `> ${emoji.no_entry} ${targetValidation.error}`
             });
         }
 
@@ -90,14 +93,13 @@ async function handleJoinPanelCommand(interaction, client) {
                 targetMemberIds: liveMemberIds
             });
         } catch (err) {
-            return interaction.reply({
-                content: `> ${emoji.alert} ${err.message || "เกิดข้อผิดพลาดในการตรวจสอบรายชื่อสมาชิกปัจจุบัน"}`,
-                ephemeral: true
+            return safeReply(interaction, {
+                content: `> ${emoji.alert} ${err.message || "เกิดข้อผิดพลาดในการตรวจสอบรายชื่อสมาชิกปัจจุบัน"}`
             });
         }
     }
 
-    // 4. Duplicate Panel Clean Up: delete old panel in this channel only after validation passes
+    // 5. Duplicate Panel Clean Up: delete old panel in this channel only after validation passes
     try {
         const oldPanel = repository.findPanelByChannelId(interaction.channelId);
         if (oldPanel && oldPanel.messageId) {
@@ -106,7 +108,7 @@ async function handleJoinPanelCommand(interaction, client) {
         }
     } catch (_) {}
 
-    // 5. Build Panel Payload
+    // 6. Build Panel Payload
     const payload = buildPanelPayload({
         mode,
         panelState: baseConfig,
@@ -117,13 +119,18 @@ async function handleJoinPanelCommand(interaction, client) {
         includeFiles: true
     });
 
-    // 6. Send Panel to Channel
-    const replyMessage = await interaction.reply({
-        ...payload,
-        fetchReply: true
-    });
+    // 7. Send Panel to Channel (smooth transition from thinking state)
+    let replyMessage;
+    if (interaction.deferred) {
+        replyMessage = await interaction.editReply(payload);
+    } else {
+        replyMessage = await interaction.reply({
+            ...payload,
+            fetchReply: true
+        });
+    }
 
-    // 7. Persist Panel State to SQLite
+    // 8. Persist Panel State to SQLite
     repository.savePanel({
         messageId: replyMessage.id,
         channelId: interaction.channelId,
