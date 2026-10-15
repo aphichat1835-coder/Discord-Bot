@@ -884,22 +884,31 @@ async function startRunner({
 
     let originalStatus = null;
 
+    async function processScheduledIteration(scheduledState, transientAttempt) {
+        const outcome = await runRoundSafely();
+        if (signal.aborted) {
+            return { aborted: true, scheduledState, transientAttempt };
+        }
+        if (originalStatus) {
+            await restoreUserStatus(userToken, originalStatus).catch(() => {});
+        }
+
+        if (outcome.transientError) {
+            const nextAttempt = await waitForTransientErrorRetry(transientAttempt);
+            return { aborted: false, scheduledState, transientAttempt: nextAttempt };
+        }
+        const nextState = await handleScheduledIdle(scheduledState, outcome);
+        return { aborted: false, scheduledState: nextState, transientAttempt: 0 };
+    }
+
     async function executeScheduledModeLoop() {
         let scheduledState = { isRecheck: false, rechecksRemaining: 0 };
         let transientAttempt = 0;
         while (!signal.aborted) {
-            const outcome = await runRoundSafely();
-            if (signal.aborted) break;
-            if (originalStatus) {
-                await restoreUserStatus(userToken, originalStatus).catch(() => {});
-            }
-
-            if (outcome.transientError) {
-                transientAttempt = await waitForTransientErrorRetry(transientAttempt);
-                continue;
-            }
-            transientAttempt = 0;
-            scheduledState = await handleScheduledIdle(scheduledState, outcome);
+            const iter = await processScheduledIteration(scheduledState, transientAttempt);
+            if (iter.aborted) break;
+            scheduledState = iter.scheduledState;
+            transientAttempt = iter.transientAttempt;
         }
     }
 
@@ -1060,9 +1069,8 @@ async function startUserQuestSession({
         let startIndex = Date.now();
 
         // Create QuestLog in SQLite
-        let questLog = null;
         try {
-            questLog = getQuestLogRepository().create({
+            getQuestLogRepository().create({
                 invokerId,
                 invokerTag,
                 guildId,
@@ -1078,7 +1086,9 @@ async function startUserQuestSession({
                     };
                 })
             });
-        } catch (_) {}
+        } catch (_err) {
+            // Ignored: Best-effort audit logging into QuestLogRepository
+        }
 
         // Emit startup webhook event
         sendWebhookEvent({

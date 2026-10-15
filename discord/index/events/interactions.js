@@ -239,7 +239,9 @@ async function dispatchCommandInteraction({ interaction, commands, client, SHADO
                     }
                 });
             }
-        } catch (_) {}
+        } catch (_err) {
+            // Ignored: Command telemetry recording failure must never crash command interaction flow
+        }
     }
 }
 

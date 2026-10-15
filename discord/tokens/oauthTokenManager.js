@@ -1044,6 +1044,67 @@ function isDocGuildEligible(doc, effectiveGuildId) {
         doc.lastVerify?.result === "success";
 }
 
+function processCandidateDoc(doc, {
+    effectiveGuildId,
+    seenUsers,
+    batchUsers,
+    normalizedRequired,
+    config,
+    candidates,
+    byTokenField,
+    stats
+}) {
+    if (!isDocGuildEligible(doc, effectiveGuildId)) {
+        return;
+    }
+    const userId = String(doc.discord?.userId || "").trim();
+    if (!userId) {
+        stats.missingUserId++;
+        return;
+    }
+
+    if (seenUsers instanceof Set && seenUsers.has(userId)) {
+        return;
+    }
+
+    const isNewUser = !batchUsers.has(userId);
+    if (isNewUser) {
+        batchUsers.add(userId);
+        stats.newUniqueUsers++;
+    }
+
+    const {
+        chosenField,
+        chosenScope,
+        docHasMissingScope,
+        docIsRevoked,
+        docIsExhausted
+    } = evaluateDocTokens(doc, { normalizedRequired, failMax: config.failMax });
+
+    if (chosenField) {
+        if (isNewUser) {
+            stats.usableUsersCount++;
+            byTokenField[chosenField] = (byTokenField[chosenField] || 0) + 1;
+        }
+        candidates.push({
+            userId,
+            tokenField: chosenField,
+            scope: chosenScope,
+            recordId: doc._id,
+            lastVerify: {
+                guildId: doc.lastVerify?.guildId || null,
+                result: doc.lastVerify?.result || null
+            }
+        });
+    } else if (docHasMissingScope) {
+        stats.missingScope++;
+    } else if (docIsRevoked) {
+        stats.revoked++;
+    } else if (docIsExhausted) {
+        stats.exhausted++;
+    }
+}
+
 async function listAccessTokenCandidates({
     requiredScopes = ["guilds.join"],
     sourceGuildId = null,
@@ -1072,64 +1133,27 @@ async function listAccessTokenCandidates({
     const normalizedRequired = new Set(requiredScopes.map(s => String(s || "").trim()).filter(Boolean));
     const candidates = [];
     const batchUsers = new Set();
-    let newUniqueUsers = 0;
-    let usableUsersCount = 0;
-    let missingUserId = 0;
-    let missingScope = 0;
-    let revoked = 0;
-    let exhausted = 0;
+    const stats = {
+        newUniqueUsers: 0,
+        usableUsersCount: 0,
+        missingUserId: 0,
+        missingScope: 0,
+        revoked: 0,
+        exhausted: 0
+    };
     const byTokenField = { oauth: 0 };
 
     for (const doc of docs) {
-        if (!isDocGuildEligible(doc, effectiveGuildId)) {
-            continue;
-        }
-        const userId = String(doc.discord?.userId || "").trim();
-        if (!userId) {
-            missingUserId++;
-            continue;
-        }
-
-        if (seenUsers instanceof Set && seenUsers.has(userId)) {
-            continue;
-        }
-
-        const isNewUser = !batchUsers.has(userId);
-        if (isNewUser) {
-            batchUsers.add(userId);
-            newUniqueUsers++;
-        }
-
-        const {
-            chosenField,
-            chosenScope,
-            docHasMissingScope,
-            docIsRevoked,
-            docIsExhausted
-        } = evaluateDocTokens(doc, { normalizedRequired, failMax: config.failMax });
-
-        if (chosenField) {
-            if (isNewUser) {
-                usableUsersCount++;
-                byTokenField[chosenField] = (byTokenField[chosenField] || 0) + 1;
-            }
-            candidates.push({
-                userId,
-                tokenField: chosenField,
-                scope: chosenScope,
-                recordId: doc._id,
-                lastVerify: {
-                    guildId: doc.lastVerify?.guildId || null,
-                    result: doc.lastVerify?.result || null
-                }
-            });
-        } else if (docHasMissingScope) {
-            missingScope++;
-        } else if (docIsRevoked) {
-            revoked++;
-        } else if (docIsExhausted) {
-            exhausted++;
-        }
+        processCandidateDoc(doc, {
+            effectiveGuildId,
+            seenUsers,
+            batchUsers,
+            normalizedRequired,
+            config,
+            candidates,
+            byTokenField,
+            stats
+        });
     }
 
     const lastScanned = docs.length > 0 ? docs[docs.length - 1] : null;
@@ -1143,12 +1167,12 @@ async function listAccessTokenCandidates({
         scanned: docs.length,
         statistics: {
             scannedRecords: docs.length,
-            uniqueUsers: newUniqueUsers,
-            usableUsers: usableUsersCount,
-            missingScope,
-            missingUserId,
-            revoked,
-            exhausted,
+            uniqueUsers: stats.newUniqueUsers,
+            usableUsers: stats.usableUsersCount,
+            missingScope: stats.missingScope,
+            missingUserId: stats.missingUserId,
+            revoked: stats.revoked,
+            exhausted: stats.exhausted,
             byTokenField
         }
     });

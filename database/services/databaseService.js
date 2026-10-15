@@ -510,7 +510,8 @@ function recordMaintenanceAudit(db, {
         `).run(action, startTime, finishedAt, status, JSON.stringify(auditPayload));
         return { ok: true, audit: auditPayload };
     } catch (auditErr) {
-        console.warn(`[DATABASE_AUDIT] ⚠️ Failed to persist maintenance audit for action "${action}": ${auditErr.message}`);
+        const safeAction = String(action || "").replace(/[\r\n]/g, "_");
+        console.warn(`[DATABASE_AUDIT] ⚠️ Failed to persist maintenance audit for action "${safeAction}": ${auditErr.message}`);
         try {
             sendWebhookEvent({
                 target: "ALERT",
@@ -677,7 +678,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
             case "checkpoint": {
                 const rawMode = String(options.mode || "PASSIVE").trim().toUpperCase();
                 const chk = checkpointWal(db, rawMode);
-                const ok = Boolean(chk && chk.ok);
+                const ok = Boolean(chk?.ok);
                 result = {
                     ok,
                     action,
@@ -1116,11 +1117,13 @@ async function getMongoDetailedStatus() {
             storageSizeBytes: rawStats.storageSize || 0,
             indexSizeBytes: rawStats.indexSize || 0,
             totalSizeBytes: (rawStats.storageSize || 0) + (rawStats.indexSize || 0),
-            dataSizeMb: parseFloat(((rawStats.dataSize || 0) / (1024 * 1024)).toFixed(2)),
-            storageSizeMb: parseFloat(((rawStats.storageSize || 0) / (1024 * 1024)).toFixed(2)),
-            indexSizeMb: parseFloat(((rawStats.indexSize || 0) / (1024 * 1024)).toFixed(2))
+            dataSizeMb: Number.parseFloat(((rawStats.dataSize || 0) / (1024 * 1024)).toFixed(2)),
+            storageSizeMb: Number.parseFloat(((rawStats.storageSize || 0) / (1024 * 1024)).toFixed(2)),
+            indexSizeMb: Number.parseFloat(((rawStats.indexSize || 0) / (1024 * 1024)).toFixed(2))
         };
-    } catch (_) {}
+    } catch (_) {
+        // Ignore stats fetch failure if db.stats command is not permitted
+    }
 
     const topCollections = [...collections].sort((a, b) => b.count - a.count).slice(0, 5);
 
@@ -1189,7 +1192,7 @@ async function getMongoCollectionSample(collectionName, limit = 5) {
         throw new Error(`ไม่พบโมเดล '${collectionName}' ในระบบ`);
     }
 
-    const boundedLimit = Math.min(Math.max(parseInt(limit, 10) || 5, 1), 10);
+    const boundedLimit = Math.min(Math.max(Number.parseInt(limit, 10) || 5, 1), 10);
     const docs = await Model.find({}).sort({ _id: -1 }).limit(boundedLimit).lean().exec();
 
     const maskedDocs = docs.map(doc => {

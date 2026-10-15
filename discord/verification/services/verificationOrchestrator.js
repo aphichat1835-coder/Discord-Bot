@@ -104,7 +104,7 @@ function getStatePanelRevision(stateObj = {}) {
 }
 
 function isPanelRevisionValid(guildConfig, stateObj = {}) {
-    if (!guildConfig || !guildConfig.verification) return { ok: true };
+    if (!guildConfig?.verification) return { ok: true };
     const latest = getLatestPanelRevision(guildConfig);
     const stateRev = getStatePanelRevision(stateObj);
     if (stateRev !== latest) {
@@ -901,7 +901,7 @@ async function executeVerification({
     }
 
     // --- Step 10: DM Notification ---
-    safeSideEffect("sendVerificationDM", () => discord.sendVerificationDM(profile.id, {
+    await safeSideEffect("sendVerificationDM", () => discord.sendVerificationDM(profile.id, {
         ok: true,
         result: "success",
         guildName,

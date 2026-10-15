@@ -27,6 +27,28 @@ function dispatchRecoveryAlert({ code, title, description, details = {} }) {
     } catch (_) {}
 }
 
+async function editRecoveryFailureMessage({ client, panel, updatedPanel, targetGuildName }) {
+    if (!client || !panel.channelId || !panel.messageId) return;
+    try {
+        const channel = await client.channels?.fetch?.(panel.channelId).catch(() => null);
+        if (!channel) return;
+        const message = await channel.messages?.fetch?.(panel.messageId).catch(() => null);
+        if (!message) return;
+
+        const { getMode } = require("../modes/modeRegistry");
+        const { buildPanelPayload } = require("../ui/panelBuilder");
+        const mode = getMode(panel.mode || "ALL_TO_TARGET");
+        const payload = buildPanelPayload({
+            mode,
+            panelState: updatedPanel,
+            readyCount: updatedPanel.lastReadyCount,
+            liveJob: null,
+            targetGuildName: targetGuildName || panel.targetGuildId || "เซิร์ฟเวอร์เป้าหมาย"
+        });
+        await message.edit(payload).catch(() => {});
+    } catch (_) {}
+}
+
 async function updatePanelRecoveryFailure({ client, repository, jobId, channelId, errorMsg, targetGuildName }) {
     try {
         if (!repository) return;
@@ -49,25 +71,7 @@ async function updatePanelRecoveryFailure({ client, repository, jobId, channelId
             repository.savePanel(updatedPanel);
         }
 
-        if (client && panel.channelId && panel.messageId) {
-            const channel = await client.channels?.fetch?.(panel.channelId).catch(() => null);
-            if (channel) {
-                const message = await channel.messages?.fetch?.(panel.messageId).catch(() => null);
-                if (message) {
-                    const { getMode } = require("../modes/modeRegistry");
-                    const { buildPanelPayload } = require("../ui/panelBuilder");
-                    const mode = getMode(panel.mode || "ALL_TO_TARGET");
-                    const payload = buildPanelPayload({
-                        mode,
-                        panelState: updatedPanel,
-                        readyCount: updatedPanel.lastReadyCount,
-                        liveJob: null,
-                        targetGuildName: targetGuildName || panel.targetGuildId || "เซิร์ฟเวอร์เป้าหมาย"
-                    });
-                    await message.edit(payload).catch(() => {});
-                }
-            }
-        }
+        await editRecoveryFailureMessage({ client, panel, updatedPanel, targetGuildName });
     } catch (_) {}
 }
 
@@ -82,6 +86,145 @@ function runStartupRecovery({ client, repository, tokenManager, discord }) {
         return activeRecoveryPromise;
     }
 
+async function handleStagedInterruptedJob({ client, repository, interruptedJob }) {
+    const expireReason = "staged_job_expired";
+    console.warn(`[JoinCampaign] ⚠️ งาน ${interruptedJob.id} อยู่ในสถานะ STAGE ก่อนรีสตาร์ต — ยกเลิกงานที่ค้างในขั้นตอนเตรียมการ`);
+    repository.updateJob(interruptedJob.id, {
+        status: "FAILED",
+        lastError: expireReason,
+        completedAt: Date.now()
+    });
+    await updatePanelRecoveryFailure({
+        client,
+        repository,
+        jobId: interruptedJob.id,
+        channelId: interruptedJob.startedByChannelId,
+        errorMsg: "งานในขั้นตอนเตรียมการหมดอายุจากการรีสตาร์ต",
+        targetGuildName: interruptedJob.targetGuildName
+    });
+    return { recovered: false, reason: "staged_job_expired", jobId: interruptedJob.id };
+}
+
+function claimInterruptedJobExecution({ repository, interruptedJob }) {
+    if (interruptedJob.status === "RUNNING") {
+        if (typeof repository.claimOrphanedRunningJob === "function") {
+            const claimedRunning = repository.claimOrphanedRunningJob(interruptedJob.id);
+            if (!claimedRunning) {
+                return { ok: false, reason: "running_job_already_claimed" };
+            }
+            interruptedJob.status = "INTERRUPTED";
+            console.warn(`[JoinCampaign] ⚠️ ตรวจพบงานที่ค้างในสถานะ RUNNING จาก Hard Crash/Kill: ${interruptedJob.id} -> เปลี่ยนเป็น INTERRUPTED เพื่อกู้คืน`);
+        }
+    }
+
+    if (typeof repository.claimInterruptedJob === "function" && interruptedJob.status === "INTERRUPTED") {
+        const claimed = repository.claimInterruptedJob(interruptedJob.id);
+        if (!claimed) {
+            return { ok: false, reason: "job_already_claimed" };
+        }
+        interruptedJob.status = "RUNNING";
+    }
+    return { ok: true };
+}
+
+async function checkRecoveryLimitExceeded({ client, repository, interruptedJob, currentRecoveryCount }) {
+    if (currentRecoveryCount < MAX_RECOVERY_ATTEMPTS) return null;
+
+    const failReason = `กู้คืนเกินขีดจำกัด ${MAX_RECOVERY_ATTEMPTS} ครั้ง`;
+    console.warn(`[JoinCampaign] ⚠️ งาน ${interruptedJob.id} ถูกกู้คืนเกินขีดจำกัด (${MAX_RECOVERY_ATTEMPTS} ครั้ง) ยกเลิกการกู้คืนเพื่อความปลอดภัย`);
+    repository.updateJob(interruptedJob.id, {
+        status: "FAILED",
+        lastError: failReason,
+        completedAt: Date.now()
+    });
+    await updatePanelRecoveryFailure({
+        client,
+        repository,
+        jobId: interruptedJob.id,
+        channelId: interruptedJob.startedByChannelId,
+        errorMsg: failReason,
+        targetGuildName: interruptedJob.targetGuildName
+    });
+    dispatchRecoveryAlert({
+        code: "join_campaign.max_recovery_exceeded",
+        title: "Join Campaign: การกู้คืนล้มเหลวเกินกำหนด",
+        description: `งาน ${interruptedJob.id} ถูกกู้คืนเกินขีดจำกัด ${MAX_RECOVERY_ATTEMPTS} ครั้งและถูกยกเลิก`,
+        details: {
+            campaignId: interruptedJob.id,
+            targetGuildId: interruptedJob.targetGuildId,
+            recoveryAttempts: currentRecoveryCount
+        }
+    });
+    return { recovered: false, reason: "max_recovery_exceeded" };
+}
+
+async function resolveRecoveryTargetGuildMembers({ client, repository, interruptedJob }) {
+    if (!client || !interruptedJob.targetGuildId) return { ok: true, targetMemberIds: null };
+
+    let targetGuild = client.guilds.cache.get(interruptedJob.targetGuildId);
+    if (!targetGuild && client.guilds?.fetch) {
+        targetGuild = await client.guilds.fetch(interruptedJob.targetGuildId).catch(() => null);
+    }
+    if (!targetGuild) {
+        const failMsg = "ไม่พบเซิร์ฟเวอร์ปลายทาง หรือบอทไม่ได้อยู่ในเซิร์ฟเวอร์เป้าหมายแล้ว (Fail-Closed)";
+        console.error(`[JoinCampaign] ❌ ${failMsg}`);
+        repository.updateJob(interruptedJob.id, {
+            status: "FAILED",
+            lastError: failMsg,
+            completedAt: Date.now()
+        });
+        await updatePanelRecoveryFailure({
+            client,
+            repository,
+            jobId: interruptedJob.id,
+            channelId: interruptedJob.startedByChannelId,
+            errorMsg: failMsg,
+            targetGuildName: interruptedJob.targetGuildName
+        });
+        dispatchRecoveryAlert({
+            code: "join_campaign.recovery_target_missing",
+            title: "Join Campaign: เซิร์ฟเวอร์เป้าหมายไม่พร้อมใช้งานขณะกู้คืน",
+            description: failMsg,
+            details: {
+                campaignId: interruptedJob.id,
+                targetGuildId: interruptedJob.targetGuildId
+            }
+        });
+        return { ok: false, error: failMsg };
+    }
+
+    try {
+        const targetMemberIds = await getLiveTargetMemberIds(targetGuild);
+        return { ok: true, targetMemberIds };
+    } catch (err) {
+        const failMsg = `ไม่สามารถดึงรายชื่อสมาชิกปัจจุบันของเซิร์ฟเวอร์ปลายทางได้: ${sanitizeUserFacingError(err.message)}`;
+        console.error(`[JoinCampaign] ❌ ${failMsg}`);
+        repository.updateJob(interruptedJob.id, {
+            status: "FAILED",
+            lastError: failMsg,
+            completedAt: Date.now()
+        });
+        await updatePanelRecoveryFailure({
+            client,
+            repository,
+            jobId: interruptedJob.id,
+            channelId: interruptedJob.startedByChannelId,
+            errorMsg: failMsg,
+            targetGuildName: interruptedJob.targetGuildName
+        });
+        dispatchRecoveryAlert({
+            code: "join_campaign.recovery_member_fetch_failed",
+            title: "Join Campaign: ตรวจสอบรายชื่อสมาชิกล้มเหลวขณะกู้คืน",
+            description: err.message || failMsg,
+            details: {
+                campaignId: interruptedJob.id,
+                targetGuildId: interruptedJob.targetGuildId
+            }
+        });
+        return { ok: false, error: failMsg };
+    }
+}
+
     activeRecoveryPromise = (async () => {
         try {
             const interruptedJob = repository.findActiveRunningJob();
@@ -91,74 +234,18 @@ function runStartupRecovery({ client, repository, tokenManager, discord }) {
 
             // 1. Expire stale pre-start STAGE jobs that were left in-flight during crash/restart
             if (interruptedJob.status === "STAGE") {
-                const expireReason = "staged_job_expired";
-                console.warn(`[JoinCampaign] ⚠️ งาน ${interruptedJob.id} อยู่ในสถานะ STAGE ก่อนรีสตาร์ต — ยกเลิกงานที่ค้างในขั้นตอนเตรียมการ`);
-                repository.updateJob(interruptedJob.id, {
-                    status: "FAILED",
-                    lastError: expireReason,
-                    completedAt: Date.now()
-                });
-                await updatePanelRecoveryFailure({
-                    client,
-                    repository,
-                    jobId: interruptedJob.id,
-                    channelId: interruptedJob.startedByChannelId,
-                    errorMsg: "งานในขั้นตอนเตรียมการหมดอายุจากการรีสตาร์ต",
-                    targetGuildName: interruptedJob.targetGuildName
-                });
-                return { recovered: false, reason: "staged_job_expired", jobId: interruptedJob.id };
+                return await handleStagedInterruptedJob({ client, repository, interruptedJob });
             }
 
-            // 2. Atomic claim on orphaned RUNNING jobs left from hard crash/SIGKILL
-            if (interruptedJob.status === "RUNNING") {
-                if (typeof repository.claimOrphanedRunningJob === "function") {
-                    const claimedRunning = repository.claimOrphanedRunningJob(interruptedJob.id);
-                    if (!claimedRunning) {
-                        return { recovered: false, reason: "running_job_already_claimed" };
-                    }
-                    interruptedJob.status = "INTERRUPTED";
-                    console.warn(`[JoinCampaign] ⚠️ ตรวจพบงานที่ค้างในสถานะ RUNNING จาก Hard Crash/Kill: ${interruptedJob.id} -> เปลี่ยนเป็น INTERRUPTED เพื่อกู้คืน`);
-                }
-            }
-
-            // 3. Atomic claim on interrupted job to prevent concurrent recovery execution
-            if (typeof repository.claimInterruptedJob === "function" && interruptedJob.status === "INTERRUPTED") {
-                const claimed = repository.claimInterruptedJob(interruptedJob.id);
-                if (!claimed) {
-                    return { recovered: false, reason: "job_already_claimed" };
-                }
-                interruptedJob.status = "RUNNING";
+            // 2. Atomic claim on running/interrupted job
+            const claimResult = claimInterruptedJobExecution({ repository, interruptedJob });
+            if (!claimResult.ok) {
+                return { recovered: false, reason: claimResult.reason };
             }
 
             const currentRecoveryCount = interruptedJob.recoveryCount || interruptedJob.recovery_count || 0;
-            if (currentRecoveryCount >= MAX_RECOVERY_ATTEMPTS) {
-                const failReason = `กู้คืนเกินขีดจำกัด ${MAX_RECOVERY_ATTEMPTS} ครั้ง`;
-                console.warn(`[JoinCampaign] ⚠️ งาน ${interruptedJob.id} ถูกกู้คืนเกินขีดจำกัด (${MAX_RECOVERY_ATTEMPTS} ครั้ง) ยกเลิกการกู้คืนเพื่อความปลอดภัย`);
-                repository.updateJob(interruptedJob.id, {
-                    status: "FAILED",
-                    lastError: failReason,
-                    completedAt: Date.now()
-                });
-                await updatePanelRecoveryFailure({
-                    client,
-                    repository,
-                    jobId: interruptedJob.id,
-                    channelId: interruptedJob.startedByChannelId,
-                    errorMsg: failReason,
-                    targetGuildName: interruptedJob.targetGuildName
-                });
-                dispatchRecoveryAlert({
-                    code: "join_campaign.max_recovery_exceeded",
-                    title: "Join Campaign: การกู้คืนล้มเหลวเกินกำหนด",
-                    description: `งาน ${interruptedJob.id} ถูกกู้คืนเกินขีดจำกัด ${MAX_RECOVERY_ATTEMPTS} ครั้งและถูกยกเลิก`,
-                    details: {
-                        campaignId: interruptedJob.id,
-                        targetGuildId: interruptedJob.targetGuildId,
-                        recoveryAttempts: currentRecoveryCount
-                    }
-                });
-                return { recovered: false, reason: "max_recovery_exceeded" };
-            }
+            const limitCheck = await checkRecoveryLimitExceeded({ client, repository, interruptedJob, currentRecoveryCount });
+            if (limitCheck) return limitCheck;
 
             // Reconcile job counters with actual item status records to guarantee crash-consistency (P1 #1)
             if (typeof repository.reconcileJobCounters === "function") {
@@ -190,79 +277,21 @@ function runStartupRecovery({ client, repository, tokenManager, discord }) {
                 repository.releaseExpiredLeases(interruptedJob.id, true);
             }
 
-        // 2. Increment recovery count
-        const nextRecoveryCount = currentRecoveryCount + 1;
-        repository.updateJob(interruptedJob.id, {
-            recovery_count: nextRecoveryCount,
-            status: "RUNNING"
-        });
-        interruptedJob.recoveryCount = nextRecoveryCount;
-        interruptedJob.recovery_count = nextRecoveryCount;
+            // 2. Increment recovery count
+            const nextRecoveryCount = currentRecoveryCount + 1;
+            repository.updateJob(interruptedJob.id, {
+                recovery_count: nextRecoveryCount,
+                status: "RUNNING"
+            });
+            interruptedJob.recoveryCount = nextRecoveryCount;
+            interruptedJob.recovery_count = nextRecoveryCount;
 
-        // 3. Fetch current target guild members to avoid redundant joins (Fail-closed)
-        let targetMemberIds = null;
-        if (client && interruptedJob.targetGuildId) {
-            let targetGuild = client.guilds.cache.get(interruptedJob.targetGuildId);
-            if (!targetGuild && client.guilds?.fetch) {
-                targetGuild = await client.guilds.fetch(interruptedJob.targetGuildId).catch(() => null);
+            // 3. Fetch current target guild members to avoid redundant joins (Fail-closed)
+            const targetMembersResult = await resolveRecoveryTargetGuildMembers({ client, repository, interruptedJob });
+            if (!targetMembersResult.ok) {
+                return { recovered: false, error: targetMembersResult.error, jobId: interruptedJob.id };
             }
-            if (!targetGuild) {
-                const failMsg = "ไม่พบเซิร์ฟเวอร์ปลายทาง หรือบอทไม่ได้อยู่ในเซิร์ฟเวอร์เป้าหมายแล้ว (Fail-Closed)";
-                console.error(`[JoinCampaign] ❌ ${failMsg}`);
-                repository.updateJob(interruptedJob.id, {
-                    status: "FAILED",
-                    lastError: failMsg,
-                    completedAt: Date.now()
-                });
-                await updatePanelRecoveryFailure({
-                    client,
-                    repository,
-                    jobId: interruptedJob.id,
-                    channelId: interruptedJob.startedByChannelId,
-                    errorMsg: failMsg,
-                    targetGuildName: interruptedJob.targetGuildName
-                });
-                dispatchRecoveryAlert({
-                    code: "join_campaign.recovery_target_missing",
-                    title: "Join Campaign: เซิร์ฟเวอร์เป้าหมายไม่พร้อมใช้งานขณะกู้คืน",
-                    description: failMsg,
-                    details: {
-                        campaignId: interruptedJob.id,
-                        targetGuildId: interruptedJob.targetGuildId
-                    }
-                });
-                return { recovered: false, error: failMsg, jobId: interruptedJob.id };
-            }
-            try {
-                targetMemberIds = await getLiveTargetMemberIds(targetGuild);
-            } catch (err) {
-                const failMsg = `ไม่สามารถดึงรายชื่อสมาชิกปัจจุบันของเซิร์ฟเวอร์ปลายทางได้: ${sanitizeUserFacingError(err.message)}`;
-                console.error(`[JoinCampaign] ❌ ${failMsg}`);
-                repository.updateJob(interruptedJob.id, {
-                    status: "FAILED",
-                    lastError: failMsg,
-                    completedAt: Date.now()
-                });
-                await updatePanelRecoveryFailure({
-                    client,
-                    repository,
-                    jobId: interruptedJob.id,
-                    channelId: interruptedJob.startedByChannelId,
-                    errorMsg: failMsg,
-                    targetGuildName: interruptedJob.targetGuildName
-                });
-                dispatchRecoveryAlert({
-                    code: "join_campaign.recovery_member_fetch_failed",
-                    title: "Join Campaign: ตรวจสอบรายชื่อสมาชิกล้มเหลวขณะกู้คืน",
-                    description: err.message || failMsg,
-                    details: {
-                        campaignId: interruptedJob.id,
-                        targetGuildId: interruptedJob.targetGuildId
-                    }
-                });
-                return { recovered: false, error: failMsg, jobId: interruptedJob.id };
-            }
-        }
+            const targetMemberIds = targetMembersResult.targetMemberIds;
 
         // 4. Auto-resume campaign worker asynchronously
         let workerPromise = null;

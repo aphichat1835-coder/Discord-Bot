@@ -954,7 +954,9 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
             eventType: "voice_session_created",
             metadata: { serverId, state: "active" }
         });
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: Session logging to runtime repository is best-effort
+    }
 
     return sessionId;
 }
@@ -963,7 +965,8 @@ function getVoiceRuntimeRepository() {
     try {
         const db = require("../../database");
         return db?.repositories?.voiceSessionRuntime || null;
-    } catch (_) {
+    } catch (_err) {
+        // Ignored: Voice runtime repository may not be initialized yet
         return null;
     }
 }
@@ -979,7 +982,9 @@ function touchSession(sessionId) {
         try {
             const repo = getVoiceRuntimeRepository();
             if (repo) repo.recordHeartbeat(sessionId, session.lastActivity);
-        } catch (_) {}
+        } catch (_err) {
+            // Ignored: Heartbeat record is best-effort
+        }
     }
     return session;
 }

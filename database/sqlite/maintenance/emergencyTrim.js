@@ -16,8 +16,8 @@ const BATCH_SIZE = 500;
 const DEFAULT_RETENTION_DAYS = 30;
 
 function resolveHistoryRetentionMs() {
-    const days = parseInt(process.env.SQLITE_HISTORY_RETENTION_DAYS, 10);
-    return (!isNaN(days) && days > 0 ? days : DEFAULT_RETENTION_DAYS) * 24 * 60 * 60 * 1000;
+    const days = Number.parseInt(process.env.SQLITE_HISTORY_RETENTION_DAYS, 10);
+    return (!Number.isNaN(days) && days > 0 ? days : DEFAULT_RETENTION_DAYS) * 24 * 60 * 60 * 1000;
 }
 
 function cleanExpiredHistory(db, now, maxBatches = 5) {

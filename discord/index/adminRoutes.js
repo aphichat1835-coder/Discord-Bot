@@ -30,20 +30,21 @@ function hashAuditIp(ip) {
 }
 
 async function removeApprovedGuildRecord(sessionManager, guildId, attempts = 3) {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+    const safeGuildId = String(guildId || "").trim();
+    async function tryDelete(attempt) {
         try {
-            await sessionManager.ApprovedGuildModel.deleteOne({ guildId });
+            await sessionManager.ApprovedGuildModel.deleteOne({ guildId: { $eq: safeGuildId } });
             return true;
         } catch {
             console.warn(`[DASHBOARD] ⚠️ Approved guild cleanup failed (${attempt}/${attempts})`);
 
-            if (attempt < attempts) {
-                await wait(250 * attempt);
-            }
+            if (attempt >= attempts) return false;
+            await wait(250 * attempt);
+            return tryDelete(attempt + 1);
         }
     }
 
-    return false;
+    return tryDelete(1);
 }
 
 async function stopGuildVoiceSessions(sessionManager, voiceWorker, guildId) {
@@ -538,13 +539,14 @@ function registerAdminRoutes({
                 });
             }
 
+            const safeGuildId = String(guildId).trim();
             await sessionManager.ApprovedGuildModel.updateOne(
-                { guildId },
-                { $setOnInsert: { guildId } },
+                { guildId: { $eq: safeGuildId } },
+                { $setOnInsert: { guildId: safeGuildId } },
                 { upsert: true }
             );
 
-            await sessionManager.PendingGuildModel.deleteOne({ guildId });
+            await sessionManager.PendingGuildModel.deleteOne({ guildId: { $eq: safeGuildId } });
 
             const guild = client.guilds.cache.get(guildId);
             sendWebhookEvent({

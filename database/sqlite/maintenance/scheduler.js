@@ -144,7 +144,7 @@ async function runVacuum() {
 
     try {
         const res = await executeSqliteAction("vacuum", {}, "system_scheduler");
-        if (res && res.ok) {
+        if (res?.ok) {
             diagnostics.vacuum.lastStatus = "success";
             diagnostics.vacuum.lastError = null;
             diagnostics.vacuum.runCount++;
@@ -326,7 +326,9 @@ async function runEmergencyEvaluation() {
                                 "สถานะระบบ": evalResult.quota.status.toUpperCase()
                             }
                         }).catch(() => {});
-                    } catch (_) {}
+                    } catch (_err) {
+                        // Ignored: Alert webhook sending is best-effort
+                    }
                 }
 
                 // Execute Emergency Auto-Trim strictly on physical storage emergency
@@ -356,7 +358,9 @@ async function runEmergencyEvaluation() {
                                     "ระยะเวลาดำเนินการ": `${trim.durationMs} ms`
                                 }
                             }).catch(() => {});
-                        } catch (_) {}
+                        } catch (_err) {
+                            // Ignored: Alert webhook sending is best-effort
+                        }
                     } else if (trim.postStatus === "soft" || trim.isSoftWarning) {
                         diagnostics.emergency.lastStatus = "soft_warning";
                         // Send WARNING alert: dropped out of critical but still in soft warning state
@@ -377,7 +381,9 @@ async function runEmergencyEvaluation() {
                                     "ระยะเวลาดำเนินการ": `${trim.durationMs} ms`
                                 }
                             }).catch(() => {});
-                        } catch (_) {}
+                        } catch (_err) {
+                            // Ignored: Alert webhook sending is best-effort
+                        }
                     } else {
                         diagnostics.emergency.lastStatus = "degraded";
                     }
@@ -409,7 +415,9 @@ async function runEmergencyEvaluation() {
                                 "มาตรการ": "Active Queue Drain Flush + Priority Eviction (No Disk Trim)"
                             }
                         }).catch(() => {});
-                    } catch (_) {}
+                    } catch (_err) {
+                        // Ignored: Alert webhook sending is best-effort
+                    }
                 }
 
                 try {

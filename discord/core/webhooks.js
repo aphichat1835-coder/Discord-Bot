@@ -591,7 +591,7 @@ function buildEventFields(event, state, target) {
     const fields = [];
     const context = { ...event.context };
     const rawExplicit = Array.isArray(event.fields)
-        ? event.fields.filter(f => f && f.name && f.value !== undefined && f.value !== null && f.value !== "")
+        ? event.fields.filter(f => f?.name && f?.value != null && f?.value !== "")
         : [];
 
     const { deduplicatedExplicit, explicitMap } = deduplicateExplicitFields(rawExplicit);
@@ -1121,8 +1121,9 @@ async function sendDedupedWebhook(target, payload, options) {
 
         let sent = false;
         try {
-            entry.pending = sendWebhook(target, payload, options);
-            sent = await entry.pending;
+            const sendPromise = sendWebhook(target, payload, options);
+            entry.pending = sendPromise;
+            sent = await sendPromise;
         } catch {
             sent = false;
         }

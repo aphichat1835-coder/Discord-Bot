@@ -210,6 +210,49 @@ async function handleQuestCommand(interaction) {
     });
 }
 
+async function handleQuestStopAction(interaction) {
+    if (typeof interaction.deferReply === 'function') {
+        await interaction.deferReply({ flags: 64 });
+        await interaction.editReply({ content: `${config.emojis?.loading_circle || config.emojis?.loading || '⏳'} กำลังโหลด...` }).catch(() => null);
+        const payload = await buildStopPanelPayload(interaction.user.id);
+        return interaction.editReply({ content: null, ...payload });
+    }
+    const payload = await buildStopPanelPayload(interaction.user.id);
+    return interaction.reply({ ...payload, flags: 64 });
+}
+
+async function handleQuestRefreshAction(interaction) {
+    if (typeof interaction.deferUpdate === 'function') {
+        await interaction.deferUpdate();
+        const payload = await buildStopPanelPayload(interaction.user.id, `${config.emojis?.loading_circle || config.emojis?.loading || '🔄'} อัปเดตสถานะแล้ว`);
+        return interaction.editReply(payload);
+    }
+    const payload = await buildStopPanelPayload(interaction.user.id, `${config.emojis?.loading_circle || config.emojis?.loading || '🔄'} อัปเดตสถานะแล้ว`);
+    return interaction.update(payload);
+}
+
+async function handleQuestStopAllAction(interaction) {
+    if (typeof interaction.deferUpdate === 'function') {
+        await interaction.deferUpdate();
+    }
+    const stoppedCount = stopAllForUser(interaction.user.id);
+    const scheduledList = await listScheduledRunners(interaction.user.id).catch(() => []);
+    for (const r of scheduledList) {
+        stopScheduledJob(interaction.user.id, String(r._id));
+    }
+    const totalStopped = stoppedCount + scheduledList.length;
+    const payload = await buildStopPanelPayload(
+        interaction.user.id,
+        totalStopped > 0
+            ? `> ${config.emojis?.stop || '🛑'} สั่งหยุด Runner ทั้งหมดแล้ว **${totalStopped}** รายการ`
+            : `> ${config.emojis?.alert || 'ℹ️'} ไม่มี Runner ที่กำลังทำงาน`
+    );
+    if (typeof interaction.editReply === 'function' && interaction.deferred) {
+        return interaction.editReply(payload);
+    }
+    return interaction.update(payload);
+}
+
 async function handleQuestButton(interaction) {
     const customId = interaction.customId;
 
@@ -222,46 +265,15 @@ async function handleQuestButton(interaction) {
     }
 
     if (customId === IDS.BTN_QUEST_STOP) {
-        if (typeof interaction.deferReply === 'function') {
-            await interaction.deferReply({ flags: 64 });
-            await interaction.editReply({ content: `${config.emojis?.loading_circle || config.emojis?.loading || '⏳'} กำลังโหลด...` }).catch(() => null);
-            const payload = await buildStopPanelPayload(interaction.user.id);
-            return interaction.editReply({ content: null, ...payload });
-        }
-        const payload = await buildStopPanelPayload(interaction.user.id);
-        return interaction.reply({ ...payload, flags: 64 });
+        return handleQuestStopAction(interaction);
     }
 
     if (customId === IDS.BTN_QUEST_REFRESH) {
-        if (typeof interaction.deferUpdate === 'function') {
-            await interaction.deferUpdate();
-            const payload = await buildStopPanelPayload(interaction.user.id, `${config.emojis?.loading_circle || config.emojis?.loading || '🔄'} อัปเดตสถานะแล้ว`);
-            return interaction.editReply(payload);
-        }
-        const payload = await buildStopPanelPayload(interaction.user.id, `${config.emojis?.loading_circle || config.emojis?.loading || '🔄'} อัปเดตสถานะแล้ว`);
-        return interaction.update(payload);
+        return handleQuestRefreshAction(interaction);
     }
 
     if (customId === IDS.BTN_QUEST_STOP_ALL) {
-        if (typeof interaction.deferUpdate === 'function') {
-            await interaction.deferUpdate();
-        }
-        const stoppedCount = stopAllForUser(interaction.user.id);
-        const scheduledList = await listScheduledRunners(interaction.user.id).catch(() => []);
-        for (const r of scheduledList) {
-            stopScheduledJob(interaction.user.id, String(r._id));
-        }
-        const totalStopped = stoppedCount + scheduledList.length;
-        const payload = await buildStopPanelPayload(
-            interaction.user.id,
-            totalStopped > 0
-                ? `> ${config.emojis?.stop || '🛑'} สั่งหยุด Runner ทั้งหมดแล้ว **${totalStopped}** รายการ`
-                : `> ${config.emojis?.alert || 'ℹ️'} ไม่มี Runner ที่กำลังทำงาน`
-        );
-        if (typeof interaction.editReply === 'function' && interaction.deferred) {
-            return interaction.editReply(payload);
-        }
-        return interaction.update(payload);
+        return handleQuestStopAllAction(interaction);
     }
 
     return safeReply(interaction, {

@@ -1,8 +1,8 @@
 "use strict";
 
-const fs = require("fs");
-const path = require("path");
-const crypto = require("crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const crypto = require("node:crypto");
 const { getDatabase } = require("../connection");
 const { canWrite } = require("../maintenance/writePolicy");
 
@@ -164,7 +164,7 @@ class AssetCacheManager {
 
     setAsset(assetKey, buffer, options = {}) {
         if (!canWrite("cache")) {
-            return false;
+            return null;
         }
         if (!assetKey || !Buffer.isBuffer(buffer)) {
             throw new TypeError("assetKey string and Buffer are required");
@@ -199,7 +199,7 @@ class AssetCacheManager {
             const fileExistedBefore = fs.existsSync(fullPath);
             let newlyCreatedFile = false;
             if (!fileExistedBefore) {
-                const tempPath = `${fullPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+                const tempPath = `${fullPath}.${Date.now()}.${crypto.randomBytes(6).toString("hex")}.tmp`;
                 fs.writeFileSync(tempPath, buffer);
                 fs.renameSync(tempPath, fullPath);
                 newlyCreatedFile = true;
@@ -296,6 +296,7 @@ class AssetCacheManager {
             `).get();
             return row ? Number(row.total) : 0;
         } catch (_) {
+            // Return 0 if asset_cache table is unavailable or closed
             return 0;
         }
     }

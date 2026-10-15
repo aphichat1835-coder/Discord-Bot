@@ -993,7 +993,9 @@ async function executePrivacyRecoveryJobPhases({
                     },
                     $unset: { activeKey: "" }
                 }
-            ).catch(() => {});
+            ).catch(() => {
+                // Ignored: Status update failure is best-effort when recording fatal error
+            });
             return { jobId: job.jobId, status: "failed", errorCode: errCode };
         }
     }
@@ -1021,7 +1023,9 @@ async function executePrivacyRecoveryJobPhases({
                 },
                 $unset: { activeKey: "" }
             }
-        ).catch(() => {});
+        ).catch(() => {
+            // Ignored: Status update failure is best-effort when recording fatal error
+        });
         return { jobId: job.jobId, status: "failed", errorCode: errCode };
     }
 

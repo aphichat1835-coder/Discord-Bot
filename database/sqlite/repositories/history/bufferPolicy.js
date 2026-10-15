@@ -94,8 +94,8 @@ function evictWithPriority(buffer, dropTarget = 500, outStats = null) {
     return dropped;
 }
 
-const SENSITIVE_KEY_REGEX = /(token|password|pin|secret|credential|auth|bearer|cookie|salt|private|api_?key|access_?key|secret_?key|^key$)/i;
-const SENSITIVE_VALUE_REGEX = /(token\s*[:=]\s*[^\s&,;]+|bearer\s+[a-zA-Z0-9_.-]+|bot\s+[a-zA-Z0-9_.-]+|mfa\.[a-zA-Z0-9_-]{20,}|[a-zA-Z0-9_-]{24,}\.[a-zA-Z0-9_-]{6}\.[a-zA-Z0-9_-]{20,}|password\s*[:=]\s*[^\s&,;]+|api_?key\s*[:=]\s*[^\s&,;]+|secret\s*[:=]\s*[^\s&,;]+)/gi;
+const SENSITIVE_KEY_REGEX = /(?:token|password|pin|secret|credential|auth|bearer|cookie|salt|private|api_?key|access_?key|secret_?key|^key$)/i;
+const SENSITIVE_VALUE_REGEX = /(?:(?:token|password|secret|api_?key)\s*[:=]\s*[^\s&,;]+|bearer\s+[\w.-]+|bot\s+[\w.-]+|mfa\.[\w-]{20,}|[\w-]{24,}\.[\w-]{6}\.[\w-]{20,})/gi;
 
 function sanitizeString(str) {
     if (typeof str !== "string") return str;

@@ -911,8 +911,8 @@ class CampaignWorker {
                 } else {
                     freshReadyCount = panel?.lastReadyCount ?? null;
                 }
-            } catch (_) {
-                // If member check failed, retain previous count to avoid presenting inflated numbers
+            } catch (_err) {
+                // Ignored: If member check failed, retain previous count to avoid presenting inflated numbers
                 freshReadyCount = panel?.lastReadyCount ?? null;
             }
             if (panel) {

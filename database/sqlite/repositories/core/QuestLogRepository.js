@@ -62,8 +62,8 @@ class QuestLogRepository {
                         String(acc.maskedToken || ""),
                         String(acc.encryptedToken || ""),
                         String(acc.status || "pending"),
-                        parseInt(acc.questsFound, 10) || 0,
-                        parseInt(acc.questsCompleted, 10) || 0,
+                        Number.parseInt(acc.questsFound, 10) || 0,
+                        Number.parseInt(acc.questsCompleted, 10) || 0,
                         acc.errorMessage ? String(acc.errorMessage) : null,
                         acc.startedAt ? new Date(acc.startedAt).getTime() : now,
                         acc.finishedAt ? new Date(acc.finishedAt).getTime() : null

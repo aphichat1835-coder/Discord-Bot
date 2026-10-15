@@ -2,6 +2,12 @@
 
 const emoji = require("../ui/emojis");
 
+function formatGuildDisplay(guildId, guildName) {
+    if (!guildId) return "ยังไม่ได้ระบุ";
+    if (guildName) return `${guildName} (\`${guildId}\`)`;
+    return `\`${guildId}\``;
+}
+
 class GuildToGuildMode {
     get id() {
         return "GUILD_TO_GUILD";
@@ -60,13 +66,8 @@ class GuildToGuildMode {
     }
 
     formatPanelFields({ panelState, readyCount, liveJob, sourceGuildName, targetGuildName }) {
-        const sourceDisplay = panelState.sourceGuildId
-            ? (sourceGuildName ? `${sourceGuildName} (\`${panelState.sourceGuildId}\`)` : `\`${panelState.sourceGuildId}\``)
-            : "ยังไม่ได้ระบุ";
-
-        const targetDisplay = panelState.targetGuildId
-            ? (targetGuildName ? `${targetGuildName} (\`${panelState.targetGuildId}\`)` : `\`${panelState.targetGuildId}\``)
-            : "ยังไม่ได้ระบุ";
+        const sourceDisplay = formatGuildDisplay(panelState.sourceGuildId, sourceGuildName);
+        const targetDisplay = formatGuildDisplay(panelState.targetGuildId, targetGuildName);
 
         const readyDisplay = readyCount !== null && readyCount !== undefined
             ? `**${Number(readyCount).toLocaleString("th-TH")}** คน`

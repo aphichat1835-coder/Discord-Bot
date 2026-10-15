@@ -19,7 +19,7 @@ function resolveDbPath(customPath = null) {
         if (customPath === ":memory:") return ":memory:";
         return path.resolve(customPath);
     }
-    if (process.env.SQLITE_DB_PATH && process.env.SQLITE_DB_PATH.trim()) {
+    if (process.env.SQLITE_DB_PATH?.trim()) {
         const envPath = process.env.SQLITE_DB_PATH.trim();
         if (envPath === ":memory:") return ":memory:";
         return path.resolve(envPath);
@@ -30,7 +30,9 @@ function resolveDbPath(customPath = null) {
             fs.accessSync("/persistent", fs.constants.R_OK | fs.constants.W_OK);
             return path.resolve("/persistent", "discordbot.sqlite");
         }
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: /persistent volume is optional or not mounted
+    }
     // Fallback: dedicated data directory in workspace root (avoiding source code collisions)
     return path.resolve(process.cwd(), "data", "discordbot.sqlite");
 }

@@ -364,7 +364,7 @@ async function checkBatchTokens(tokens = [], optionsOrDelay = {}) {
 
     if (typeof optionsOrDelay === 'number') {
         delayMs = Math.min(optionsOrDelay, 200);
-    } else if (typeof optionsOrDelay === 'object' && optionsOrDelay !== null) {
+    } else if (optionsOrDelay && typeof optionsOrDelay === 'object') {
         if (Number.isFinite(optionsOrDelay.batchSize) && optionsOrDelay.batchSize > 0) {
             batchSize = Math.min(10, Math.max(1, Math.floor(optionsOrDelay.batchSize)));
         }

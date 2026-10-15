@@ -15,9 +15,9 @@
 ================================================================================
 */
 
-const fs = require("fs");
-const crypto = require("crypto");
-const https = require("https");
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+const https = require("node:https");
 const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed } = require("../../core/discordCompat");
 

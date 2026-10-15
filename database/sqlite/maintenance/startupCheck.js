@@ -46,7 +46,7 @@ function runStartupCheck(db, options = {}) {
 
     // 4. Read probe
     const readRow = db.prepare("SELECT 1 AS probe").get();
-    if (!readRow || readRow.probe !== 1) {
+    if (readRow?.probe !== 1) {
         throw new Error("[SQLITE] ❌ Read probe failed: SELECT 1 returned unexpected output");
     }
     results.checks.readProbe = true;
@@ -56,7 +56,7 @@ function runStartupCheck(db, options = {}) {
     const testTx = db.transaction(() => {
         db.prepare("INSERT INTO database_meta (key, value, updated_at) VALUES (?, ?, ?)").run(testKey, "probing", Date.now());
         const verifyInTx = db.prepare("SELECT value FROM database_meta WHERE key = ?").get(testKey);
-        if (!verifyInTx || verifyInTx.value !== "probing") {
+        if (verifyInTx?.value !== "probing") {
             throw new Error("Write probe verification within transaction failed");
         }
         // Deliberately throw to rollback!

@@ -11,7 +11,7 @@ async function main() {
     console.log("           สถิติข้อมูลแยกตามประเภท (Data Categories)           ");
     console.log("════════════════════════════════════════════════════════════");
 
-    for (const [catKey, catVal] of Object.entries(details.categories)) {
+    for (const catVal of Object.values(details.categories)) {
         console.log(`\n📌 ${catVal.label} (รวม ${catVal.count.toLocaleString()} รายการ):`);
         for (const [tblKey, tblVal] of Object.entries(catVal.tables)) {
             console.log(`   - ${tblKey.padEnd(26)} : ${tblVal.count.toLocaleString()} แถว (${tblVal.label})`);

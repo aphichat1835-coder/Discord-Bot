@@ -48,6 +48,37 @@ function summarizeJoinCandidates(docs = []) {
     };
 }
 
+function accumulatePageStats(summary, page) {
+    const stats = page?.statistics || page?.page?.statistics;
+    if (summary && stats) {
+        for (const [k, v] of Object.entries(stats)) {
+            if (typeof v === "number") {
+                summary[k] = (summary[k] || 0) + v;
+            }
+        }
+    }
+}
+
+async function processCandidateJoin(candidate, summary, context, tokenManager, targetGuildId) {
+    if (!summary) return;
+    let accessToken = "token";
+    if (tokenManager?.getAccessToken) {
+        const tokenRes = await tokenManager.getAccessToken({
+            userId: candidate.userId,
+            tokenField: candidate.tokenField || "oauth",
+            model: context.model,
+            discord: context.discord
+        });
+        if (tokenRes?.ok) {
+            accessToken = tokenRes.accessToken;
+        }
+    }
+    if (context.discord?.addMemberToGuild) {
+        const res = await context.discord.addMemberToGuild(targetGuildId, candidate.userId, accessToken);
+        if (res?.ok) summary.joined = (summary.joined || 0) + 1;
+    }
+}
+
 module.exports = {
     ...subsystem,
     CAMPAIGN_TOKEN_FIELDS,
@@ -70,37 +101,11 @@ module.exports = {
                 baseConfig: { targetGuildId },
                 tokenManager: customManager,
                 batchSize: context.config?.batchSize || 500,
-                onPage: (page) => {
-                    const stats = page?.statistics || page?.page?.statistics;
-                    if (summary && stats) {
-                        for (const [k, v] of Object.entries(stats)) {
-                            if (typeof v === "number") {
-                                summary[k] = (summary[k] || 0) + v;
-                            }
-                        }
-                    }
-                }
+                onPage: (page) => accumulatePageStats(summary, page)
             });
 
             for await (const { candidate } of stream) {
-                if (summary) {
-                    let accessToken = "token";
-                    if (tokenManager?.getAccessToken) {
-                        const tokenRes = await tokenManager.getAccessToken({
-                            userId: candidate.userId,
-                            tokenField: candidate.tokenField || "oauth",
-                            model: context.model,
-                            discord: context.discord
-                        });
-                        if (tokenRes?.ok) {
-                            accessToken = tokenRes.accessToken;
-                        }
-                    }
-                    if (context.discord?.addMemberToGuild) {
-                        const res = await context.discord.addMemberToGuild(targetGuildId, candidate.userId, accessToken);
-                        if (res?.ok) summary.joined = (summary.joined || 0) + 1;
-                    }
-                }
+                await processCandidateJoin(candidate, summary, context, tokenManager, targetGuildId);
             }
         }
     }

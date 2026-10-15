@@ -135,7 +135,7 @@ class DmNotificationRepository {
         }
         if (updateFields.attempts !== undefined) {
             setClauses.push("attempts = ?");
-            values.push(parseInt(updateFields.attempts, 10) || 0);
+            values.push(Number.parseInt(updateFields.attempts, 10) || 0);
         }
         if (updateFields.nextAttemptAt !== undefined) {
             setClauses.push("next_attempt_at = ?");

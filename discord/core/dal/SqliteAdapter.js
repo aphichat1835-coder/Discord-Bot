@@ -1,6 +1,7 @@
 'use strict';
 
 const { DatabaseSync } = require('node:sqlite');
+const crypto = require('node:crypto');
 const BaseRepository = require('./BaseRepository');
 
 function setDeep(target, path, value) {
@@ -162,7 +163,7 @@ class SqliteAdapter extends BaseRepository {
                 unwrapped[k] = v;
             }
         }
-        const id = String(unwrapped.id || unwrapped._id || `${now}_${Math.random().toString(36).slice(2, 8)}`);
+        const id = String(unwrapped.id || unwrapped._id || `${now}_${crypto.randomBytes(4).toString('hex')}`);
         const item = { ...unwrapped, id, _id: id, createdAt: now, updatedAt: now };
         this.stmtInsert.run(id, JSON.stringify(item), now, now);
         return item;

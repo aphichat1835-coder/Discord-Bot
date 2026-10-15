@@ -626,7 +626,7 @@ async function ensureBotPermission(guild, source, action, destination = null) {
         error.permissionAction = action;
         throw error;
     }
-    if (action === "move" && (!isVoiceChannel(destination) || String(destination.guild?.id) !== String(guild?.id) || destination.id === source.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
+    if (action === "move" && (!isVoiceChannel(destination) || String(destination?.guild?.id) !== String(guild?.id) || destination?.id === source?.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
 }
 async function setVoice(member, type, enabled, reason) { return type === "mute" ? member.voice.setMute(enabled, reason) : member.voice.setDeaf(enabled, reason); }
 async function setVoiceBoth(member, enabled, reason) {

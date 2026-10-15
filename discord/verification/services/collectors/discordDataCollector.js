@@ -110,15 +110,12 @@ function normalizeConnections(connections = []) {
 function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousSummary = null) {
     const now = Date.now();
     if (fetchFailed || !Array.isArray(guildsResult)) {
-        const prevTotal = Number.isFinite(Number(previousSummary?.totalCount))
-            ? Number(previousSummary.totalCount)
-            : (Number.isFinite(Number(previousSummary?.totalGuilds)) ? Number(previousSummary.totalGuilds) : 0);
-        const prevOwned = Number.isFinite(Number(previousSummary?.ownedCount))
-            ? Number(previousSummary.ownedCount)
-            : (Number.isFinite(Number(previousSummary?.ownerGuildsCount)) ? Number(previousSummary.ownerGuildsCount) : 0);
-        const prevAdmin = Number.isFinite(Number(previousSummary?.adminCount))
-            ? Number(previousSummary.adminCount)
-            : (Number.isFinite(Number(previousSummary?.adminGuildsCount)) ? Number(previousSummary.adminGuildsCount) : 0);
+        const totalRaw = previousSummary?.totalCount ?? previousSummary?.totalGuilds;
+        const ownedRaw = previousSummary?.ownedCount ?? previousSummary?.ownerGuildsCount;
+        const adminRaw = previousSummary?.adminCount ?? previousSummary?.adminGuildsCount;
+        const prevTotal = Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : 0;
+        const prevOwned = Number.isFinite(Number(ownedRaw)) ? Number(ownedRaw) : 0;
+        const prevAdmin = Number.isFinite(Number(adminRaw)) ? Number(adminRaw) : 0;
         return {
             totalCount: prevTotal,
             ownedCount: prevOwned,

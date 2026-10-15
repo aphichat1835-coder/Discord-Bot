@@ -67,7 +67,9 @@ async function shutdown() {
     try {
         scheduler.stopScheduler();
         await scheduler.drainSchedulerTasks();
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: Best-effort drain during shutdown
+    }
 
     try {
         getCacheManager().stopTouchFlusher();
@@ -75,15 +77,21 @@ async function shutdown() {
         getVoiceEventRepository().stopFlusher();
         getCommandEventRepository().stopFlusher();
         getSessionEventRepository().stopFlusher();
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: Best-effort stop of cache and repository flushers
+    }
 
     try {
         sqlite.shutdown();
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: Best-effort SQLite shutdown
+    }
 
     try {
         await mongo.disconnectMongo();
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: Best-effort Mongo disconnect during shutdown
+    }
 }
 
 function isReady() {

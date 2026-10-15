@@ -12,6 +12,36 @@ const { sanitizeUserFacingError } = require("../worker/batchLogger");
 
 const stagedSessions = new Map();
 
+function calculateJobDurationMs(job) {
+    if (!job?.createdAt) return 0;
+    const end = job.completedAt || Date.now();
+    return Math.max(0, end - job.createdAt);
+}
+
+async function refreshLiveTargetAndCount({ client, preflight, mode, tokenManager }) {
+    let targetGuild = client.guilds?.cache?.get(preflight.targetGuildId);
+    if (!targetGuild && client.guilds?.fetch) {
+        targetGuild = await client.guilds.fetch(preflight.targetGuildId).catch(() => null);
+    }
+    if (!targetGuild) {
+        return {
+            ok: false,
+            error: "ไม่พบเซิร์ฟเวอร์ปลายทาง หรือบอทไม่ได้อยู่ในเซิร์ฟเวอร์เป้าหมายแล้ว กรุณาเชิญบอทเข้าเซิร์ฟเวอร์ก่อนนะครับ"
+        };
+    }
+    const targetMemberIds = await getLiveTargetMemberIds(targetGuild);
+    const readyCount = await countEligibleCandidates({
+        mode,
+        baseConfig: {
+            sourceGuildId: preflight.sourceGuildId,
+            targetGuildId: preflight.targetGuildId
+        },
+        tokenManager: tokenManager || oauthTokenManager,
+        targetMemberIds
+    });
+    return { ok: true, targetMemberIds, readyCount };
+}
+
 function findCampaignPanel(repository, channelId, jobId) {
     if (!repository) return null;
     if (channelId && repository.findPanelByChannelId) {
@@ -167,26 +197,10 @@ class JoinCampaignService {
         let freshTargetMemberIds;
         let freshReadyCount;
         try {
-            let targetGuild = client.guilds?.cache?.get(preflight.targetGuildId);
-            if (!targetGuild && client.guilds?.fetch) {
-                targetGuild = await client.guilds.fetch(preflight.targetGuildId).catch(() => null);
-            }
-            if (!targetGuild) {
-                return {
-                    ok: false,
-                    error: "ไม่พบเซิร์ฟเวอร์ปลายทาง หรือบอทไม่ได้อยู่ในเซิร์ฟเวอร์เป้าหมายแล้ว กรุณาเชิญบอทเข้าเซิร์ฟเวอร์ก่อนนะครับ"
-                };
-            }
-            freshTargetMemberIds = await getLiveTargetMemberIds(targetGuild);
-            freshReadyCount = await countEligibleCandidates({
-                mode,
-                baseConfig: {
-                    sourceGuildId: preflight.sourceGuildId,
-                    targetGuildId: preflight.targetGuildId
-                },
-                tokenManager: tokenManager || oauthTokenManager,
-                targetMemberIds: freshTargetMemberIds
-            });
+            const refreshRes = await refreshLiveTargetAndCount({ client, preflight, mode, tokenManager });
+            if (!refreshRes.ok) return refreshRes;
+            freshTargetMemberIds = refreshRes.targetMemberIds;
+            freshReadyCount = refreshRes.readyCount;
         } catch (err) {
             const sanitizedMsg = sanitizeUserFacingError(err?.message || "เกิดข้อผิดพลาดในการเชื่อมต่อ");
             return {
@@ -382,8 +396,8 @@ class JoinCampaignService {
                 started_at: job.createdAt,
                 completedAt: job.completedAt,
                 completed_at: job.completedAt,
-                durationMs: job.completedAt && job.createdAt ? Math.max(0, job.completedAt - job.createdAt) : (job.createdAt ? Math.max(0, Date.now() - job.createdAt) : 0),
-                duration_ms: job.completedAt && job.createdAt ? Math.max(0, job.completedAt - job.createdAt) : (job.createdAt ? Math.max(0, Date.now() - job.createdAt) : 0)
+                durationMs: calculateJobDurationMs(job),
+                duration_ms: calculateJobDurationMs(job)
             };
         };
 

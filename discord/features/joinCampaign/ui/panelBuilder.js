@@ -1,7 +1,7 @@
 "use strict";
 
-const path = require("path");
-const fs = require("fs");
+const path = require("node:path");
+const fs = require("node:fs");
 const {
     EmbedBuilder,
     ActionRowBuilder,
@@ -44,7 +44,7 @@ function buildPanelPayload({
     targetGuildName = null,
     includeFiles = false
 }) {
-    const isRunning = Boolean(liveJob && liveJob.status === "RUNNING");
+    const isRunning = Boolean(liveJob?.status === "RUNNING");
     const primaryOwnerId = getPrimaryOwnerId(process.env, config) || config.system?.ownerId || "661415152146710558";
     const bannerPath = getJoinPanelBannerPath();
     const hasAttachment = Boolean(bannerPath);
@@ -80,7 +80,7 @@ function buildPanelPayload({
     embed.addFields(modeFields);
 
     // Status Field
-    if (isRunning) {
+    if (isRunning && liveJob) {
         const joined = liveJob.joinedCount ?? liveJob.joined_count ?? 0;
         const targetQuota = liveJob.requestedAmount ?? liveJob.requested_amount ?? (liveJob.selectedAmount ?? liveJob.selected_amount ?? 0);
         embed.addFields({

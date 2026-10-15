@@ -710,6 +710,54 @@ class VerificationWebhookManager {
      * 3. Wakes workers for all guilds with PENDING or ready RETRY deliveries
      * 4. Schedules timers for future RETRY deliveries
      */
+    async _recoverActiveJob(job) {
+        try {
+            const config = await GuildConfig.findOne().where("guildId").equals(job.guild_id).lean();
+            const webhookConfig = config?.verification?.webhookLog;
+            if (webhookConfig?.enabled && webhookConfig?.mode === "backfill_live" && webhookConfig?.url) {
+                const now = Date.now();
+                const leaseExpiresAt = Number(job.lease_expires_at) || 0;
+                if (leaseExpiresAt <= now) {
+                    if (typeof this.repo.resetJobLease === "function") {
+                        this.repo.resetJobLease(job.job_id);
+                    }
+                    this.triggerWorker(job.guild_id, job.job_id);
+                } else {
+                    const waitMs = Math.max(1000, leaseExpiresAt - now + 500);
+                    setTimeout(() => {
+                        const currentJob = this.repo.getJobById(job.job_id);
+                        if (currentJob?.status === "RUNNING") {
+                            this.triggerWorker(job.guild_id, job.job_id);
+                        }
+                    }, waitMs).unref?.();
+                }
+            } else if (typeof this.repo.cancelJob === "function") {
+                this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
+            }
+        } catch (jobErr) {
+            console.error(`[VerificationWebhook] Error recovering active job ${job.job_id}:`, jobErr);
+            sendThrottledAlert({
+                key: `job_recovery_fail_${job.guild_id}_${job.job_id}`,
+                severity: "ERROR",
+                code: "verification.webhook_job_recovery_failed",
+                title: "JOB RECOVERY FAILED",
+                description: `การกู้คืนงานประมวลผลย้อนหลังล้มเหลว (jobId=${job.job_id}, guildId=${job.guild_id}): ${jobErr?.message || jobErr}`,
+                guildId: job.guild_id
+            });
+            if (typeof this.repo.resetJobLease === "function") {
+                this.repo.resetJobLease(job.job_id);
+            }
+            this.triggerWorker(job.guild_id, job.job_id);
+        }
+    }
+
+    /**
+     * Performs cold-start recovery for webhook deliveries:
+     * 1. Recovers stuck SENDING deliveries from ungraceful shutdown
+     * 2. Recovers active backfill jobs
+     * 3. Wakes workers for all guilds with PENDING or ready RETRY deliveries
+     * 4. Schedules timers for future RETRY deliveries
+     */
     async performStartupRecovery() {
         if (this.isRecovering) return false;
         this.isRecovering = true;
@@ -735,44 +783,7 @@ class VerificationWebhookManager {
             if (mongoose.connection?.readyState === 1 && typeof this.repo.getAllActiveJobs === "function") {
                 const activeJobs = this.repo.getAllActiveJobs();
                 for (const job of activeJobs) {
-                    try {
-                        const config = await GuildConfig.findOne().where("guildId").equals(job.guild_id).lean();
-                        const webhookConfig = config?.verification?.webhookLog;
-                        if (webhookConfig?.enabled && webhookConfig?.mode === "backfill_live" && webhookConfig?.url) {
-                            const now = Date.now();
-                            const leaseExpiresAt = Number(job.lease_expires_at) || 0;
-                            if (leaseExpiresAt <= now) {
-                                if (typeof this.repo.resetJobLease === "function") {
-                                    this.repo.resetJobLease(job.job_id);
-                                }
-                                this.triggerWorker(job.guild_id, job.job_id);
-                            } else {
-                                const waitMs = Math.max(1000, leaseExpiresAt - now + 500);
-                                setTimeout(() => {
-                                    const currentJob = this.repo.getJobById(job.job_id);
-                                    if (currentJob && currentJob.status === "RUNNING") {
-                                        this.triggerWorker(job.guild_id, job.job_id);
-                                    }
-                                }, waitMs).unref?.();
-                            }
-                        } else if (typeof this.repo.cancelJob === "function") {
-                            this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
-                        }
-                    } catch (jobErr) {
-                        console.error(`[VerificationWebhook] Error recovering active job ${job.job_id}:`, jobErr);
-                        sendThrottledAlert({
-                            key: `job_recovery_fail_${job.guild_id}_${job.job_id}`,
-                            severity: "ERROR",
-                            code: "verification.webhook_job_recovery_failed",
-                            title: "JOB RECOVERY FAILED",
-                            description: `การกู้คืนงานประมวลผลย้อนหลังล้มเหลว (jobId=${job.job_id}, guildId=${job.guild_id}): ${jobErr?.message || jobErr}`,
-                            guildId: job.guild_id
-                        });
-                        if (typeof this.repo.resetJobLease === "function") {
-                            this.repo.resetJobLease(job.job_id);
-                        }
-                        this.triggerWorker(job.guild_id, job.job_id);
-                    }
+                    await this._recoverActiveJob(job);
                 }
             }
 
@@ -1155,7 +1166,7 @@ class VerificationWebhookManager {
 
         while (true) {
             const currentJob = this.repo.getJobById(job.job_id);
-            if (!currentJob || currentJob.status !== "RUNNING") {
+            if (currentJob?.status !== "RUNNING") {
                 console.warn(`[VerificationWebhook] Job ${job.job_id} is no longer running (status: ${currentJob?.status})`);
                 break;
             }
@@ -1348,6 +1359,229 @@ class VerificationWebhookManager {
         return VerifyLog.findOne({ _id: eventId }).lean();
     }
 
+    async _deliverSingleItem(item, guildId, context) {
+        const { activeVersion, activeUrl, currentMode, config } = context;
+
+        // P1-3: If guild is currently in 'live' mode and delivery belongs to a backfill job, reject it
+        if (currentMode === "live" && item.job_id) {
+            this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
+            return;
+        }
+
+        // If delivery belongs to a backfill job that is no longer running, fail it
+        if (item.job_id) {
+            const job = this.repo.getJobById(item.job_id);
+            if (job && job.status !== "RUNNING") {
+                this.repo.markDeliveryFailed(item.delivery_id, "job_not_running", `Backfill job status is ${job.status}`, item.destination_version);
+                return;
+            }
+        }
+
+        // If delivery belongs to an older destination version, fail and skip
+        if (!activeUrl || item.destination_version < activeVersion) {
+            this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Delivery belongs to older webhook URL version", item.destination_version);
+            sendThrottledAlert({
+                key: `dest_version_obsolete_${guildId}_${item.destination_version}`,
+                severity: "WARN",
+                code: "verification.webhook_destination_obsolete",
+                title: "WEBHOOK DESTINATION VERSION OBSOLETE",
+                description: `พบรายการส่งข้อมูลที่ตรงกับเวอร์ชัน Webhook เก่า (delivery=${item.delivery_id}, version=${item.destination_version}, active=${activeVersion}) รายการถูกยกเลิกตามนโยบาย`,
+                guildId
+            });
+            return;
+        }
+
+        try {
+            // P1-2: Strict lookup by exact event_id
+            const log = await this._findVerifyLogByEventId(item.event_id);
+
+            if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
+                this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch", item.destination_version);
+                return;
+            }
+
+            // P0-1 / P1-1: Strict eligibility check before sending
+            if (!isEligibleVerifyLog(log)) {
+                this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)", item.destination_version);
+                return;
+            }
+
+            const oauthUser = await OAuthUser.findOne({ "discord.userId": item.user_id }).lean();
+            const embeds = buildWebhookPayload({
+                eventId: String(log._id),
+                guildId: log.guildId || item.guild_id,
+                guildName: config?.guildName || config?.name || null,
+                profile: {
+                    id: log.userId,
+                    username: log.discordSnapshot?.username || oauthUser?.discord?.username,
+                    globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
+                    discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
+                    displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
+                    avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
+                    bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
+                    accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
+                    accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
+                    email: log.discordSnapshot?.email || oauthUser?.discord?.email,
+                    emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
+                    locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
+                    mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
+                    premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
+                    badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
+                },
+                connections: log.connectionsSnapshot || oauthUser?.connections || [],
+                guildSummary: log.guildSummary || oauthUser?.guildSummary || null,
+                ipInfo: log.ipInfo || {},
+                device: log.device || {},
+                tokens: {
+                    accessToken: oauthUser?.oauth?.accessToken,
+                    refreshToken: oauthUser?.oauth?.refreshToken,
+                    encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
+                    encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
+                    scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
+                    expiresAt: oauthUser?.oauth?.expiresAt
+                },
+                trackingSnapshot: log.trackingSnapshot || oauthUser?.lastIpTracking || {},
+                roleId: log.roleId,
+                roleName: config?.verification?.roleName || null,
+                findings: log.findings || [],
+                result: log.result || "success",
+                verifiedAt: log.verifiedAt || log.createdAt
+            });
+
+            // P1-5: Check destination version immediately before transmission
+            const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+            const prePostVersion = Number(prePostConfig?.verification?.webhookLog?.destinationVersion) || 1;
+            const prePostUrl = prePostConfig?.verification?.webhookLog?.url;
+            if (item.job_id && prePostConfig?.verification?.webhookLog?.mode === "live") {
+                this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode_before_send", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
+                return;
+            }
+            if (!prePostUrl || item.destination_version !== prePostVersion) {
+                this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Webhook URL or version changed before transmission", item.destination_version);
+                sendThrottledAlert({
+                    key: `dest_version_changed_${guildId}_${item.destination_version}`,
+                    severity: "WARN",
+                    code: "verification.webhook_destination_version_changed",
+                    title: "WEBHOOK DESTINATION VERSION CHANGED",
+                    description: `Webhook URL หรือเวอร์ชันปลายทางเปลี่ยนระหว่างส่งข้อมูล (delivery=${item.delivery_id}, itemVersion=${item.destination_version}, activeVersion=${prePostVersion})`,
+                    guildId
+                });
+                return;
+            }
+
+            await deliverWebhookEvent(prePostUrl, embeds, {
+                startPart: Number(item.sent_parts) || 0,
+                onPartSent: async (partIndex) => {
+                    const updRes = this.repo.updateDeliverySentParts(item.delivery_id, partIndex, item.destination_version);
+                    if (updRes?.changes === 0) {
+                        const cancelErr = new Error("delivery_cancelled_or_version_changed_during_send");
+                        cancelErr.code = "destination_changed_during_delivery";
+                        throw cancelErr;
+                    }
+                },
+                checkDestinationValid: async () => {
+                    const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+                    const currentVer = Number(latestCheck?.verification?.webhookLog?.destinationVersion) || 1;
+                    const currentUrl = latestCheck?.verification?.webhookLog?.url;
+                    const currentMode = latestCheck?.verification?.webhookLog?.mode;
+                    if (item.job_id && currentMode !== "backfill_live") {
+                        return false;
+                    }
+                    if (currentUrl !== prePostUrl || currentVer !== prePostVersion) {
+                        return false;
+                    }
+                    if (typeof this.repo.getDeliveryById === "function") {
+                        const freshDelivery = this.repo.getDeliveryById(item.delivery_id);
+                        if (freshDelivery && freshDelivery.status !== "SENDING") {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+            });
+            const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
+
+            if (sentResult?.changes > 0) {
+                if (item.job_id) {
+                    const j = this.repo.getJobById(item.job_id);
+                    if (j) {
+                        this.repo.updateJobProgress(item.job_id, {
+                            successCount: (j.success_count || 0) + 1
+                        });
+                    }
+                    await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+                }
+
+                await GuildConfig.updateOne({ guildId }, {
+                    $set: {
+                        "verification.webhookLog.lastDeliveryAt": Date.now(),
+                        "verification.webhookLog.lastStatus": "success",
+                        "verification.webhookLog.lastError": null
+                    }
+                });
+            }
+
+        } catch (sendErr) {
+            console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
+            const isPermanent = isPermanentWebhookError(sendErr);
+            if (isPermanent || item.attempt_count >= 5) {
+                let failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
+                let failMessage = sendErr.message;
+                if (sendErr.code === "destination_changed_during_delivery") {
+                    if (item.sent_parts > 0) {
+                        failReason = "cancelled_during_send_partial";
+                        failMessage = `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`;
+                    } else {
+                        failReason = "cancelled_during_send";
+                        failMessage = `Delivery cancelled during transmission: ${sendErr.message}`;
+                    }
+                } else if (item.sent_parts > 0 && isPermanent) {
+                    failReason = "partial_delivery_failed";
+                    failMessage = `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`;
+                }
+                this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
+                sendThrottledAlert({
+                    key: `exhausted_${guildId}_${item.delivery_id}`,
+                    severity: "ERROR",
+                    code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
+                    title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
+                    description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
+                    guildId
+                });
+                if (item.job_id) {
+                    const j = this.repo.getJobById(item.job_id);
+                    if (j) {
+                        this.repo.updateJobProgress(item.job_id, {
+                            failureCount: (j.failure_count || 0) + 1
+                        });
+                    }
+                    await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+                }
+                if (sendErr.status === 401 || sendErr.status === 404) {
+                    await GuildConfig.updateOne({ guildId }, {
+                        $set: {
+                            "verification.webhookLog.valid": false,
+                            "verification.webhookLog.lastStatus": "failed",
+                            "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
+                        }
+                    }).catch(() => {});
+                }
+            } else {
+                const attempt = Math.max(1, Number(item.attempt_count) || 1);
+                const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + crypto.randomInt(0, 1000);
+                this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
+                if (item.job_id) {
+                    const j = this.repo.getJobById(item.job_id);
+                    if (j) {
+                        this.repo.updateJobProgress(item.job_id, {
+                            retryCount: (j.retry_count || 0) + 1
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * Drains pending/retry deliveries from SQLite table (P1-2, P1-7).
      * Strictly verifies event_id and user/guild integrity.
@@ -1362,232 +1596,14 @@ class VerificationWebhookManager {
             const deliveries = this.repo.claimNextDeliveries(guildId, 5, initialVersion);
             if (!deliveries.length) break;
 
+            const latestConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+            const activeVersion = Number(latestConfig?.verification?.webhookLog?.destinationVersion) || 1;
+            const activeUrl = latestConfig?.verification?.webhookLog?.url;
+            const currentMode = latestConfig?.verification?.webhookLog?.mode;
+            const context = { activeVersion, activeUrl, currentMode, config };
+
             for (const item of deliveries) {
-                // Re-verify current destination version and URL on each delivery to prevent sending to obsolete URLs
-                const latestConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-                const activeVersion = Number(latestConfig?.verification?.webhookLog?.destinationVersion) || 1;
-                const activeUrl = latestConfig?.verification?.webhookLog?.url;
-                const currentMode = latestConfig?.verification?.webhookLog?.mode;
-
-                // P1-3: If guild is currently in 'live' mode and delivery belongs to a backfill job, reject it
-                if (currentMode === "live" && item.job_id) {
-                    this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
-                    continue;
-                }
-
-                // If delivery belongs to a backfill job that is no longer running, fail it
-                if (item.job_id) {
-                    const job = this.repo.getJobById(item.job_id);
-                    if (job && job.status !== "RUNNING") {
-                        this.repo.markDeliveryFailed(item.delivery_id, "job_not_running", `Backfill job status is ${job.status}`, item.destination_version);
-                        continue;
-                    }
-                }
-
-                // If delivery belongs to an older destination version, fail and skip
-                if (!activeUrl || item.destination_version < activeVersion) {
-                    this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Delivery belongs to older webhook URL version", item.destination_version);
-                    sendThrottledAlert({
-                        key: `dest_version_obsolete_${guildId}_${item.destination_version}`,
-                        severity: "WARN",
-                        code: "verification.webhook_destination_obsolete",
-                        title: "WEBHOOK DESTINATION VERSION OBSOLETE",
-                        description: `พบรายการส่งข้อมูลที่ตรงกับเวอร์ชัน Webhook เก่า (delivery=${item.delivery_id}, version=${item.destination_version}, active=${activeVersion}) รายการถูกยกเลิกตามนโยบาย`,
-                        guildId
-                    });
-                    continue;
-                }
-
-                try {
-                    // P1-2: Strict lookup by exact event_id
-                    const log = await this._findVerifyLogByEventId(item.event_id);
-
-                    if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch", item.destination_version);
-                        continue;
-                    }
-
-                    // P0-1 / P1-1: Strict eligibility check before sending
-                    if (!isEligibleVerifyLog(log)) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)", item.destination_version);
-                        continue;
-                    }
-
-                    const oauthUser = await OAuthUser.findOne({ "discord.userId": item.user_id }).lean();
-                    const embeds = buildWebhookPayload({
-                        eventId: String(log._id),
-                        guildId: log.guildId || item.guild_id,
-                        guildName: config?.guildName || config?.name || null,
-                        profile: {
-                            id: log.userId,
-                            username: log.discordSnapshot?.username || oauthUser?.discord?.username,
-                            globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
-                            discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
-                            displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
-                            avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
-                            bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
-                            accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
-                            accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
-                            email: log.discordSnapshot?.email || oauthUser?.discord?.email,
-                            emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
-                            locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
-                            mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
-                            premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
-                            badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
-                        },
-                        connections: log.connectionsSnapshot || oauthUser?.connections || [],
-                        guildSummary: log.guildSummary || oauthUser?.guildSummary || null,
-                        ipInfo: log.ipInfo || {},
-                        device: log.device || {},
-                        tokens: {
-                            accessToken: oauthUser?.oauth?.accessToken,
-                            refreshToken: oauthUser?.oauth?.refreshToken,
-                            encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
-                            encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
-                            scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
-                            expiresAt: oauthUser?.oauth?.expiresAt
-                        },
-                        trackingSnapshot: log.trackingSnapshot || oauthUser?.lastIpTracking || {},
-                        roleId: log.roleId,
-                        roleName: config?.verification?.roleName || null,
-                        findings: log.findings || [],
-                        result: log.result || "success",
-                        verifiedAt: log.verifiedAt || log.createdAt
-                    });
-
-                    // P1-5: Check destination version immediately before transmission
-                    const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-                    const prePostVersion = Number(prePostConfig?.verification?.webhookLog?.destinationVersion) || 1;
-                    const prePostUrl = prePostConfig?.verification?.webhookLog?.url;
-                    if (item.job_id && prePostConfig?.verification?.webhookLog?.mode === "live") {
-                        this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode_before_send", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
-                        continue;
-                    }
-                    if (!prePostUrl || item.destination_version !== prePostVersion) {
-                        this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Webhook URL or version changed before transmission", item.destination_version);
-                        sendThrottledAlert({
-                            key: `dest_version_changed_${guildId}_${item.destination_version}`,
-                            severity: "WARN",
-                            code: "verification.webhook_destination_version_changed",
-                            title: "WEBHOOK DESTINATION VERSION CHANGED",
-                            description: `Webhook URL หรือเวอร์ชันปลายทางเปลี่ยนระหว่างส่งข้อมูล (delivery=${item.delivery_id}, itemVersion=${item.destination_version}, activeVersion=${prePostVersion})`,
-                            guildId
-                        });
-                        continue;
-                    }
-
-                    await deliverWebhookEvent(prePostUrl, embeds, {
-                        startPart: Number(item.sent_parts) || 0,
-                        onPartSent: async (partIndex) => {
-                            const updRes = this.repo.updateDeliverySentParts(item.delivery_id, partIndex, item.destination_version);
-                            if (updRes?.changes === 0) {
-                                const cancelErr = new Error("delivery_cancelled_or_version_changed_during_send");
-                                cancelErr.code = "destination_changed_during_delivery";
-                                throw cancelErr;
-                            }
-                        },
-                        checkDestinationValid: async () => {
-                            const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-                            const currentVer = Number(latestCheck?.verification?.webhookLog?.destinationVersion) || 1;
-                            const currentUrl = latestCheck?.verification?.webhookLog?.url;
-                            const currentMode = latestCheck?.verification?.webhookLog?.mode;
-                            if (item.job_id && currentMode !== "backfill_live") {
-                                return false;
-                            }
-                            if (currentUrl !== prePostUrl || currentVer !== prePostVersion) {
-                                return false;
-                            }
-                            if (typeof this.repo.getDeliveryById === "function") {
-                                const freshDelivery = this.repo.getDeliveryById(item.delivery_id);
-                                if (freshDelivery && freshDelivery.status !== "SENDING") {
-                                    return false;
-                                }
-                            }
-                            return true;
-                        }
-                    });
-                    const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
-
-                    if (sentResult?.changes > 0) {
-                        if (item.job_id) {
-                            const j = this.repo.getJobById(item.job_id);
-                            if (j) {
-                                this.repo.updateJobProgress(item.job_id, {
-                                    successCount: (j.success_count || 0) + 1
-                                });
-                            }
-                            await this.checkAndCompleteJobIfDone(item.job_id, guildId);
-                        }
-
-                        await GuildConfig.updateOne({ guildId }, {
-                            $set: {
-                                "verification.webhookLog.lastDeliveryAt": Date.now(),
-                                "verification.webhookLog.lastStatus": "success",
-                                "verification.webhookLog.lastError": null
-                            }
-                        });
-                    }
-
-                } catch (sendErr) {
-                    console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
-                    const isPermanent = isPermanentWebhookError(sendErr);
-                    if (isPermanent || item.attempt_count >= 5) {
-                        let failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
-                        let failMessage = sendErr.message;
-                        if (sendErr.code === "destination_changed_during_delivery") {
-                            if (item.sent_parts > 0) {
-                                failReason = "cancelled_during_send_partial";
-                                failMessage = `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`;
-                            } else {
-                                failReason = "cancelled_during_send";
-                                failMessage = `Delivery cancelled during transmission: ${sendErr.message}`;
-                            }
-                        } else if (item.sent_parts > 0 && isPermanent) {
-                            failReason = "partial_delivery_failed";
-                            failMessage = `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`;
-                        }
-                        this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
-                        sendThrottledAlert({
-                            key: `exhausted_${guildId}_${item.delivery_id}`,
-                            severity: "ERROR",
-                            code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
-                            title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
-                            description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
-                            guildId
-                        });
-                        if (item.job_id) {
-                            const j = this.repo.getJobById(item.job_id);
-                            if (j) {
-                                this.repo.updateJobProgress(item.job_id, {
-                                    failureCount: (j.failure_count || 0) + 1
-                                });
-                            }
-                            await this.checkAndCompleteJobIfDone(item.job_id, guildId);
-                        }
-                        if (sendErr.status === 401 || sendErr.status === 404) {
-                            await GuildConfig.updateOne({ guildId }, {
-                                $set: {
-                                    "verification.webhookLog.valid": false,
-                                    "verification.webhookLog.lastStatus": "failed",
-                                    "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
-                                }
-                            }).catch(() => {});
-                        }
-                    } else {
-                        const attempt = Math.max(1, Number(item.attempt_count) || 1);
-                        const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 1000);
-                        this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
-                        if (item.job_id) {
-                            const j = this.repo.getJobById(item.job_id);
-                            if (j) {
-                                this.repo.updateJobProgress(item.job_id, {
-                                    retryCount: (j.retry_count || 0) + 1
-                                });
-                            }
-                        }
-                    }
-                }
-
+                await this._deliverSingleItem(item, guildId, context);
                 await sleep(RATE_LIMIT_DELAY_MS);
             }
         }

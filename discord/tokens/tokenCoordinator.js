@@ -443,7 +443,7 @@ class TokenCoordinator extends EventEmitter {
                 err.code = 'RATE_LIMIT_BACKOFF';
                 throw err;
             }
-            const jitter = Math.floor(Math.random() * 20) + 10;
+            const jitter = crypto.randomInt(10, 30);
             await new Promise((resolve) => setTimeout(resolve, backoffWaitMs + jitter));
         }
 

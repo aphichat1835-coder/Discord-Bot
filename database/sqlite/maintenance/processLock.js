@@ -62,14 +62,18 @@ process.on("exit", () => {
             const raw = fs.readFileSync(lockPath, "utf8");
             const data = JSON.parse(raw);
             if (data.pid === process.pid) fs.unlinkSync(lockPath);
-        } catch (_) {}
+        } catch (_) {
+            // Ignore lock removal failure on process exit
+        }
     }
     for (const restorePath of activeRestoreLocks) {
         try {
             const raw = fs.readFileSync(restorePath, "utf8");
             const data = JSON.parse(raw);
             if (data.pid === process.pid) fs.unlinkSync(restorePath);
-        } catch (_) {}
+        } catch (_) {
+            // Ignore restore lock removal failure on process exit
+        }
     }
 });
 
@@ -179,6 +183,7 @@ function acquireRestoreLock(dbPath) {
     // Attempt 1: Atomic exclusive create
     let writeRes = tryWriteLockFile(restorePath, payload);
     if (writeRes.success) {
+        activeRestoreLocks.add(restorePath);
         return { acquired: true, pid: process.pid };
     }
 
@@ -187,6 +192,7 @@ function acquireRestoreLock(dbPath) {
             const raw = fs.readFileSync(restorePath, "utf8");
             const data = JSON.parse(raw);
             if (data.pid === process.pid) {
+                activeRestoreLocks.add(restorePath);
                 return { acquired: true, pid: process.pid };
             }
             if (data.pid && isPidAlive(data.pid)) {
@@ -204,6 +210,7 @@ function acquireRestoreLock(dbPath) {
 
         writeRes = tryWriteLockFile(restorePath, payload);
         if (writeRes.success) {
+            activeRestoreLocks.add(restorePath);
             return { acquired: true, pid: process.pid, reclaimedStale: true };
         }
     }
@@ -214,6 +221,7 @@ function acquireRestoreLock(dbPath) {
 function releaseRestoreLock(dbPath) {
     if (!dbPath) return;
     const restorePath = getRestoreLockFilePath(dbPath);
+    activeRestoreLocks.delete(restorePath);
     if (!fs.existsSync(restorePath)) return;
 
     try {

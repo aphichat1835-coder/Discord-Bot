@@ -54,12 +54,7 @@ async function getLiveTargetMemberIds(guild) {
     throw error;
 }
 
-async function validateGuildTargets({ client, mode, baseConfig = {}, webhookUrl = null, config = getJoinCampaignConfig() }) {
-    if (webhookUrl && !isValidDiscordWebhookUrl(webhookUrl)) {
-        return { ok: false, error: "ลิงก์ Webhook ต้องเป็นลิงก์ Discord Webhook ที่ถูกต้องเท่านั้นครับ" };
-    }
-
-    const targetGuildId = String(baseConfig.targetGuildId || "").trim();
+async function resolveAndValidateTargetGuild(client, targetGuildId, config) {
     if (!targetGuildId) {
         return { ok: false, error: "กรุณาระบุไอดีเซิร์ฟเวอร์ปลายทาง" };
     }
@@ -76,7 +71,7 @@ async function validateGuildTargets({ client, mode, baseConfig = {}, webhookUrl 
     if (!targetGuild) {
         try {
             targetGuild = await client.guilds.fetch(targetGuildId);
-        } catch (_) {
+        } catch (_err) {
             return { ok: false, error: "บอทไม่ได้อยู่ในเซิร์ฟเวอร์ปลายทาง กรุณาเชิญบอทเข้าเซิร์ฟเวอร์ก่อนนะครับ" };
         }
     }
@@ -94,27 +89,49 @@ async function validateGuildTargets({ client, mode, baseConfig = {}, webhookUrl 
         return { ok: false, error: "บอทขาดสิทธิ์ 'สร้างคำเชิญ' (Create Instant Invite) ในเซิร์ฟเวอร์ปลายทาง" };
     }
 
+    return { ok: true, targetGuild };
+}
+
+async function resolveAndValidateSourceGuild(client, sourceGuildId, targetGuildId) {
+    if (!sourceGuildId) {
+        return { ok: false, error: "กรุณาระบุไอดีเซิร์ฟเวอร์ต้นทาง" };
+    }
+    if (!isValidSnowflake(sourceGuildId)) {
+        return { ok: false, error: "ไอดีเซิร์ฟเวอร์ต้นทางต้องเป็นตัวเลข 17–22 หลัก" };
+    }
+    if (sourceGuildId === targetGuildId) {
+        return { ok: false, error: "เซิร์ฟเวอร์ต้นทางและปลายทางต้องไม่เป็นเซิร์ฟเวอร์เดียวกัน" };
+    }
+
+    let sourceGuild = client.guilds.cache.get(sourceGuildId);
+    if (!sourceGuild) {
+        try {
+            sourceGuild = await client.guilds.fetch(sourceGuildId);
+        } catch (_err) {
+            // Ignored: Source guild might not be accessible by bot
+        }
+    }
+    return { ok: true, sourceGuild };
+}
+
+async function validateGuildTargets({ client, mode, baseConfig = {}, webhookUrl = null, config = getJoinCampaignConfig() }) {
+    if (webhookUrl && !isValidDiscordWebhookUrl(webhookUrl)) {
+        return { ok: false, error: "ลิงก์ Webhook ต้องเป็นลิงก์ Discord Webhook ที่ถูกต้องเท่านั้นครับ" };
+    }
+
+    const targetGuildId = String(baseConfig.targetGuildId || "").trim();
+    const targetRes = await resolveAndValidateTargetGuild(client, targetGuildId, config);
+    if (!targetRes.ok) return targetRes;
+    const targetGuild = targetRes.targetGuild;
+
     let sourceGuild = null;
     let sourceGuildId = null;
 
     if (mode.requiresSource) {
         sourceGuildId = String(baseConfig.sourceGuildId || "").trim();
-        if (!sourceGuildId) {
-            return { ok: false, error: "กรุณาระบุไอดีเซิร์ฟเวอร์ต้นทาง" };
-        }
-        if (!isValidSnowflake(sourceGuildId)) {
-            return { ok: false, error: "ไอดีเซิร์ฟเวอร์ต้นทางต้องเป็นตัวเลข 17–22 หลัก" };
-        }
-        if (sourceGuildId === targetGuildId) {
-            return { ok: false, error: "เซิร์ฟเวอร์ต้นทางและปลายทางต้องไม่เป็นเซิร์ฟเวอร์เดียวกัน" };
-        }
-
-        sourceGuild = client.guilds.cache.get(sourceGuildId);
-        if (!sourceGuild) {
-            try {
-                sourceGuild = await client.guilds.fetch(sourceGuildId);
-            } catch (_) {}
-        }
+        const sourceRes = await resolveAndValidateSourceGuild(client, sourceGuildId, targetGuildId);
+        if (!sourceRes.ok) return sourceRes;
+        sourceGuild = sourceRes.sourceGuild;
     }
 
     return {

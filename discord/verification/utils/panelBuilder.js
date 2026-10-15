@@ -7,8 +7,8 @@
 ================================================================================
 */
 
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 const config = require("../../config.json");
 const { normalizeVerifyMode } = require("./verifyMode");
 
