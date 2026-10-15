@@ -264,7 +264,9 @@ function recordCommandAttempt(interaction, status, reason = null, extraDetails =
                 }
             });
         }
-    } catch (_) {}
+    } catch (_err) {
+        // Command telemetry recording failure must never crash command interaction flow
+    }
 }
 
 async function handleInteractionCreateEvent({

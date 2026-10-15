@@ -140,9 +140,9 @@ async function executeEmergencyTrim(dbInstance = null, options = {}) {
     const postQuota = evaluateQuota(db.name);
 
     const freedBytes = Math.max(0, preFootprint.totalBytes - postFootprint.totalBytes);
-    const freedMb = parseFloat((freedBytes / (1024 * 1024)).toFixed(2));
+    const freedMb = Number.parseFloat((freedBytes / (1024 * 1024)).toFixed(2));
 
-    const maxWalBytes = parseInt(process.env.SQLITE_WAL_MAX_BYTES, 10) || (256 * 1024 * 1024);
+    const maxWalBytes = Number.parseInt(process.env.SQLITE_WAL_MAX_BYTES, 10) || (256 * 1024 * 1024);
     const walBytes = postFootprint.walBytes || 0;
     const isWalSafe = walBytes <= maxWalBytes;
 

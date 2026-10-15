@@ -191,16 +191,14 @@ function executeFlybackRejoin(session, sessionId, deps = {}) {
             flybackTimers.delete(sessionId);
         }
         performRejoin();
-    } else {
-        if (!flybackTimers.has(sessionId)) {
-            const setTimer = deps.setTimeout || setTimeout;
-            const remaining = throttleMs - elapsed;
-            const timer = setTimer(() => {
-                performRejoin();
-            }, remaining);
-            timer.unref?.();
-            flybackTimers.set(sessionId, timer);
-        }
+    } else if (!flybackTimers.has(sessionId)) {
+        const setTimer = deps.setTimeout || setTimeout;
+        const remaining = throttleMs - elapsed;
+        const timer = setTimer(() => {
+            performRejoin();
+        }, remaining);
+        timer.unref?.();
+        flybackTimers.set(sessionId, timer);
     }
 }
 

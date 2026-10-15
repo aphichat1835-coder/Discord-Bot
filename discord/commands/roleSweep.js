@@ -130,8 +130,8 @@ function roleAssignmentFingerprint(guild, members) {
                 .sort((left, right) => left.localeCompare(right));
             return roles.length > 0 ? `${member.id}:${roles.join(",")}` : null;
         })
-        .filter(Boolean)
-        .sort((left, right) => left.localeCompare(right));
+        .filter(item => typeof item === "string")
+        .sort((left, right) => String(left).localeCompare(String(right)));
     const botMember = guild?.members?.me;
     const botRoles = getMemberRoles(botMember)
         .filter(role => !isEveryoneRole(role, guild))

@@ -8,9 +8,10 @@ const { getFilesystemFreeSpace, getDatabaseFootprint } = require("../maintenance
 
 const APP_VERSION = (() => {
     try {
-        const pkg = require("../../package.json");
+        const pkg = require("../../../package.json");
         return pkg.version || "5.0.0";
-    } catch (_) {
+    } catch (_err) {
+        // Fallback default app version if package.json is unavailable
         return "5.0.0";
     }
 })();

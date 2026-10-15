@@ -174,7 +174,7 @@ function closeDatabase() {
 }
 
 function isDatabaseOpen() {
-    return Boolean(activeDb && activeDb.open);
+    return Boolean(activeDb?.open);
 }
 
 function getCurrentDbPath() {

@@ -14,19 +14,19 @@ function resolveTtlForType(assetType, customTtlMs = null) {
     }
     const type = String(assetType || "general").toLowerCase();
     if (type === "avatar" || type.includes("avatar")) {
-        const days = parseInt(process.env.SQLITE_ASSET_AVATAR_TTL_DAYS, 10);
-        return (!isNaN(days) && days > 0 ? days : 3) * 24 * 60 * 60 * 1000;
+        const days = Number.parseInt(process.env.SQLITE_ASSET_AVATAR_TTL_DAYS, 10);
+        return (!Number.isNaN(days) && days > 0 ? days : 3) * 24 * 60 * 60 * 1000;
     }
     if (type === "icon" || type === "guild_icon" || type.includes("icon")) {
-        const days = parseInt(process.env.SQLITE_ASSET_GUILD_ICON_TTL_DAYS, 10);
-        return (!isNaN(days) && days > 0 ? days : 14) * 24 * 60 * 60 * 1000;
+        const days = Number.parseInt(process.env.SQLITE_ASSET_GUILD_ICON_TTL_DAYS, 10);
+        return (!Number.isNaN(days) && days > 0 ? days : 14) * 24 * 60 * 60 * 1000;
     }
-    const defaultDays = parseInt(process.env.SQLITE_ASSET_DEFAULT_TTL_DAYS, 10);
-    return (!isNaN(defaultDays) && defaultDays > 0 ? defaultDays : 7) * 24 * 60 * 60 * 1000;
+    const defaultDays = Number.parseInt(process.env.SQLITE_ASSET_DEFAULT_TTL_DAYS, 10);
+    return (!Number.isNaN(defaultDays) && defaultDays > 0 ? defaultDays : 7) * 24 * 60 * 60 * 1000;
 }
 
 function resolveAssetDir() {
-    if (process.env.SQLITE_ASSET_DIR && process.env.SQLITE_ASSET_DIR.trim()) {
+    if (process.env.SQLITE_ASSET_DIR?.trim()) {
         return path.resolve(process.env.SQLITE_ASSET_DIR.trim());
     }
     // Auto-detection: If host has mounted a writable /persistent volume, use it automatically

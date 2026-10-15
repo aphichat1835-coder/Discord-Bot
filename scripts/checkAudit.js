@@ -1,6 +1,23 @@
 "use strict";
 
 const { execSync } = require("node:child_process");
+const path = require("node:path");
+const fs = require("node:fs");
+
+function resolveNpmBin() {
+    const candidate = path.join(path.dirname(process.execPath), process.platform === "win32" ? "npm.cmd" : "npm");
+    if (fs.existsSync(candidate)) return candidate;
+    return "npm";
+}
+
+function getAuditEnv() {
+    const nodeDir = path.dirname(process.execPath);
+    const fixedPaths = [nodeDir, "/usr/local/bin", "/usr/bin", "/bin"];
+    return {
+        ...process.env,
+        PATH: fixedPaths.join(path.delimiter)
+    };
+}
 
 const ALLOWED_DEV_EXCEPTIONS = [
     {
@@ -20,7 +37,9 @@ const ALLOWED_DEV_EXCEPTIONS = [
 function runProductionAudit() {
     console.log("[AUDIT-GATE] Running production dependencies security audit...");
     try {
-        execSync("npm audit --omit=dev --audit-level=high", { stdio: "inherit" });
+        const npmBin = resolveNpmBin();
+        const env = getAuditEnv();
+        execSync(`"${npmBin}" audit --omit=dev --audit-level=high`, { stdio: "inherit", env });
         console.log("[AUDIT-GATE] ✅ Production dependencies audit passed: 0 vulnerabilities found.");
     } catch {
         console.error("[AUDIT-GATE] ❌ Production dependencies security audit FAILED.");
@@ -32,7 +51,9 @@ function runFullAuditCheck() {
     console.log("[AUDIT-GATE] Checking development dependencies and advisories...");
     let auditJson;
     try {
-        const stdout = execSync("npm audit --json", { encoding: "utf8" });
+        const npmBin = resolveNpmBin();
+        const env = getAuditEnv();
+        const stdout = execSync(`"${npmBin}" audit --json`, { encoding: "utf8", env });
         auditJson = JSON.parse(stdout);
     } catch (err) {
         if (err.stdout) {

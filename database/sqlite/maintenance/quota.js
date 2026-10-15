@@ -9,9 +9,9 @@ const DEFAULT_HARD_LIMIT_MB = 4096;
 
 function resolveLimits() {
     return {
-        softMb: parseInt(process.env.SQLITE_QUOTA_SOFT_MB || process.env.SQLITE_SOFT_LIMIT_MB, 10) || DEFAULT_SOFT_LIMIT_MB,
-        critMb: parseInt(process.env.SQLITE_QUOTA_CRIT_MB || process.env.SQLITE_CRITICAL_LIMIT_MB, 10) || DEFAULT_CRIT_LIMIT_MB,
-        hardMb: parseInt(process.env.SQLITE_QUOTA_HARD_MB || process.env.SQLITE_HARD_LIMIT_MB, 10) || DEFAULT_HARD_LIMIT_MB
+        softMb: Number.parseInt(process.env.SQLITE_QUOTA_SOFT_MB || process.env.SQLITE_SOFT_LIMIT_MB, 10) || DEFAULT_SOFT_LIMIT_MB,
+        critMb: Number.parseInt(process.env.SQLITE_QUOTA_CRIT_MB || process.env.SQLITE_CRITICAL_LIMIT_MB, 10) || DEFAULT_CRIT_LIMIT_MB,
+        hardMb: Number.parseInt(process.env.SQLITE_QUOTA_HARD_MB || process.env.SQLITE_HARD_LIMIT_MB, 10) || DEFAULT_HARD_LIMIT_MB
     };
 }
 

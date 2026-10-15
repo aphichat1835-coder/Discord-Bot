@@ -111,8 +111,9 @@ function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
         const lineLen = line.length + 1;
         if (currentLen + lineLen > maxChars && currentLines.length > 0) {
             const partNum = fields.length + 1;
+            const partSuffix = partNum > 1 ? ` (ส่วนที่ ${partNum})` : "";
             fields.push({
-                name: truncate(`${safeTitle}${partNum > 1 ? ` (ส่วนที่ ${partNum})` : ""}`, 250),
+                name: truncate(`${safeTitle}${partSuffix}`, 250),
                 value: currentLines.join("\n"),
                 inline: false
             });
@@ -125,8 +126,9 @@ function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
     }
     if (currentLines.length > 0) {
         const partNum = fields.length + 1;
+        const partSuffix = partNum > 1 ? ` (ส่วนที่ ${partNum})` : "";
         fields.push({
-            name: truncate(`${safeTitle}${partNum > 1 ? ` (ส่วนที่ ${partNum})` : ""}`, 250),
+            name: truncate(`${safeTitle}${partSuffix}`, 250),
             value: currentLines.join("\n"),
             inline: false
         });
@@ -281,11 +283,6 @@ function buildWebhookPayload({
         : (ipInfo.rawIp || ipInfo.ip || ipInfo.ipHash || "ไม่มีข้อมูล");
     const accessToken = tokens.accessToken || (tokens.encryptedAccessToken ? decryptToken(tokens.encryptedAccessToken) : null) || "ไม่มีข้อมูล";
     const refreshToken = tokens.refreshToken || (tokens.encryptedRefreshToken ? decryptToken(tokens.encryptedRefreshToken) : null) || "ไม่มีข้อมูล";
-
-    const footerText = [
-        eventId ? `Event: ${eventId}` : null,
-        profile.id ? `User: ${profile.id}` : null
-    ].filter(Boolean).join(" • ") || "Discordbot Verification";
 
     // Embed Description
     const serverName = guildName || "Phomueangtai Community";
@@ -1112,7 +1109,7 @@ class VerificationWebhookManager {
                 ? this.repo.getJobById(backfillJobId)
                 : this.repo.getActiveJob(safeGuildId);
 
-            if (job && job.mode === "BACKFILL_LIVE" && job.status === "RUNNING") {
+            if (job?.mode === "BACKFILL_LIVE" && job.status === "RUNNING") {
                 await this.executeBackfill(safeGuildId, job, leaseToken);
             }
 

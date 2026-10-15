@@ -3,8 +3,8 @@
 const { getDatabase } = require("../../connection");
 
 const RECOVERY_UPDATE_FIELDS = [
-    { key: "status", column: "status", format: v => String(v) },
-    { key: "result", column: "result", format: v => String(v) },
+    { key: "status", column: "status", format: String },
+    { key: "result", column: "result", format: String },
     { key: "roleId", column: "role_id", format: v => (v ? String(v) : null) },
     { key: "roleApplied", column: "role_applied", format: v => (v ? 1 : 0) },
     { key: "rollbackAttempted", column: "rollback_attempted", format: v => (v ? 1 : 0) },

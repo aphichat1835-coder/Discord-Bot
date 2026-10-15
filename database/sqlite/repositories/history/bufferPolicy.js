@@ -54,6 +54,20 @@ function resolvePriority(event, isCritical = false) {
     return "P2";
 }
 
+function dropPriorityLevel(buffer, priority, limit) {
+    let count = 0;
+    for (let i = 0; i < buffer.length && count < limit; ) {
+        const prio = buffer[i]?.priority || "P2";
+        if (prio === priority) {
+            buffer.splice(i, 1);
+            count++;
+        } else {
+            i++;
+        }
+    }
+    return count;
+}
+
 /**
  * Priority-aware eviction for in-memory buffer.
  * Drops P2 items first, then P1 if necessary.
@@ -66,34 +80,10 @@ function resolvePriority(event, isCritical = false) {
 function evictWithPriority(buffer, dropTarget = 500, outStats = null) {
     if (!Array.isArray(buffer) || buffer.length === 0 || dropTarget <= 0) return 0;
 
-    let dropped = 0;
-    let p2Dropped = 0;
-    let p1Dropped = 0;
-
-    // Pass 1: Drop P2 items starting from the oldest (unspecified priority defaults to P2)
-    for (let i = 0; i < buffer.length && dropped < dropTarget; ) {
-        const prio = buffer[i]?.priority || "P2";
-        if (prio === "P2") {
-            buffer.splice(i, 1);
-            dropped++;
-            p2Dropped++;
-        } else {
-            i++;
-        }
-    }
-
-    // Pass 2: If we still need to drop more and buffer is still at capacity, drop P1 items starting from oldest
-    if (dropped < dropTarget) {
-        for (let i = 0; i < buffer.length && dropped < dropTarget; ) {
-            if (buffer[i]?.priority === "P1") {
-                buffer.splice(i, 1);
-                dropped++;
-                p1Dropped++;
-            } else {
-                i++;
-            }
-        }
-    }
+    const p2Dropped = dropPriorityLevel(buffer, "P2", dropTarget);
+    const remaining = dropTarget - p2Dropped;
+    const p1Dropped = remaining > 0 ? dropPriorityLevel(buffer, "P1", remaining) : 0;
+    const dropped = p2Dropped + p1Dropped;
 
     if (outStats && typeof outStats === "object") {
         outStats.p2 = p2Dropped;
@@ -105,7 +95,7 @@ function evictWithPriority(buffer, dropTarget = 500, outStats = null) {
 }
 
 const SENSITIVE_KEY_REGEX = /(token|password|pin|secret|credential|auth|bearer|cookie|salt|private|api_?key|access_?key|secret_?key|^key$)/i;
-const SENSITIVE_VALUE_REGEX = /(token\s*[:=]\s*[^\s&,;]+|bearer\s+[a-zA-Z0-9_\-\.]+|bot\s+[a-zA-Z0-9_\-\.]+|mfa\.[a-zA-Z0-9_\-]{20,}|[a-zA-Z0-9_\-]{24,}\.[a-zA-Z0-9_\-]{6}\.[a-zA-Z0-9_\-]{20,}|password\s*[:=]\s*[^\s&,;]+|api_?key\s*[:=]\s*[^\s&,;]+|secret\s*[:=]\s*[^\s&,;]+)/gi;
+const SENSITIVE_VALUE_REGEX = /(token\s*[:=]\s*[^\s&,;]+|bearer\s+[a-zA-Z0-9_.-]+|bot\s+[a-zA-Z0-9_.-]+|mfa\.[a-zA-Z0-9_-]{20,}|[a-zA-Z0-9_-]{24,}\.[a-zA-Z0-9_-]{6}\.[a-zA-Z0-9_-]{20,}|password\s*[:=]\s*[^\s&,;]+|api_?key\s*[:=]\s*[^\s&,;]+|secret\s*[:=]\s*[^\s&,;]+)/gi;
 
 function sanitizeString(str) {
     if (typeof str !== "string") return str;

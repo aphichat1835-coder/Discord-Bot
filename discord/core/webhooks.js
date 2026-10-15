@@ -401,7 +401,7 @@ function buildWebhookEventTitle(event, presentation, category, target = "LOG") {
 
     // If title redundantly begins with the category name (e.g. "GATEWAY SHARD ERROR" in category "GATEWAY"),
     // strip the redundant category prefix to yield e.g. "SHARD ERROR".
-    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
     const redundantCategoryRegex = new RegExp(`^${escapedCat}\\s+(?=\\S)`, "i");
     if (redundantCategoryRegex.test(title)) {
         title = title.replace(redundantCategoryRegex, "").trim();
@@ -459,14 +459,7 @@ function getAndDeleteFromContext(context, normalizedTarget) {
     return foundValue;
 }
 
-function buildEventFields(event, state, target) {
-    const fields = [];
-    const context = { ...event.context };
-    const rawExplicit = Array.isArray(event.fields)
-        ? event.fields.filter(f => f && f.name && f.value !== undefined && f.value !== null && f.value !== "")
-        : [];
-
-    // Policy: First non-empty value wins across duplicate fields
+function deduplicateExplicitFields(rawExplicit) {
     const deduplicatedExplicit = [];
     const explicitMap = new Map();
     for (const f of rawExplicit) {
@@ -478,10 +471,11 @@ function buildEventFields(event, state, target) {
             deduplicatedExplicit.push(entry);
         }
     }
+    return { deduplicatedExplicit, explicitMap };
+}
 
-    const consumedNames = new Set();
-
-    function extractCanonicalField(name, fallbackVal, aliases = []) {
+function createCanonicalFieldExtractor(deduplicatedExplicit, explicitMap, context, consumedNames) {
+    return function extractCanonicalField(name, fallbackVal, aliases = []) {
         const namesToTry = [name, ...aliases];
         const lowerNames = namesToTry.map(normalizeFieldName);
 
@@ -494,7 +488,6 @@ function buildEventFields(event, state, target) {
         }
 
         // 1. Explicit event.fields takes highest precedence.
-        // Check deduplicatedExplicit in caller order to ensure first-declared alias wins.
         for (const f of deduplicatedExplicit) {
             const lower = normalizeFieldName(f.name);
             if (lowerNames.includes(lower) && explicitMap.has(lower)) {
@@ -519,84 +512,61 @@ function buildEventFields(event, state, target) {
             }
         }
         return null;
-    }
+    };
+}
 
-    if (target === "ALERT") {
-        const stateField = extractCanonicalField("สถานะ", state ? (EVENT_STATE_LABELS[state] || state) : null);
-        if (stateField) {
-            appendEventField(fields, "สถานะ", stateField.value, stateField.inline ?? true);
-        }
+function appendAlertCanonicalFields(fields, event, state, extractCanonicalField) {
+    const stateField = extractCanonicalField("สถานะ", state ? (EVENT_STATE_LABELS[state] || state) : null);
+    if (stateField) appendEventField(fields, "สถานะ", stateField.value, stateField.inline ?? true);
 
-        const impactField = extractCanonicalField("ผลกระทบ", event.impact);
-        if (impactField) {
-            appendEventField(fields, "ผลกระทบ", impactField.value, impactField.inline ?? false);
-        }
+    const impactField = extractCanonicalField("ผลกระทบ", event.impact);
+    if (impactField) appendEventField(fields, "ผลกระทบ", impactField.value, impactField.inline ?? false);
 
-        const actionField = extractCanonicalField("สิ่งที่ควรทำ", event.action);
-        if (actionField) {
-            appendEventField(fields, "สิ่งที่ควรทำ", actionField.value, actionField.inline ?? false);
-        }
+    const actionField = extractCanonicalField("สิ่งที่ควรทำ", event.action);
+    if (actionField) appendEventField(fields, "สิ่งที่ควรทำ", actionField.value, actionField.inline ?? false);
 
-        const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
-        const serverField = extractCanonicalField("เซิร์ฟเวอร์", serverVal);
-        if (serverField) {
-            appendEventField(fields, "เซิร์ฟเวอร์", serverField.value, serverField.inline ?? true);
-        }
+    const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
+    const serverField = extractCanonicalField("เซิร์ฟเวอร์", serverVal);
+    if (serverField) appendEventField(fields, "เซิร์ฟเวอร์", serverField.value, serverField.inline ?? true);
 
-        const targetVal = event.targetUser || event.targetMember;
-        const targetField = extractCanonicalField("เป้าหมาย", targetVal, ["ผู้ใช้เป้าหมาย"]);
-        if (targetField) {
-            appendEventField(fields, "เป้าหมาย", targetField.value, targetField.inline ?? true);
-        }
+    const targetVal = event.targetUser || event.targetMember;
+    const targetField = extractCanonicalField("เป้าหมาย", targetVal, ["ผู้ใช้เป้าหมาย"]);
+    if (targetField) appendEventField(fields, "เป้าหมาย", targetField.value, targetField.inline ?? true);
 
-        const errorField = extractCanonicalField("รหัสข้อผิดพลาด", event.errorCode);
-        if (errorField) {
-            appendEventField(fields, "รหัสข้อผิดพลาด", errorField.value, errorField.inline ?? true);
-        }
+    const errorField = extractCanonicalField("รหัสข้อผิดพลาด", event.errorCode);
+    if (errorField) appendEventField(fields, "รหัสข้อผิดพลาด", errorField.value, errorField.inline ?? true);
 
-        const detailsField = extractCanonicalField("รายละเอียด", event.details);
-        if (detailsField) {
-            appendEventField(fields, "รายละเอียด", detailsField.value, detailsField.inline ?? false);
-        }
-    } else {
-        const actorVal = event.actor || event.operator || event.user;
-        const actorField = extractCanonicalField("ผู้ดำเนินการ", actorVal, ["ผู้สั่งการ", "ผู้กระทำ"]);
-        if (actorField) {
-            appendEventField(fields, "ผู้ดำเนินการ", actorField.value, actorField.inline ?? true);
-        }
+    const detailsField = extractCanonicalField("รายละเอียด", event.details);
+    if (detailsField) appendEventField(fields, "รายละเอียด", detailsField.value, detailsField.inline ?? false);
+}
 
-        const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
-        const serverField = extractCanonicalField("เซิร์ฟเวอร์", serverVal);
-        if (serverField) {
-            appendEventField(fields, "เซิร์ฟเวอร์", serverField.value, serverField.inline ?? true);
-        }
+function appendLogCanonicalFields(fields, event, extractCanonicalField) {
+    const actorVal = event.actor || event.operator || event.user;
+    const actorField = extractCanonicalField("ผู้ดำเนินการ", actorVal, ["ผู้สั่งการ", "ผู้กระทำ"]);
+    if (actorField) appendEventField(fields, "ผู้ดำเนินการ", actorField.value, actorField.inline ?? true);
 
-        const targetVal = event.targetUser || event.targetMember;
-        const targetField = extractCanonicalField("เป้าหมาย", targetVal);
-        if (targetField) {
-            appendEventField(fields, "เป้าหมาย", targetField.value, targetField.inline ?? true);
-        }
+    const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
+    const serverField = extractCanonicalField("เซิร์ฟเวอร์", serverVal);
+    if (serverField) appendEventField(fields, "เซิร์ฟเวอร์", serverField.value, serverField.inline ?? true);
 
-        const actionVal = event.actionName || event.operation;
-        const actionField = extractCanonicalField("การกระทำ", actionVal);
-        if (actionField) {
-            appendEventField(fields, "การกระทำ", actionField.value, actionField.inline ?? true);
-        }
+    const targetVal = event.targetUser || event.targetMember;
+    const targetField = extractCanonicalField("เป้าหมาย", targetVal);
+    if (targetField) appendEventField(fields, "เป้าหมาย", targetField.value, targetField.inline ?? true);
 
-        const resultVal = event.result || event.outcome;
-        const resultField = extractCanonicalField("ผลลัพธ์", resultVal);
-        if (resultField) {
-            appendEventField(fields, "ผลลัพธ์", resultField.value, resultField.inline ?? true);
-        }
+    const actionVal = event.actionName || event.operation;
+    const actionField = extractCanonicalField("การกระทำ", actionVal);
+    if (actionField) appendEventField(fields, "การกระทำ", actionField.value, actionField.inline ?? true);
 
-        const detailsVal = event.details || event.reason;
-        const detailsField = extractCanonicalField("รายละเอียด", detailsVal, ["เหตุผล", "reason"]);
-        if (detailsField) {
-            appendEventField(fields, "รายละเอียด", detailsField.value, detailsField.inline ?? false);
-        }
-    }
+    const resultVal = event.result || event.outcome;
+    const resultField = extractCanonicalField("ผลลัพธ์", resultVal);
+    if (resultField) appendEventField(fields, "ผลลัพธ์", resultField.value, resultField.inline ?? true);
 
-    // Append remaining custom explicit fields in caller order
+    const detailsVal = event.details || event.reason;
+    const detailsField = extractCanonicalField("รายละเอียด", detailsVal, ["เหตุผล", "reason"]);
+    if (detailsField) appendEventField(fields, "รายละเอียด", detailsField.value, detailsField.inline ?? false);
+}
+
+function appendRemainingCustomFields(fields, deduplicatedExplicit, explicitMap, context, consumedNames) {
     for (const f of deduplicatedExplicit) {
         const lower = normalizeFieldName(f.name);
         if (explicitMap.has(lower)) {
@@ -607,18 +577,34 @@ function buildEventFields(event, state, target) {
         }
     }
 
-    // Append remaining unconsumed context entries (first non-empty value wins)
     for (const [rawName, rawValue] of Object.entries(context)) {
         const lower = normalizeFieldName(rawName);
-        if (!lower || consumedNames.has(lower)) {
-            continue;
-        }
-        if (rawValue === undefined || rawValue === null || rawValue === "") {
+        if (!lower || consumedNames.has(lower) || rawValue === undefined || rawValue === null || rawValue === "") {
             continue;
         }
         consumedNames.add(lower);
         appendEventField(fields, String(rawName || "รายละเอียด").trim().slice(0, 100), rawValue, true);
     }
+}
+
+function buildEventFields(event, state, target) {
+    const fields = [];
+    const context = { ...event.context };
+    const rawExplicit = Array.isArray(event.fields)
+        ? event.fields.filter(f => f && f.name && f.value !== undefined && f.value !== null && f.value !== "")
+        : [];
+
+    const { deduplicatedExplicit, explicitMap } = deduplicateExplicitFields(rawExplicit);
+    const consumedNames = new Set();
+    const extractCanonicalField = createCanonicalFieldExtractor(deduplicatedExplicit, explicitMap, context, consumedNames);
+
+    if (target === "ALERT") {
+        appendAlertCanonicalFields(fields, event, state, extractCanonicalField);
+    } else {
+        appendLogCanonicalFields(fields, event, extractCanonicalField);
+    }
+
+    appendRemainingCustomFields(fields, deduplicatedExplicit, explicitMap, context, consumedNames);
     return fields.slice(0, FIELD_COUNT_MAX);
 }
 

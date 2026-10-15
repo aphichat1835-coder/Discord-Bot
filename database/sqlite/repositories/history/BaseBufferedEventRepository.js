@@ -186,6 +186,34 @@ class BaseBufferedEventRepository {
         this.runInsertStatement(stmt, item);
     }
 
+    findRecent(limit = 100) {
+        this.flush();
+        const bounded = Math.min(500, Math.max(1, Number.parseInt(limit, 10) || 100));
+        const rows = this.db.prepare(`
+            SELECT * FROM ${this.tableName}
+            ORDER BY occurred_at DESC
+            LIMIT ?
+        `).all(bounded);
+
+        return rows.map(r => this._hydrate(r));
+    }
+
+    findBySession(sessionId, limit = 50) {
+        this.flush();
+        const rows = this.db.prepare(`
+            SELECT * FROM ${this.tableName}
+            WHERE session_id = ?
+            ORDER BY occurred_at DESC
+            LIMIT ?
+        `).all(String(sessionId), limit);
+
+        return rows.map(r => this._hydrate(r));
+    }
+
+    _hydrate(row) {
+        throw new Error("_hydrate must be implemented by subclass");
+    }
+
     getInsertStatement() {
         throw new Error("getInsertStatement must be implemented by subclass");
     }

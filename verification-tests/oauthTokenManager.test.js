@@ -26,14 +26,12 @@ function freshQuery(getValue) {
 }
 
 function scanQuery(docs) {
-  const query = {
-    select: jest.fn(() => query),
-    sort: jest.fn(() => query),
-    limit: jest.fn(() => query),
-    lean: jest.fn(() => Promise.resolve(docs)),
-    then: (resolve, reject) => Promise.resolve(docs).then(resolve, reject)
-  };
-  return query;
+  const promise = Promise.resolve(docs);
+  promise.select = jest.fn(() => promise);
+  promise.sort = jest.fn(() => promise);
+  promise.limit = jest.fn(() => promise);
+  promise.lean = jest.fn(() => Promise.resolve(docs));
+  return promise;
 }
 
 beforeEach(() => {

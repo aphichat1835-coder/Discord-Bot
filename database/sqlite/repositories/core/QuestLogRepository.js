@@ -79,8 +79,8 @@ class QuestLogRepository {
                                 String(det.questId || ""),
                                 String(det.questName || ""),
                                 String(det.eventName || ""),
-                                parseInt(det.progress, 10) || 0,
-                                parseInt(det.target, 10) || 0,
+                                Number.parseInt(det.progress, 10) || 0,
+                                Number.parseInt(det.target, 10) || 0,
                                 det.completed ? 1 : 0,
                                 det.claimed ? 1 : 0,
                                 det.error ? String(det.error) : null

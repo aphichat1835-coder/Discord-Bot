@@ -11,9 +11,9 @@ class ConfigurationError extends Error {
 
 function getSecretKey() {
     const isProduction = process.env.NODE_ENV === 'production';
-    const raw = (process.env.QUEST_TOKEN_SECRET && process.env.QUEST_TOKEN_SECRET.trim()) ||
-        (process.env.ENCRYPTION_KEY && process.env.ENCRYPTION_KEY.trim()) ||
-        (process.env.ENCRYPTION_SECRET && process.env.ENCRYPTION_SECRET.trim());
+    const raw = process.env.QUEST_TOKEN_SECRET?.trim() ||
+        process.env.ENCRYPTION_KEY?.trim() ||
+        process.env.ENCRYPTION_SECRET?.trim();
 
     if (!raw) {
         if (isProduction) {

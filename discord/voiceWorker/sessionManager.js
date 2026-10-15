@@ -1229,7 +1229,9 @@ async function deleteSession(sessionId, options = {}) {
         try {
             const repo = getVoiceRuntimeRepository();
             if (repo) repo.deleteSessionRuntime(sessionId);
-        } catch (_) {}
+        } catch (_err) {
+            // Best-effort local SQLite runtime deletion when database is disconnected
+        }
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);

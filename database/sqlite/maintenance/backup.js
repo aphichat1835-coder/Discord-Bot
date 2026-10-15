@@ -24,7 +24,7 @@ function computeFileSha256(filePath) {
 
 function resolveBackupDir(customDir = null) {
     if (customDir) return path.resolve(customDir);
-    if (process.env.SQLITE_BACKUP_DIR && process.env.SQLITE_BACKUP_DIR.trim()) {
+    if (process.env.SQLITE_BACKUP_DIR?.trim()) {
         return path.resolve(process.env.SQLITE_BACKUP_DIR.trim());
     }
     // Auto-detection: If host has mounted a writable /persistent volume, use it automatically

@@ -12,12 +12,38 @@ const { sanitizeUserFacingError } = require("../worker/batchLogger");
 
 const stagedSessions = new Map();
 
+function findCampaignPanel(repository, channelId, jobId) {
+    if (!repository) return null;
+    if (channelId && repository.findPanelByChannelId) {
+        return repository.findPanelByChannelId(channelId);
+    }
+    if (jobId && repository.findPanelByActiveJobId) {
+        return repository.findPanelByActiveJobId(jobId);
+    }
+    return null;
+}
+
+async function renderPanelFailureMessage({ client, panel, updatedPanel, mode, targetGuildName }) {
+    if (!client || !panel.channelId || !panel.messageId) return;
+    const channel = await client.channels?.fetch?.(panel.channelId).catch(() => null);
+    if (!channel) return;
+    const message = await channel.messages?.fetch?.(panel.messageId).catch(() => null);
+    if (!message) return;
+
+    const resolvedMode = typeof mode === "string" ? getMode(mode) : mode;
+    const payload = buildPanelPayload({
+        mode: resolvedMode,
+        panelState: updatedPanel,
+        readyCount: updatedPanel.lastReadyCount,
+        liveJob: null,
+        targetGuildName: targetGuildName || "เซิร์ฟเวอร์เป้าหมาย"
+    });
+    await message.edit(payload).catch(() => {});
+}
+
 async function updatePanelFailureState({ client, repository, channelId, jobId, errorMsg, mode, targetGuildName, readyCount }) {
     try {
-        if (!repository) return;
-        const panel = (channelId && repository.findPanelByChannelId)
-            ? repository.findPanelByChannelId(channelId)
-            : (jobId && repository.findPanelByActiveJobId ? repository.findPanelByActiveJobId(jobId) : null);
+        const panel = findCampaignPanel(repository, channelId, jobId);
         if (!panel) return;
 
         const sanitizedMsg = sanitizeUserFacingError(errorMsg);
@@ -33,24 +59,10 @@ async function updatePanelFailureState({ client, repository, channelId, jobId, e
             repository.savePanel(updatedPanel);
         }
 
-        if (client && panel.channelId && panel.messageId) {
-            const channel = await client.channels?.fetch?.(panel.channelId).catch(() => null);
-            if (channel) {
-                const message = await channel.messages?.fetch?.(panel.messageId).catch(() => null);
-                if (message) {
-                    const resolvedMode = typeof mode === "string" ? getMode(mode) : mode;
-                    const payload = buildPanelPayload({
-                        mode: resolvedMode,
-                        panelState: updatedPanel,
-                        readyCount: updatedPanel.lastReadyCount,
-                        liveJob: null,
-                        targetGuildName: targetGuildName || "เซิร์ฟเวอร์เป้าหมาย"
-                    });
-                    await message.edit(payload).catch(() => {});
-                }
-            }
-        }
-    } catch (_) {}
+        await renderPanelFailureMessage({ client, panel, updatedPanel, mode, targetGuildName });
+    } catch (_err) {
+        // Non-critical background failure panel update
+    }
 }
 
 class JoinCampaignService {

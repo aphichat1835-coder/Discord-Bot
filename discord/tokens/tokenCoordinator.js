@@ -541,16 +541,16 @@ class TokenCoordinator extends EventEmitter {
                 if (is429) {
                     let waitSec = 2.5;
                     const headerVal = err?.response?.headers?.get?.('retry-after') || err?.headers?.['retry-after'];
-                    if (headerVal && !isNaN(headerVal)) {
-                        waitSec = parseFloat(headerVal);
-                    } else if (err?.retry_after) {
-                        waitSec = typeof err.retry_after === 'number' ? (err.retry_after > 100 ? err.retry_after / 1000 : err.retry_after) : 2.5;
+                    if (headerVal && !Number.isNaN(Number(headerVal))) {
+                        waitSec = Number.parseFloat(headerVal);
+                    } else if (typeof err?.retry_after === 'number') {
+                        waitSec = err.retry_after > 100 ? err.retry_after / 1000 : err.retry_after;
                     }
                     const waitMs = Math.ceil(waitSec * 1000) + 100;
                     this.applyTokenBackoff(hash, waitMs, { subsystem, reason: '429_rate_limit', source: 'rest_api' });
 
                     if (attempt < maxAttempts) {
-                        // Smooth pause and retry without dropping task
+                        // Smooth sequential pause and retry without dropping task
                         await new Promise((r) => setTimeout(r, waitMs));
                         continue;
                     }

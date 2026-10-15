@@ -57,35 +57,13 @@ class SessionEventRepository extends BaseBufferedEventRepository {
         );
     }
 
-    findRecent(limit = 100) {
-        this.flush();
-        const bounded = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
-        const rows = this.db.prepare(`
-            SELECT * FROM session_events
-            ORDER BY occurred_at DESC
-            LIMIT ?
-        `).all(bounded);
-
-        return rows.map(r => this._hydrate(r));
-    }
-
-    findBySession(sessionId, limit = 50) {
-        this.flush();
-        const rows = this.db.prepare(`
-            SELECT * FROM session_events
-            WHERE session_id = ?
-            ORDER BY occurred_at DESC
-            LIMIT ?
-        `).all(String(sessionId), limit);
-
-        return rows.map(r => this._hydrate(r));
-    }
-
     _hydrate(row) {
         let metadata = null;
         try {
             if (row.metadata_json) metadata = JSON.parse(row.metadata_json);
-        } catch (_) {}
+        } catch (_err) {
+            // Best-effort JSON metadata parse fallback
+        }
 
         return {
             id: row.id,

@@ -132,7 +132,9 @@ async function handleJoinCampaignInteraction(interaction, client) {
                     }
                 }
             }
-        } catch (_) {}
+        } catch (_err) {
+            // Non-critical background message edit failure; panel refreshes on next worker update
+        }
 
         return true;
     }

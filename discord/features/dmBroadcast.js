@@ -227,31 +227,28 @@ function parseDmError(err) {
     return err?.message || 'ไม่สามารถส่งข้อความได้';
 }
 
-async function sendDmWithRetry(member, dmPayload, maxRetries = 5) {
-    let attempt = 0;
-    while (attempt <= maxRetries) {
-        try {
-            await member.send(dmPayload);
-            return { success: true, errorReason: null, isClosedDm: false };
-        } catch (dmErr) {
-            const isRateLimit = dmErr?.status === 429 || dmErr?.code === 429;
-            if (!isRateLimit) {
-                const isClosed = dmErr?.code === 50007;
-                return { success: false, errorReason: parseDmError(dmErr), isClosedDm: isClosed };
-            }
-
-            attempt++;
-            if (attempt > maxRetries) {
-                return {
-                    success: false,
-                    errorReason: `ส่งข้อความไม่สำเร็จหลังลองใหม่ครบ ${maxRetries} ครั้ง (ติด Rate Limit)`,
-                    isClosedDm: false
-                };
-            }
-
-            const retryAfterMs = getRetryAfterMs(dmErr);
-            await delay(retryAfterMs);
+async function sendDmWithRetry(member, dmPayload, maxRetries = 5, attempt = 0) {
+    try {
+        await member.send(dmPayload);
+        return { success: true, errorReason: null, isClosedDm: false };
+    } catch (dmErr) {
+        const isRateLimit = dmErr?.status === 429 || dmErr?.code === 429;
+        if (!isRateLimit) {
+            const isClosed = dmErr?.code === 50007;
+            return { success: false, errorReason: parseDmError(dmErr), isClosedDm: isClosed };
         }
+
+        if (attempt >= maxRetries) {
+            return {
+                success: false,
+                errorReason: `ส่งข้อความไม่สำเร็จหลังลองใหม่ครบ ${maxRetries} ครั้ง (ติด Rate Limit)`,
+                isClosedDm: false
+            };
+        }
+
+        const retryAfterMs = getRetryAfterMs(dmErr);
+        await delay(retryAfterMs);
+        return sendDmWithRetry(member, dmPayload, maxRetries, attempt + 1);
     }
 }
 

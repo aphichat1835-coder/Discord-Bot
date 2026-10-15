@@ -155,6 +155,19 @@ function calculateManagedStorage({ db, dbPath, quota, storage }) {
     };
 }
 
+function resolvePersistentLabel(storage) {
+    if (storage?.persistentMountVerified) {
+        return "✅ Owner-Confirmed Persistent Path";
+    }
+    if (storage?.configuredPersistentPath) {
+        return "🟡 Persistent Path Configured (Mount Unverified)";
+    }
+    if (storage?.allowInSource) {
+        return "ℹ️ Owner-Permitted In-Source Storage";
+    }
+    return "❌ Ephemeral / In-Source";
+}
+
 async function measureMongoOverview(mongoInstance) {
     const mongoStatus = mongoInstance.getMongoStatus();
     let mongoPingMs = null;
@@ -224,13 +237,7 @@ async function getDatabaseOverview(customDb = null) {
                     configuredPersistentPath: storage.configuredPersistentPath,
                     persistentMountVerified: storage.persistentMountVerified,
                     allowInSource: storage.allowInSource,
-                    persistentLabel: storage.persistentMountVerified
-                        ? "✅ Owner-Confirmed Persistent Path"
-                        : storage.configuredPersistentPath
-                            ? "🟡 Persistent Path Configured (Mount Unverified)"
-                            : storage.allowInSource
-                                ? "ℹ️ Owner-Permitted In-Source Storage"
-                                : "❌ Ephemeral / In-Source",
+                    persistentLabel: resolvePersistentLabel(storage),
                     managedStorage
                 },
                 records,
@@ -279,7 +286,8 @@ async function getSqliteDetailedStatus(customDb = null) {
         try {
             const r = db.prepare(`SELECT COUNT(*) AS c FROM "${tbl}"`).get();
             tableCounts[tbl] = r ? r.c : 0;
-        } catch (_) {
+        } catch (_err) {
+            // Table might be locked or undergoing schema migration; fallback to 0 count
             tableCounts[tbl] = 0;
         }
     }
@@ -289,7 +297,9 @@ async function getSqliteDetailedStatus(customDb = null) {
         for (const row of dbstatRows) {
             tableBytes[row.name] = Number(row.b) || 0;
         }
-    } catch (_) {}
+    } catch (_err) {
+        // SQLite build might lack dbstat virtual table; ignore detailed table bytes
+    }
 
     const buildTableMeta = (name, label) => {
         const count = tableCounts[name] || 0;
@@ -361,7 +371,9 @@ async function getSqliteDetailedStatus(customDb = null) {
                 duration_ms: (r.finished_at && r.started_at) ? (r.finished_at - r.started_at) : 0
             };
         });
-    } catch (_) {}
+    } catch (_err) {
+        // maintenance_runs table might not exist in early migration states
+    }
 
     // Backups
     const backups = listBackups();
@@ -429,13 +441,7 @@ async function getSqliteDetailedStatus(customDb = null) {
             persistentMountVerified: storageCheck.persistentMountVerified,
             pathWarning: storageCheck.pathWarning,
             allowInSource: storageCheck.allowInSource,
-            persistentLabel: storageCheck.persistentMountVerified
-                ? "✅ Owner-Confirmed Persistent Path"
-                : storageCheck.configuredPersistentPath
-                    ? "🟡 Persistent Path Configured (Mount Unverified)"
-                    : storageCheck.allowInSource
-                        ? "ℹ️ Owner-Permitted In-Source Storage"
-                        : "❌ Ephemeral / In-Source",
+            persistentLabel: resolvePersistentLabel(storageCheck),
             managedStorage
         },
         categories,
@@ -1072,27 +1078,31 @@ async function getMongoDetailedStatus() {
     const maskedHost = safeHost.replace(/(:\/\/)([^@]+)@/, "$1***:***@");
 
     // Collections stats
-    const collections = [];
-    for (const modelName of ALLOWED_MONGO_COLLECTIONS) {
-        const Model = mongo.models[modelName];
-        if (!Model) continue;
+    const collectionResults = await Promise.all(
+        ALLOWED_MONGO_COLLECTIONS.map(async modelName => {
+            const Model = mongo.models[modelName];
+            if (!Model) return null;
 
-        let docCount = 0;
-        try {
-            docCount = await Model.estimatedDocumentCount();
-        } catch (_) {
+            let docCount = 0;
             try {
-                docCount = await Model.countDocuments();
-            } catch (_) {}
-        }
+                docCount = await Model.estimatedDocumentCount();
+            } catch (_estErr) {
+                try {
+                    docCount = await Model.countDocuments();
+                } catch (_countErr) {
+                    // Fallback: collection document count unreadable
+                }
+            }
 
-        collections.push({
-            name: modelName,
-            collectionName: Model.collection?.collectionName || modelName.toLowerCase(),
-            count: docCount,
-            indexesCount: Model.schema?.indexes()?.length || 0
-        });
-    }
+            return {
+                name: modelName,
+                collectionName: Model.collection?.collectionName || modelName.toLowerCase(),
+                count: docCount,
+                indexesCount: Model.schema?.indexes()?.length || 0
+            };
+        })
+    );
+    const collections = collectionResults.filter(Boolean);
 
     // Database Stats (storageSize, dataSize, indexSize, objects)
     let stats = null;

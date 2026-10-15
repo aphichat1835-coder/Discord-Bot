@@ -50,9 +50,12 @@ class AllToTargetMode {
     }
 
     formatPanelFields({ panelState, readyCount, liveJob, targetGuildName }) {
-        const targetDisplay = panelState.targetGuildId
-            ? (targetGuildName ? `${targetGuildName} (\`${panelState.targetGuildId}\`)` : `\`${panelState.targetGuildId}\``)
-            : "ยังไม่ได้ระบุ (เลือกโหมดเพื่อตั้งค่า)";
+        let targetDisplay = "ยังไม่ได้ระบุ (เลือกโหมดเพื่อตั้งค่า)";
+        if (panelState.targetGuildId) {
+            targetDisplay = targetGuildName
+                ? `${targetGuildName} (\`${panelState.targetGuildId}\`)`
+                : `\`${panelState.targetGuildId}\``;
+        }
 
         const readyDisplay = readyCount !== null && readyCount !== undefined
             ? `**${Number(readyCount).toLocaleString("th-TH")}** คน`

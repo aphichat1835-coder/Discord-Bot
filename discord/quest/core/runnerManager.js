@@ -900,9 +900,6 @@ async function startRunner({
             }
             transientAttempt = 0;
             scheduledState = await handleScheduledIdle(scheduledState, outcome);
-            if (originalStatus) {
-                await restoreUserStatus(userToken, originalStatus).catch(() => {});
-            }
         }
     }
 

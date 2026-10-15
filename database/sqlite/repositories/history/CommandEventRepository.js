@@ -62,23 +62,13 @@ class CommandEventRepository extends BaseBufferedEventRepository {
         );
     }
 
-    findRecent(limit = 100) {
-        this.flush();
-        const bounded = Math.min(500, Math.max(1, parseInt(limit, 10) || 100));
-        const rows = this.db.prepare(`
-            SELECT * FROM command_events
-            ORDER BY occurred_at DESC
-            LIMIT ?
-        `).all(bounded);
-
-        return rows.map(r => this._hydrate(r));
-    }
-
     _hydrate(row) {
         let details = null;
         try {
             if (row.detail_json) details = JSON.parse(row.detail_json);
-        } catch (_) {}
+        } catch (_err) {
+            // Best-effort JSON details parse fallback
+        }
 
         return {
             id: row.id,

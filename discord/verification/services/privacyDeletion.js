@@ -827,6 +827,70 @@ async function claimPrivacyRecoveryJob(PrivacyDeletionJobModel, job, opKey, clai
     }
 }
 
+async function runPrivacyDeletionWithFallback({
+    models,
+    safeGuildId,
+    safeUserId,
+    requestedBy,
+    hash,
+    jobId,
+    opKey,
+    now,
+    manifest,
+    mongooseInstance
+}) {
+    let dbSession = null;
+    if (mongooseInstance && typeof mongooseInstance.startSession === "function") {
+        try {
+            dbSession = await mongooseInstance.startSession();
+        } catch (_err) {
+            // Mongoose standalone connection cannot start sessions
+            dbSession = null;
+        }
+    }
+
+    const runTx = (session = null) => executePrivacyDeletionTransaction({
+        models,
+        safeGuildId,
+        safeUserId,
+        safeRequestedBy: requestedBy || "recovery-worker",
+        hash,
+        jobId,
+        operationKey: opKey,
+        now,
+        manifest,
+        dbSession: session
+    });
+
+    try {
+        if (!dbSession) {
+            const res = await runTx(null);
+            return Array.isArray(res?.memberVersions) ? res.memberVersions : [];
+        }
+
+        try {
+            let versions = [];
+            await dbSession.withTransaction(async () => {
+                const res = await runTx(dbSession);
+                if (Array.isArray(res?.memberVersions)) versions = res.memberVersions;
+            });
+            return versions;
+        } catch (txError) {
+            if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
+                const res = await runTx(null);
+                return Array.isArray(res?.memberVersions) ? res.memberVersions : [];
+            }
+            throw txError;
+        }
+    } finally {
+        if (dbSession) {
+            try { await dbSession.endSession(); } catch (_err) {
+                // Best-effort session termination
+            }
+        }
+    }
+}
+
 async function executeRecoveryMongoPhase({
     job,
     models,
@@ -839,86 +903,22 @@ async function executeRecoveryMongoPhase({
     mongooseInstance
 }) {
     const { PrivacyDeletionJob: PrivacyDeletionJobModel } = models;
-    let memberVersions = [];
-    let dbSession = null;
-    let mongoError = null;
 
     try {
-        if (mongooseInstance && typeof mongooseInstance.startSession === "function") {
-            try {
-                dbSession = await mongooseInstance.startSession();
-            } catch (_) {
-                dbSession = null;
-            }
-        }
-
-        if (dbSession) {
-            try {
-                await dbSession.withTransaction(async () => {
-                    const txResult = await executePrivacyDeletionTransaction({
-                        models,
-                        safeGuildId,
-                        safeUserId,
-                        safeRequestedBy: job.requestedBy || "recovery-worker",
-                        hash,
-                        jobId: job.jobId,
-                        operationKey: opKey,
-                        now: claimTime,
-                        manifest,
-                        dbSession
-                    });
-                    if (Array.isArray(txResult?.memberVersions)) {
-                        memberVersions = txResult.memberVersions;
-                    }
-                });
-            } catch (txError) {
-                if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
-                    dbSession = null;
-                    const txResult = await executePrivacyDeletionTransaction({
-                        models,
-                        safeGuildId,
-                        safeUserId,
-                        safeRequestedBy: job.requestedBy || "recovery-worker",
-                        hash,
-                        jobId: job.jobId,
-                        operationKey: opKey,
-                        now: claimTime,
-                        manifest,
-                        dbSession: null
-                    });
-                    if (Array.isArray(txResult?.memberVersions)) {
-                        memberVersions = txResult.memberVersions;
-                    }
-                } else {
-                    throw txError;
-                }
-            }
-        } else {
-            const txResult = await executePrivacyDeletionTransaction({
-                models,
-                safeGuildId,
-                safeUserId,
-                safeRequestedBy: job.requestedBy || "recovery-worker",
-                hash,
-                jobId: job.jobId,
-                operationKey: opKey,
-                now: claimTime,
-                manifest,
-                dbSession: null
-            });
-            if (Array.isArray(txResult?.memberVersions)) {
-                memberVersions = txResult.memberVersions;
-            }
-        }
-    } catch (err) {
-        mongoError = err;
-    } finally {
-        if (dbSession) {
-            try { await dbSession.endSession(); } catch (_) {}
-        }
-    }
-
-    if (mongoError) {
+        const memberVersions = await runPrivacyDeletionWithFallback({
+            models,
+            safeGuildId,
+            safeUserId,
+            requestedBy: job.requestedBy,
+            hash,
+            jobId: job.jobId,
+            opKey,
+            now: claimTime,
+            manifest,
+            mongooseInstance
+        });
+        return { ok: true, memberVersions };
+    } catch (mongoError) {
         manifest.phases.mongo = "failed";
         const errCode = mongoError.code || mongoError.name || "PRIVACY_DELETION_FAILED";
         await PrivacyDeletionJobModel.updateOne(
@@ -935,8 +935,6 @@ async function executeRecoveryMongoPhase({
         ).catch(() => {});
         return { ok: false, errorResult: { jobId: job.jobId, status: "failed", errorCode: errCode } };
     }
-
-    return { ok: true, memberVersions };
 }
 
 async function executePrivacyRecoveryJobPhases({

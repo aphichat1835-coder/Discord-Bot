@@ -1517,6 +1517,41 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
   }
 });
 
+function resolveUrlFormatText(readiness) {
+  if (readiness.urlValid) {
+    return "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล";
+  }
+  if (readiness.urlConfigured) {
+    return "รูปแบบ Webhook URL ไม่ถูกต้อง";
+  }
+  return "ยังไม่ได้ระบุ Webhook URL";
+}
+
+function resolveWorkerReadyText(readiness) {
+  if (!readiness.databaseReady?.ok) {
+    return "ฐานข้อมูลไม่พร้อมทำงาน ไม่สามารถส่งข้อมูลได้";
+  }
+  if (!readiness.queueReady?.ok) {
+    return "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน";
+  }
+  if (!readiness.urlValid) {
+    return "รูปแบบ Webhook URL ไม่ถูกต้อง";
+  }
+  if (!readiness.enabled) {
+    return "ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน";
+  }
+  if (readiness.activeJob) {
+    return "ระบบกำลังส่งข้อมูลประวัติย้อนหลัง";
+  }
+  if (readiness.stats?.retry > 0) {
+    return "ระบบทำงานอยู่ (มีรายการรอส่งใหม่)";
+  }
+  if (readiness.stats?.failed > 0) {
+    return "ระบบทำงานอยู่ (พบข้อผิดพลาดบางรายการ)";
+  }
+  return "ระบบพร้อมส่งข้อมูลตามเวลาจริง";
+}
+
 router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     res.set("Cache-Control", "no-store");
@@ -1533,7 +1568,7 @@ router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildA
       checklist: {
         urlFormat: {
           ok: readiness.urlValid,
-          text: readiness.urlValid ? "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล" : (readiness.urlConfigured ? "รูปแบบ Webhook URL ไม่ถูกต้อง" : "ยังไม่ได้ระบุ Webhook URL")
+          text: resolveUrlFormatText(readiness)
         },
         databaseReady: {
           ok: readiness.databaseReady?.ok === true,
@@ -1545,21 +1580,7 @@ router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildA
         },
         workerReady: {
           ok: Boolean(readiness.enabled && readiness.urlValid && readiness.databaseReady?.ok && readiness.queueReady?.ok),
-          text: !readiness.databaseReady?.ok
-            ? "ฐานข้อมูลไม่พร้อมทำงาน ไม่สามารถส่งข้อมูลได้"
-            : !readiness.queueReady?.ok
-            ? "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน"
-            : !readiness.urlValid
-            ? "รูปแบบ Webhook URL ไม่ถูกต้อง"
-            : !readiness.enabled
-            ? "ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน"
-            : readiness.activeJob
-            ? "ระบบกำลังส่งข้อมูลประวัติย้อนหลัง"
-            : readiness.stats?.retry > 0
-            ? "ระบบทำงานอยู่ (มีรายการรอส่งใหม่)"
-            : readiness.stats?.failed > 0
-            ? "ระบบทำงานอยู่ (พบข้อผิดพลาดบางรายการ)"
-            : "ระบบพร้อมส่งข้อมูลตามเวลาจริง"
+          text: resolveWorkerReadyText(readiness)
         }
       }
     });

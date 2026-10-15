@@ -175,9 +175,9 @@ async function runAutoBackup() {
     diagnostics.backup.lastStatus = "running";
 
     try {
-        const retention = parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
+        const retention = Number.parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
         const res = await executeSqliteAction("backup", { retention }, "system_scheduler");
-        if (res && res.ok) {
+        if (res?.ok) {
             diagnostics.backup.lastStatus = "success";
             diagnostics.backup.lastError = null;
             diagnostics.backup.runCount++;

@@ -378,12 +378,12 @@ async function loadExistingDeviceContext({ device, guildId, currentUserId }) {
         const userIds = new Set();
         for (const link of links || []) {
             for (const df of link.deviceFingerprints || []) {
-                if (df && df.fingerprintHash === targetHash && df.userId) {
+                if (df?.fingerprintHash === targetHash && df?.userId) {
                     userIds.add(String(df.userId));
                 }
             }
             for (const u of link.users || []) {
-                if (u && u.lastDeviceFingerprintHash === targetHash && u.userId) {
+                if (u?.lastDeviceFingerprintHash === targetHash && u?.userId) {
                     userIds.add(String(u.userId));
                 }
             }

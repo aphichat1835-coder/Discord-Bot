@@ -199,6 +199,19 @@ class CampaignWorker {
         }
     }
 
+    _parseCandidateQueueItem(candidate, seenUsers) {
+        if (!candidate) return null;
+        const userId = String(candidate.userId || candidate.discord?.userId || "").trim();
+        if (!userId || seenUsers.has(userId)) return null;
+
+        const tokenField = String(candidate.tokenField || "").trim();
+        if (tokenField !== "oauth") {
+            console.warn(`[JoinCampaign] Candidate ${userId} has invalid tokenField "${tokenField}". Skipping.`);
+            return null;
+        }
+        return { userId, tokenField };
+    }
+
     async _refillCandidateQueue({ candidateStream, repository, jobId, seenUsers, ctx }) {
         if (ctx.streamExhausted) return;
         const pendingCount = repository.countPendingItems ? repository.countPendingItems(jobId) : 0;
@@ -218,24 +231,12 @@ class CampaignWorker {
             if (cursor) {
                 lastConsumedCursor = cursor;
             }
-            if (!candidate) continue;
 
-            const userId = String(candidate.userId || candidate.discord?.userId || "").trim();
-            if (!userId || seenUsers.has(userId)) continue;
+            const validItem = this._parseCandidateQueueItem(candidate, seenUsers);
+            if (!validItem) continue;
 
-            // Strict tokenField validation (fail-closed, no fallback)
-            const tokenField = String(candidate.tokenField || "").trim();
-            if (tokenField !== "oauth") {
-                console.warn(`[JoinCampaign] Candidate ${userId} has invalid tokenField "${tokenField}". Skipping.`);
-                continue;
-            }
-
-            seenUsers.add(userId);
-
-            itemsToInsert.push({
-                userId,
-                tokenField
-            });
+            seenUsers.add(validItem.userId);
+            itemsToInsert.push(validItem);
         }
 
         if (itemsToInsert.length > 0) {
@@ -247,7 +248,9 @@ class CampaignWorker {
             ctx.candidateCursor = lastConsumedCursor;
             try {
                 repository.updateJob(jobId, { candidateCursor: lastConsumedCursor });
-            } catch (_) {}
+            } catch (_err) {
+                // Best-effort checkpoint cursor update
+            }
         }
     }
 
@@ -510,7 +513,7 @@ class CampaignWorker {
 
         const targetMemberIds = await this._resolveTargetMemberIds(targetGuild, job, passedTargetMemberIds, repository);
         const completedUserIds = repository.getCompletedUserIds ? repository.getCompletedUserIds(job.id) : new Set();
-        const seenUsers = new Set([...completedUserIds]);
+        const seenUsers = new Set(completedUserIds);
 
         const getTargetPanel = () => {
             let p = null;

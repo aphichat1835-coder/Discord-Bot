@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const crypto = require("node:crypto");
 const { getFilesystemFreeSpace } = require("./quota");
 
 function isPathInside(childPath, parentPath) {
@@ -149,7 +150,7 @@ function evaluateStoragePaths(options = {}) {
             fs.accessSync(target.dir, fs.constants.R_OK | fs.constants.W_OK);
 
             // Write probe check: create temporary file and delete
-            const probeFile = path.join(target.dir, `.__perm_probe_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+            const probeFile = path.join(target.dir, `.__perm_probe_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`);
             fs.writeFileSync(probeFile, "probe");
             fs.unlinkSync(probeFile);
 
