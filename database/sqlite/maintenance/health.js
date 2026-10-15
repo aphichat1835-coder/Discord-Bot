@@ -11,7 +11,7 @@ function incrementErrorCounter() {
 }
 
 function getHealthStatus(db, dbPath) {
-    if (!db || !db.open) {
+    if (!db?.open) {
         return {
             status: "failed",
             isReady: false,

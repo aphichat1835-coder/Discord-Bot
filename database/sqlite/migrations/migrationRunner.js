@@ -93,11 +93,11 @@ function resolveBackupDir(customDir = null) {
 }
 
 function resolvePreMigrationRetention(customRetention = null) {
-    if (customRetention !== null && customRetention !== undefined && !isNaN(customRetention)) {
-        return parseInt(customRetention, 10);
+    if (customRetention !== null && customRetention !== undefined && !Number.isNaN(customRetention)) {
+        return Number.parseInt(customRetention, 10);
     }
-    const envVal = parseInt(process.env.SQLITE_PRE_MIGRATION_BACKUP_RETENTION, 10);
-    return (!isNaN(envVal) && envVal > 0) ? envVal : 1;
+    const envVal = Number.parseInt(process.env.SQLITE_PRE_MIGRATION_BACKUP_RETENTION, 10);
+    return (!Number.isNaN(envVal) && envVal > 0) ? envVal : 1;
 }
 
 function rotatePreMigrationBackups(backupDir, maxToKeep = 1) {
@@ -115,7 +115,7 @@ function rotatePreMigrationBackups(backupDir, maxToKeep = 1) {
         if (files.length > maxToKeep) {
             const toDelete = files.slice(maxToKeep);
             for (const item of toDelete) {
-                try { fs.unlinkSync(item.path); } catch (_) {}
+                try { fs.unlinkSync(item.path); } catch { /* ignore pre-migration cleanup error */ }
             }
         }
     } catch (err) {
@@ -134,7 +134,8 @@ function reconcileUserVersion(db) {
             console.log(`[MIGRATION] 🔄 Reconciled PRAGMA user_version: ${currentPragma} -> ${maxVersion}`);
         }
         return Math.max(maxVersion, currentPragma);
-    } catch (_) {
+    } catch {
+        // Table schema_migrations may not exist yet on fresh database; safely return 0
         return 0;
     }
 }
@@ -181,7 +182,7 @@ function createPreMigrationBackup(db, migrationItem, options = {}) {
     const targetPath = path.join(backupDir, filename);
 
     // Escape single quotes for SQL string literal
-    const escaped = targetPath.replace(/'/g, "''");
+    const escaped = targetPath.replaceAll("'", "''");
     try {
         db.exec(`VACUUM INTO '${escaped}'`);
     } catch (err) {

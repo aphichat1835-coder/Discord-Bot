@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const mongoose = require("mongoose");
 const webhooks = require("../core/webhooks");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 
 test("sessionManager dispatches alerts on MongoDB connection loss and recovery", async () => {
     const originalSendWebhookEvent = webhooks.sendWebhookEvent;
@@ -111,7 +111,7 @@ test("tokenCoordinator dispatches alerts on quarantine, release, and heavy backo
     };
 
     try {
-        const { TokenCoordinator } = require("../core/tokenCoordinator");
+        const { TokenCoordinator } = require("../tokens/tokenCoordinator");
         const coordinator = new TokenCoordinator({ alertCooldownMs: 0 });
         const testToken = "test_token_1234567890abcdef1234567890abcdef";
 

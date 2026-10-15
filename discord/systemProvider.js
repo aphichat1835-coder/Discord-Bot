@@ -14,7 +14,7 @@ const { MessageEmbed, MessageActionRow, MessageButton, getLegacyChannelType, res
 const express = require("express");
 const crypto = require("node:crypto");
 const config  = require("./config.json");
-const sessionManager = require("./sessionManager");
+const sessionManager = require("./voiceWorker/sessionManager");
 const { sendWebhookEvent } = require("./core/webhooks");
 const auditStorage = require("./logging/auditStorage");
 const safeLogger = require("./core/safeLogger");
@@ -1572,7 +1572,7 @@ class ShadowEngine {
             `📊 **RSS:** ${(mem.rss / 1024 / 1024).toFixed(2)} MB`,
             `⏱️ **Uptime:** ${uptime} นาที`,
             `🤖 **Guilds:** ${this.client.guilds.cache.size}`,
-            `🎙️ **Voice Sessions:** ${require('./sessionManager').getAllSessions().size}`,
+            `🎙️ **Voice Sessions:** ${require('./voiceWorker/sessionManager').getAllSessions().size}`,
         ].join('\n');
         await this.sendAlert("💻 SYSTEM MONITOR", info);
     }

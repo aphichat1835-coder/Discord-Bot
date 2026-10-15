@@ -78,7 +78,7 @@ function parseOwnerIds(value) {
 
     const parts = raw.split(",").map(ownerId => ownerId.trim());
     if (parts.some(ownerId => !ownerId)) return null;
-    const ownerIds = parts.map(normalizeDiscordSnowflake);
+    const ownerIds = parts.map(ownerId => normalizeDiscordSnowflake(ownerId));
     if (ownerIds.some(ownerId => !ownerId)) return null;
     return [...new Set(ownerIds)];
 }

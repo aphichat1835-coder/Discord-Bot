@@ -233,3 +233,51 @@ test("ensureVoiceSession cleans up only the created generation when startup fail
         "generation-created"
     ]]);
 });
+
+test("installVoiceGatewayInterceptor drops non-voice gateway packets and forwards voice packets", () => {
+    const { installVoiceGatewayInterceptor, buildSelfClientOptions, VOICE_IGNORED_GATEWAY_EVENTS } = require("../voiceWorker/cacheUtils");
+    
+    assert.equal(VOICE_IGNORED_GATEWAY_EVENTS.has("TYPING_START"), true);
+    assert.equal(VOICE_IGNORED_GATEWAY_EVENTS.has("MESSAGE_CREATE"), true);
+    assert.equal(VOICE_IGNORED_GATEWAY_EVENTS.has("PRESENCE_UPDATE"), true);
+    assert.equal(VOICE_IGNORED_GATEWAY_EVENTS.has("VOICE_STATE_UPDATE"), false);
+    assert.equal(VOICE_IGNORED_GATEWAY_EVENTS.has("VOICE_SERVER_UPDATE"), false);
+    assert.equal(VOICE_IGNORED_GATEWAY_EVENTS.has("READY"), false);
+
+    const forwarded = [];
+    const fakeClient = {
+        ws: {
+            handlePacket(packet, shard) {
+                forwarded.push({ packet, shard });
+                return true;
+            }
+        }
+    };
+
+    installVoiceGatewayInterceptor(fakeClient);
+    assert.equal(fakeClient.ws._voiceInterceptorInstalled, true);
+
+    // Ignored packet should be dropped without forwarding
+    const droppedTyping = fakeClient.ws.handlePacket({ t: "TYPING_START", d: {} }, 0);
+    assert.equal(droppedTyping, true);
+    assert.equal(forwarded.length, 0);
+
+    const droppedPresence = fakeClient.ws.handlePacket({ t: "PRESENCE_UPDATE", d: {} }, 0);
+    assert.equal(droppedPresence, true);
+    assert.equal(forwarded.length, 0);
+
+    // Voice packet should be forwarded
+    const forwardedVoice = fakeClient.ws.handlePacket({ t: "VOICE_STATE_UPDATE", d: { channel_id: "123" } }, 0);
+    assert.equal(forwardedVoice, true);
+    assert.equal(forwarded.length, 1);
+    assert.equal(forwarded[0].packet.t, "VOICE_STATE_UPDATE");
+
+    // Idempotent check
+    installVoiceGatewayInterceptor(fakeClient);
+    assert.equal(fakeClient.ws._voiceInterceptorInstalled, true);
+
+    // Options check
+    const options = buildSelfClientOptions();
+    assert.equal(typeof options.makeCache, "function");
+    assert.deepEqual(options.sweepers, { threads: { interval: 300, lifetime: 600 } });
+});

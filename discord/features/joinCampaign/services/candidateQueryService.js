@@ -1,6 +1,6 @@
 "use strict";
 
-const oauthTokenManager = require("../../../core/oauthTokenManager");
+const oauthTokenManager = require("../../../tokens/oauthTokenManager");
 
 async function* streamCandidates({
     mode,

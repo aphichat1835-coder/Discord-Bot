@@ -1,5 +1,5 @@
 const { Options: SelfClientOptions } = require("discord.js-selfbot-v13");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { st, clientPool, tokenLoginCooldowns } = require("./state");
 const {
     SELF_CLIENT_CACHE_LIMITS,
@@ -26,7 +26,53 @@ function buildSelfClientOptions() {
         makeCache: SelfClientOptions.cacheWithLimits({
             ...SelfClientOptions.defaultMakeCacheSettings,
             ...SELF_CLIENT_CACHE_LIMITS
-        })
+        }),
+        sweepers: {
+            threads: { interval: 300, lifetime: 600 }
+        }
+    };
+}
+
+const VOICE_IGNORED_GATEWAY_EVENTS = new Set([
+    "TYPING_START",
+    "MESSAGE_CREATE",
+    "MESSAGE_UPDATE",
+    "MESSAGE_DELETE",
+    "MESSAGE_DELETE_BULK",
+    "MESSAGE_REACTION_ADD",
+    "MESSAGE_REACTION_REMOVE",
+    "MESSAGE_REACTION_REMOVE_ALL",
+    "MESSAGE_REACTION_REMOVE_EMOJI",
+    "PRESENCE_UPDATE",
+    "THREAD_CREATE",
+    "THREAD_UPDATE",
+    "THREAD_DELETE",
+    "THREAD_LIST_SYNC",
+    "THREAD_MEMBER_UPDATE",
+    "THREAD_MEMBERS_UPDATE",
+    "STAGE_INSTANCE_CREATE",
+    "STAGE_INSTANCE_UPDATE",
+    "STAGE_INSTANCE_DELETE",
+    "GUILD_BAN_ADD",
+    "GUILD_BAN_REMOVE",
+    "GUILD_EMOJIS_UPDATE",
+    "GUILD_STICKERS_UPDATE",
+    "INVITE_CREATE",
+    "INVITE_DELETE",
+    "WEBHOOKS_UPDATE"
+]);
+
+function installVoiceGatewayInterceptor(client) {
+    if (!client?.ws || typeof client.ws.handlePacket !== "function") return;
+    if (client.ws._voiceInterceptorInstalled) return;
+    client.ws._voiceInterceptorInstalled = true;
+
+    const originalHandlePacket = client.ws.handlePacket.bind(client.ws);
+    client.ws.handlePacket = function (packet, shard) {
+        if (packet && typeof packet.t === "string" && VOICE_IGNORED_GATEWAY_EVENTS.has(packet.t)) {
+            return true;
+        }
+        return originalHandlePacket(packet, shard);
     };
 }
 
@@ -429,4 +475,6 @@ module.exports = {
     sweepCollection,
     cleanupClientCaches,
     cleanupSelfClientCaches,
+    installVoiceGatewayInterceptor,
+    VOICE_IGNORED_GATEWAY_EVENTS,
 };

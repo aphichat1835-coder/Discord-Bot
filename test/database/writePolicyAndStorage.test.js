@@ -173,7 +173,7 @@ describe("Pass 1: Write Policy, Asset Accounting & Storage Semantics Suite", () 
     });
 
     test("7. TokenCoordinator emits subsystem in token:rate_limited payload", () => {
-        const { TokenCoordinator } = require("../../discord/core/tokenCoordinator");
+        const { TokenCoordinator } = require("../../discord/tokens/tokenCoordinator");
         const coordinator = new TokenCoordinator();
 
         let captured = null;

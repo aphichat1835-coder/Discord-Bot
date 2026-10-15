@@ -218,7 +218,7 @@ test("panelInteractions: handleStatusReconnectButton permission check and respon
     };
 
     // Run with mock sessionManager
-    const sessionManager = require("../sessionManager");
+    const sessionManager = require("../voiceWorker/sessionManager");
     const origGetSession = sessionManager.getSession;
     sessionManager.getSession = (id) => id === "sess-target" ? targetSession : null;
 

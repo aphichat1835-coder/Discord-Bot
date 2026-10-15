@@ -1,3 +1,5 @@
+"use strict";
+
 const { PermissionFlagsBits } = require("discord.js");
 
 const PERMISSIONS = Object.freeze({

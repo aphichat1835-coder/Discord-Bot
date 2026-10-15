@@ -3,7 +3,7 @@
 
 const { PermissionFlagsBits } = require("discord.js");
 const config = require("../config.json");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const {
     requireMemberPermission,
     requireBotPermission,

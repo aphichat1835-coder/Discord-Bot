@@ -339,7 +339,6 @@ function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAs
     } else if (isSuccess) {
         color = config.system?.themeColors?.success || 0x57F287;
         title = `${successEmoji} ถอดยศเรียบร้อย`;
-        statusText = "";
     } else if (removedAssignments === 0 && failedAssignments > 0) {
         color = config.system?.themeColors?.error || 0xED4245;
         title = `${errorEmoji} ถอดยศไม่สำเร็จ`;

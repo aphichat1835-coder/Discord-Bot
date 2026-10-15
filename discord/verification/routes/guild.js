@@ -1,3 +1,5 @@
+"use strict";
+
 /* eslint-disable complexity -- Legacy dashboard routes keep stable response shapes; refactor separately. */
 const { requireCsrf } = require('../../index/auth');
 /*

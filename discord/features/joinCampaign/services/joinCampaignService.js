@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 const { runPreflight, getLiveTargetMemberIds } = require("./preflightService");
 const { countEligibleCandidates } = require("./candidateQueryService");
-const oauthTokenManager = require("../../../core/oauthTokenManager");
+const oauthTokenManager = require("../../../tokens/oauthTokenManager");
 const { buildPreflightConfirmationPayload } = require("../ui/confirmationBuilder");
 const { buildPanelPayload } = require("../ui/panelBuilder");
 const campaignWorker = require("../worker/campaignWorker");
@@ -298,7 +298,9 @@ class JoinCampaignService {
                     targetGuildName: preflight.targetGuildName,
                     readyCount: freshReadyCount
                 });
-            } catch (_) {}
+            } catch {
+                // Best-effort cleanup of failure state; ignore secondary errors during rollback
+            }
             return {
                 ok: false,
                 error: `ไม่สามารถเริ่มงานได้: ${errorMsg}`

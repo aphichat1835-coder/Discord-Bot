@@ -9,7 +9,7 @@ const {
 const { MessageEmbed } = require('../core/discordCompat');
 const { delay, withTimeoutReject } = require('../core/timers');
 const { isDiscordSnowflake } = require('../core/snowflakes');
-const tokenCoordinator = require('../core/tokenCoordinator');
+const tokenCoordinator = require('../tokens/tokenCoordinator');
 const config = require('../config.json');
 
 const DISCORD_WEBHOOK_PATTERN = /^https:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/api\/webhooks\/\d{17,22}\/[a-z0-9_-]+$/i;

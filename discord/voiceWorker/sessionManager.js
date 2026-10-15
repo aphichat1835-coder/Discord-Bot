@@ -10,10 +10,10 @@
 
 const mongoose = require("mongoose");
 const crypto = require("node:crypto");
-const config = require("./config.json");
-const { sanitizeLogText } = require("./core/safeLogger");
-const { readFiniteInteger } = require("./core/numbers");
-const webhooks = require("./core/webhooks");
+const config = require("../config.json");
+const { sanitizeLogText } = require("../core/safeLogger");
+const { readFiniteInteger } = require("../core/numbers");
+const webhooks = require("../core/webhooks");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🗺️  REGION 1: IN-MEMORY STATE
@@ -413,7 +413,7 @@ async function disconnectDB() {
     } catch (_) {}
 
     try {
-        const db = require("../database");
+        const db = require("../../database");
         await db.shutdown();
     } catch (_) {}
 
@@ -947,7 +947,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
     } catch (_) {}
 
     try {
-        const db = require("../database");
+        const db = require("../../database");
         db?.repositories?.sessionEvent?.record({
             sessionId,
             accountId: ownerId,
@@ -961,7 +961,7 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
 
 function getVoiceRuntimeRepository() {
     try {
-        const db = require("../database");
+        const db = require("../../database");
         return db?.repositories?.voiceSessionRuntime || null;
     } catch (_) {
         return null;
@@ -1252,7 +1252,9 @@ async function deleteSession(sessionId, options = {}) {
         try {
             const repo = getVoiceRuntimeRepository();
             if (repo) repo.deleteSessionRuntime(sessionId);
-        } catch (_) {}
+        } catch {
+            // Voice runtime repository cleanup failure is non-fatal during delete retry enqueueing
+        }
         cleanupSessionMemory(sessionId, session);
         systemMetrics.increment("errors");
         console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
@@ -1268,7 +1270,7 @@ async function deleteSession(sessionId, options = {}) {
     } catch (_) {}
 
     try {
-        const db = require("../database");
+        const db = require("../../database");
         db?.repositories?.sessionEvent?.record({
             sessionId,
             eventType: "voice_session_deleted",

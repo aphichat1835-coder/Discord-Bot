@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const { escapeHtml, safeStyleContent } = require("./htmlUtils");
 const {
     hashPinCredential,

@@ -63,8 +63,8 @@ function isRetiredCategory(category) {
 }
 
 function resolveDmRetentionMs() {
-    const days = parseInt(process.env.SQLITE_DM_RETENTION_DAYS, 10);
-    return (!isNaN(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000;
+    const days = Number.parseInt(process.env.SQLITE_DM_RETENTION_DAYS, 10);
+    return (!Number.isNaN(days) && days > 0 ? days : 7) * 24 * 60 * 60 * 1000;
 }
 
 function databaseReady() {
@@ -72,7 +72,8 @@ function databaseReady() {
     try {
         const database = require("../../database");
         return Boolean(database?.sqlite?.isReady?.());
-    } catch (_) {
+    } catch {
+        // Database module may not be initialized in isolated testing environments; safely treat as not ready
         return false;
     }
 }

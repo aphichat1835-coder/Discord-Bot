@@ -7,8 +7,8 @@ const {
     decryptToken,
     decryptTokenForMigration
 } = require("../verification/utils/crypto");
-const { safeError } = require("./safeLogger");
-const { resolvePublicBaseUrl } = require("./publicUrl");
+const { safeError } = require("../core/safeLogger");
+const { resolvePublicBaseUrl } = require("../core/publicUrl");
 
 const DEFAULT_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REFRESH_SCAN_LIMIT = 100;
@@ -54,7 +54,7 @@ const diagnosticStats = {
 
 function dispatchOAuthAlert(event, options = {}) {
     try {
-        const { sendWebhookEvent } = require("./webhooks");
+        const { sendWebhookEvent } = require("../core/webhooks");
         if (typeof sendWebhookEvent === "function") {
             sendWebhookEvent({
                 target: "ALERT",
@@ -951,24 +951,7 @@ function buildCandidatePageResult({
     return result;
 }
 
-async function listAccessTokenCandidates({
-    requiredScopes = ["guilds.join"],
-    sourceGuildId = null,
-    targetGuildId = null,
-    allowAllGuilds = false,
-    limit = 500,
-    afterId = null,
-    model = OAuthUser,
-    env = process.env,
-    seenUsers = null,
-    additionalFilter = null
-} = {}) {
-    const effectiveGuildId = String(sourceGuildId || (!allowAllGuilds ? targetGuildId : "") || "").trim();
-    if (!allowAllGuilds && !effectiveGuildId) {
-        return buildCandidatePageResult();
-    }
-
-    const config = getOAuthRefreshConfig(env);
+function buildCandidateMongoQuery({ effectiveGuildId, config, additionalFilter, afterId }) {
     const tokenBranches = TOKEN_FIELDS.map(tokenField => ({
         $and: [
             {
@@ -1012,7 +995,74 @@ async function listAccessTokenCandidates({
         andConditions.push({ _id: { $gt: afterId } });
     }
 
-    const filter = { $and: andConditions };
+    return { $and: andConditions };
+}
+
+function hasAllRequiredScopes(tokenScope, normalizedRequired) {
+    const scopes = new Set(String(tokenScope || "").split(/\s+/).filter(Boolean));
+    for (const req of normalizedRequired) {
+        if (!scopes.has(req)) return false;
+    }
+    return true;
+}
+
+function evaluateDocTokens(doc, { normalizedRequired, failMax }) {
+    let chosenField = null;
+    let chosenScope = "";
+    let docHasMissingScope = false;
+    let docIsRevoked = false;
+    let docIsExhausted = false;
+
+    for (const tokenField of TOKEN_FIELDS) {
+        const tokenState = doc[tokenField] || {};
+        const hasToken = Boolean(tokenState.encryptedRefreshToken || tokenState.encryptedAccessToken);
+        if (!hasToken) continue;
+        if (tokenState.revokedAt) {
+            docIsRevoked = true;
+            continue;
+        }
+        if (Number(tokenState.refreshFailCount || 0) >= failMax) {
+            docIsExhausted = true;
+            continue;
+        }
+
+        if (hasAllRequiredScopes(tokenState.scope, normalizedRequired)) {
+            chosenField = tokenField;
+            chosenScope = tokenState.scope || "";
+            break;
+        } else {
+            docHasMissingScope = true;
+        }
+    }
+
+    return { chosenField, chosenScope, docHasMissingScope, docIsRevoked, docIsExhausted };
+}
+
+function isDocGuildEligible(doc, effectiveGuildId) {
+    if (!effectiveGuildId) return true;
+    return String(doc.lastVerify?.guildId || "").trim() === effectiveGuildId &&
+        doc.lastVerify?.result === "success";
+}
+
+async function listAccessTokenCandidates({
+    requiredScopes = ["guilds.join"],
+    sourceGuildId = null,
+    targetGuildId = null,
+    allowAllGuilds = false,
+    limit = 500,
+    afterId = null,
+    model = OAuthUser,
+    env = process.env,
+    seenUsers = null,
+    additionalFilter = null
+} = {}) {
+    const effectiveGuildId = String(sourceGuildId || (!allowAllGuilds ? targetGuildId : "") || "").trim();
+    if (!allowAllGuilds && !effectiveGuildId) {
+        return buildCandidatePageResult();
+    }
+
+    const config = getOAuthRefreshConfig(env);
+    const filter = buildCandidateMongoQuery({ effectiveGuildId, config, additionalFilter, afterId });
     const docs = await model.find(filter)
         .select("discord.userId oauth lastVerify updatedAt _id")
         .sort({ _id: 1 })
@@ -1031,13 +1081,8 @@ async function listAccessTokenCandidates({
     const byTokenField = { oauth: 0 };
 
     for (const doc of docs) {
-        if (effectiveGuildId) {
-            if (
-                String(doc.lastVerify?.guildId || "").trim() !== effectiveGuildId ||
-                doc.lastVerify?.result !== "success"
-            ) {
-                continue;
-            }
+        if (!isDocGuildEligible(doc, effectiveGuildId)) {
+            continue;
         }
         const userId = String(doc.discord?.userId || "").trim();
         if (!userId) {
@@ -1055,41 +1100,13 @@ async function listAccessTokenCandidates({
             newUniqueUsers++;
         }
 
-        let chosenField = null;
-        let chosenScope = "";
-        let docHasMissingScope = false;
-        let docIsRevoked = false;
-        let docIsExhausted = false;
-
-        for (const tokenField of TOKEN_FIELDS) {
-            const tokenState = doc[tokenField] || {};
-            const hasToken = Boolean(tokenState.encryptedRefreshToken || tokenState.encryptedAccessToken);
-            if (!hasToken) continue;
-            if (tokenState.revokedAt) {
-                docIsRevoked = true;
-                continue;
-            }
-            if (Number(tokenState.refreshFailCount || 0) >= config.failMax) {
-                docIsExhausted = true;
-                continue;
-            }
-
-            const scopes = new Set(String(tokenState.scope || "").split(/\s+/).filter(Boolean));
-            let matchesAll = true;
-            for (const req of normalizedRequired) {
-                if (!scopes.has(req)) {
-                    matchesAll = false;
-                    break;
-                }
-            }
-            if (matchesAll) {
-                chosenField = tokenField;
-                chosenScope = tokenState.scope || "";
-                break;
-            } else {
-                docHasMissingScope = true;
-            }
-        }
+        const {
+            chosenField,
+            chosenScope,
+            docHasMissingScope,
+            docIsRevoked,
+            docIsExhausted
+        } = evaluateDocTokens(doc, { normalizedRequired, failMax: config.failMax });
 
         if (chosenField) {
             if (isNewUser) {

@@ -2,7 +2,7 @@
 
 const { MessageEmbed } = require('../core/discordCompat');
 const { buildUserHeaders } = require('../quest/core/clientProfile');
-const tokenCoordinator = require('../core/tokenCoordinator');
+const tokenCoordinator = require('../tokens/tokenCoordinator');
 const config = require('../config.json');
 
 const THEME_COLORS = Object.freeze({

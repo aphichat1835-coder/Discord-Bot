@@ -25,7 +25,7 @@ const { isConfiguredOwner, resolveOwnerIds, validateRequiredEnv } = require("./c
 // Resolve this before loading ordinary bot modules so every shared config reader
 // observes the production OWNER_ID from its first use.
 resolveOwnerIds(process.env, config);
-const sessionManager = require("./sessionManager");
+const sessionManager = require("./voiceWorker/sessionManager");
 const voiceWorker    = require("./voiceWorker");
 const commands       = require("./commands");
 const voiceAdmin     = require("./features/voiceAdmin");

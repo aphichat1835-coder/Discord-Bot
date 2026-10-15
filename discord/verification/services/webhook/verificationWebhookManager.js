@@ -293,7 +293,12 @@ function buildWebhookPayload({
     const userTag = profile.id ? `<@${profile.id}>` : (profile.username || "ไม่ระบุ");
     const resultEmoji = result === "success" ? EMOJIS.CHECK : EMOJIS.CROSS;
     const resultLabel = result === "success" ? `สำเร็จ ${resultEmoji}` : `ถูกปฏิเสธ ${resultEmoji}`;
-    const roleMention = roleId ? `<@&${roleId}>${roleName ? ` (${roleName})` : ""}` : (roleName ? `@${roleName}` : "ไม่มี");
+    let roleMention = "ไม่มี";
+    if (roleId) {
+        roleMention = `<@&${roleId}>${roleName ? ` (${roleName})` : ""}`;
+    } else if (roleName) {
+        roleMention = `@${roleName}`;
+    }
 
     const networkTypes = [];
     if (ipInfo.isVPN) networkTypes.push("VPN");
@@ -753,10 +758,8 @@ class VerificationWebhookManager {
                                     }
                                 }, waitMs).unref?.();
                             }
-                        } else {
-                            if (typeof this.repo.cancelJob === "function") {
-                                this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
-                            }
+                        } else if (typeof this.repo.cancelJob === "function") {
+                            this.repo.cancelJob(job.job_id, "orphan_job_recovered_on_startup");
                         }
                     } catch (jobErr) {
                         console.error(`[VerificationWebhook] Error recovering active job ${job.job_id}:`, jobErr);
@@ -1185,7 +1188,7 @@ class VerificationWebhookManager {
             if (!hasLease) {
                 console.warn(`[VerificationWebhook] Lease lost or held by another worker for job=${job.job_id}`);
                 const currentJobCheck = this.repo.getJobById(job.job_id);
-                if (currentJobCheck && currentJobCheck.status === "RUNNING") {
+                if (currentJobCheck?.status === "RUNNING") {
                     this.scheduleNextRetry(guildId);
                 }
                 break;
@@ -1341,6 +1344,13 @@ class VerificationWebhookManager {
         }
     }
 
+    async _findVerifyLogByEventId(eventId) {
+        if (mongoose.Types.ObjectId.isValid(eventId)) {
+            return VerifyLog.findById(eventId).lean();
+        }
+        return VerifyLog.findOne({ _id: eventId }).lean();
+    }
+
     /**
      * Drains pending/retry deliveries from SQLite table (P1-2, P1-7).
      * Strictly verifies event_id and user/guild integrity.
@@ -1393,12 +1403,7 @@ class VerificationWebhookManager {
 
                 try {
                     // P1-2: Strict lookup by exact event_id
-                    let log = null;
-                    if (mongoose.Types.ObjectId.isValid(item.event_id)) {
-                        log = await VerifyLog.findById(item.event_id).lean();
-                    } else {
-                        log = await VerifyLog.findOne({ _id: item.event_id }).lean();
-                    }
+                    const log = await this._findVerifyLogByEventId(item.event_id);
 
                     if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
                         this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch", item.destination_version);
@@ -1478,7 +1483,7 @@ class VerificationWebhookManager {
                         startPart: Number(item.sent_parts) || 0,
                         onPartSent: async (partIndex) => {
                             const updRes = this.repo.updateDeliverySentParts(item.delivery_id, partIndex, item.destination_version);
-                            if (updRes && updRes.changes === 0) {
+                            if (updRes?.changes === 0) {
                                 const cancelErr = new Error("delivery_cancelled_or_version_changed_during_send");
                                 cancelErr.code = "destination_changed_during_delivery";
                                 throw cancelErr;

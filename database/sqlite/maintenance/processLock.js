@@ -155,10 +155,11 @@ function isRestoreLockActive(dbPath) {
                 createdAt: data.createdAt || null
             };
         }
-        try { fs.unlinkSync(restorePath); } catch (_) {}
+        try { fs.unlinkSync(restorePath); } catch { /* ignore lock file unlink error */ }
         return { active: false, stale: true };
-    } catch (_) {
-        try { fs.unlinkSync(restorePath); } catch (_) {}
+    } catch {
+        // Corrupted or unreadable lock file; clean up and treat lock as inactive
+        try { fs.unlinkSync(restorePath); } catch { /* ignore lock file unlink error */ }
         return { active: false };
     }
 }

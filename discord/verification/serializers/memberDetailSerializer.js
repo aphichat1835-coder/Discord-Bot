@@ -13,6 +13,12 @@ const {
 function tokenStatus(token = {}) {
     const issuedAt = Number(token.issuedAt || token.rawTokenMeta?.receivedAt || 0) || null;
     const expiresAt = Number(token.expiresAt || 0) || null;
+    let lifetimeMs = null;
+    if (typeof token.lifetimeMs === "number") {
+        lifetimeMs = token.lifetimeMs;
+    } else if (issuedAt && expiresAt) {
+        lifetimeMs = Math.max(0, expiresAt - issuedAt);
+    }
     return {
         hasAccessToken: typeof token.hasAccessToken === "boolean"
             ? token.hasAccessToken
@@ -24,7 +30,7 @@ function tokenStatus(token = {}) {
         tokenType: token.tokenType || "",
         issuedAt,
         expiresAt,
-        lifetimeMs: typeof token.lifetimeMs === "number" ? token.lifetimeMs : (issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null),
+        lifetimeMs,
         lastRefreshAt: token.lastRefreshAt || null,
         refreshFailCount: Number(token.refreshFailCount || 0),
         lastRefreshError: token.lastRefreshError || null,

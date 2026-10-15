@@ -5,7 +5,7 @@ const { registerCommandsWithRetry } = require("../commands/registration");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const information = require("../commands/information");
 const commands = require("../commands");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 
 test("command registration retries without blocking after a transient failure", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let calls = 0;

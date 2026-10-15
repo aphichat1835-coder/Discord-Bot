@@ -11,7 +11,7 @@ const {
 const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 const { getQuestLogRepository, getScheduledRunnerRepository } = require("../../database/repositories/quest");
 const { stopScheduledJob } = require("../quest");
-const tokenCoordinator = require("../core/tokenCoordinator");
+const tokenCoordinator = require("../tokens/tokenCoordinator");
 
 function wait(ms) {
     return awaitedDelay(ms);

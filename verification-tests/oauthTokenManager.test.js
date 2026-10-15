@@ -1,7 +1,7 @@
 process.env.ENCRYPTION_KEY = "test-encryption-key-must-be-32-bytes-long!";
 
 const crypto = require("node:crypto");
-const manager = require("../discord/core/oauthTokenManager");
+const manager = require("../discord/tokens/oauthTokenManager");
 const { encryptToken } = require("../discord/verification/utils/crypto");
 
 function legacyServiceKey(secret) {

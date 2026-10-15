@@ -41,7 +41,7 @@ function getDatabaseFootprint(dbPath) {
     }
 
     const totalBytes = mainStat.size + walBytes + shmBytes;
-    const totalMb = parseFloat((totalBytes / (1024 * 1024)).toFixed(2));
+    const totalMb = Number.parseFloat((totalBytes / (1024 * 1024)).toFixed(2));
 
     return {
         mainBytes: mainStat.size,
@@ -58,16 +58,18 @@ function getFilesystemFreeSpace(targetDir) {
             const stats = fs.statfsSync(targetDir);
             const freeBytes = stats.bavail * stats.bsize;
             const totalBytes = stats.blocks * stats.bsize;
-            const percentFree = totalBytes > 0 ? parseFloat(((freeBytes / totalBytes) * 100).toFixed(1)) : null;
+            const percentFree = totalBytes > 0 ? Number.parseFloat(((freeBytes / totalBytes) * 100).toFixed(1)) : null;
             return {
                 availableBytes: freeBytes,
-                availableMb: parseFloat((freeBytes / (1024 * 1024)).toFixed(2)),
+                availableMb: Number.parseFloat((freeBytes / (1024 * 1024)).toFixed(2)),
                 totalBytes,
-                totalMb: parseFloat((totalBytes / (1024 * 1024)).toFixed(2)),
+                totalMb: Number.parseFloat((totalBytes / (1024 * 1024)).toFixed(2)),
                 percentFree
             };
         }
-    } catch (_) {}
+    } catch {
+        // statfsSync not supported or directory not accessible; return null defaults
+    }
     return { availableBytes: null, availableMb: null, totalBytes: null, totalMb: null, percentFree: null };
 }
 
@@ -133,7 +135,7 @@ function evaluateEmergencyThresholds(dbPath, metrics = {}) {
     }
 
     // 2. WAL File Swelling (> 500MB)
-    const walMb = parseFloat((quota.footprint.walBytes / (1024 * 1024)).toFixed(2));
+    const walMb = Number.parseFloat((quota.footprint.walBytes / (1024 * 1024)).toFixed(2));
     if (walMb >= 500) {
         isEmergency = true;
         reasons.push(`SQLite WAL file abnormally swollen (${walMb} MB >= 500 MB threshold)`);

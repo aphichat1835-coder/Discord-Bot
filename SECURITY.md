@@ -176,7 +176,7 @@ Legacy `adminOAuth` fields have been completely retired from database models, wo
 
 ### Master Token Coordinator & Concurrency Security
 
-The Master Token Coordinator (`discord/core/tokenCoordinator.js`) governs Discord account tokens shared across voice automation, quest sessions, and profile lookups:
+The Master Token Coordinator (`discord/tokens/tokenCoordinator.js`) governs Discord account tokens shared across voice automation, quest sessions, and profile lookups:
 - **Identifier Isolation**: Internal event bus messages, alert webhooks, and Dashboard endpoints reference tokens by their 64-character SHA-256 hash (`tokenHash`), preventing token leakage in diagnostics or transit.
 - **Quarantine Isolation**: When Discord rejects a token with HTTP 401, or fires an invalidation event on the Gateway WebSocket, the Token Coordinator places the token in Quarantine. This triggers coordinated notifications across registered subsystems to immediately stop voice connections and quest tasks, shielding the IP and user account from abusive retry loops or ban triggers.
 - **429 Rate-Limit Mitigation**: Intercepts `429 Too Many Requests` responses and coordinates exponential backoff across all consumers of the token, ensuring compliance with Discord REST rate limits.

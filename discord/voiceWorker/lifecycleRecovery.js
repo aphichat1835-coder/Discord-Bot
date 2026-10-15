@@ -1,7 +1,7 @@
 'use strict';
 
 const { VoiceConnectionStatus } = require("@discordjs/voice");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const notifications = require("./notifications");
 const { EVENTS } = notifications;
 const {
@@ -25,7 +25,7 @@ const {
     stopAutoDeafTimer
 } = require("./autoDeaf");
 const { recoveryQueue } = require("./queue");
-const tokenCoordinator = require("../core/tokenCoordinator");
+const tokenCoordinator = require("../tokens/tokenCoordinator");
 const { sanitizeLogText } = require("../core/safeLogger");
 const {
     sanitizeLifecycleError,
@@ -89,9 +89,13 @@ async function handleHibernateTransition(sessionId, tokenHash, session, currentC
             currentSession.recoveryState.attempts = 0;
             currentSession.recoveryState.hibernateUntil = null;
         }
-        if (typeof deps.healthCheck === "function") {
-            deps.healthCheck().catch(() => {});
-        }
+        const runHealthCheck = typeof deps.healthCheck === "function"
+            ? deps.healthCheck
+            : () => require("./lifecycle").healthCheck?.();
+        try {
+            const p = runHealthCheck();
+            if (p?.catch) p.catch(() => {});
+        } catch (_) {}
     }, pauseMs);
     wakeTimer.unref?.();
     hibernateTimers.set(sessionId, wakeTimer);

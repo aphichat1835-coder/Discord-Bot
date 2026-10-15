@@ -8,7 +8,7 @@ const os = require("node:os");
 const Database = require("better-sqlite3");
 
 const { TABLE_CATEGORIES, getCategoryForTable } = require("../../database/sqlite/tableCategories");
-const { TokenCoordinator } = require("../../discord/core/tokenCoordinator");
+const { TokenCoordinator } = require("../../discord/tokens/tokenCoordinator");
 const { spoolP0Event, drainP0Spool, getP0JournalStats } = require("../../database/sqlite/repositories/history/p0Journal");
 const { evaluateEmergencyThresholds } = require("../../database/sqlite/maintenance/quota");
 const { runMigrations, reconcileUserVersion } = require("../../database/sqlite/migrations/migrationRunner");
@@ -39,11 +39,13 @@ describe("Production Audit 15-Item Remediation Verification Suite", () => {
     });
 
     describe("Item 6: Table Categories Mapping", () => {
-        test("all 17 standard SQLite tables are mapped without uncategorized gaps", () => {
+        test("all 23 standard SQLite tables are mapped without uncategorized gaps", () => {
             const expectedTables = [
                 "schema_migrations", "database_meta", "maintenance_runs",
                 "quest_logs", "quest_accounts", "quest_details", "scheduled_runners",
                 "dm_notifications", "verification_recovery", "voice_session_runtime",
+                "join_campaign_jobs", "join_campaign_items", "join_campaign_panels",
+                "verification_webhook_jobs", "verification_webhook_deliveries", "p0_journal_receipts",
                 "verification_state_nonce", "voice_events", "command_events",
                 "session_events", "runtime_events", "cache_entries", "asset_cache"
             ];
@@ -56,6 +58,9 @@ describe("Production Audit 15-Item Remediation Verification Suite", () => {
             assert.equal(getCategoryForTable("quest_accounts"), "core");
             assert.equal(getCategoryForTable("quest_details"), "core");
             assert.equal(getCategoryForTable("voice_session_runtime"), "core");
+            assert.equal(getCategoryForTable("join_campaign_jobs"), "core");
+            assert.equal(getCategoryForTable("verification_webhook_jobs"), "core");
+            assert.equal(getCategoryForTable("p0_journal_receipts"), "core");
             assert.equal(getCategoryForTable("unknown_future_table"), "temporary");
         });
     });

@@ -17,7 +17,7 @@ const {
     isFatalAuthError
 } = require('./questSession');
 const { encryptToken, maskToken } = require('./tokenCrypto');
-const tokenCoordinator = require('../../core/tokenCoordinator');
+const tokenCoordinator = require('../../tokens/tokenCoordinator');
 const config = require('../../config.json');
 
 try {

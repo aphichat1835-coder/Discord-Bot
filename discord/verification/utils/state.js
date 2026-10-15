@@ -1,3 +1,5 @@
+"use strict";
+
 const crypto = require("node:crypto");
 
 const DEFAULT_CALLBACK_STATE_MAX_AGE_MS = 10 * 60 * 1000;

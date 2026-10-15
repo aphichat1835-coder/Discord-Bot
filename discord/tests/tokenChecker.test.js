@@ -313,7 +313,7 @@ test('tokenCheck command and interactions behave correctly', async () => {
 
 test('checkSingleToken utilizes tokenCoordinator profile cache and quarantine', async () => {
     const { checkSingleToken } = require('../features/tokenChecker');
-    const tokenCoordinator = require('../core/tokenCoordinator');
+    const tokenCoordinator = require('../tokens/tokenCoordinator');
 
     const mockToken = 'mock_cached_token_abc123';
     const mockProfile = {
@@ -346,7 +346,7 @@ test('checkSingleToken utilizes tokenCoordinator profile cache and quarantine', 
 
 test('checkBatchTokens processes tokens in parallel batches and categorizes results accurately', async () => {
     const { checkBatchTokens } = require('../features/tokenChecker');
-    const tokenCoordinator = require('../core/tokenCoordinator');
+    const tokenCoordinator = require('../tokens/tokenCoordinator');
 
     // Pre-populate 7 tokens in profile cache to test chunking across batches of 5
     const mockTokens = [];
@@ -375,7 +375,7 @@ test('checkBatchTokens processes tokens in parallel batches and categorizes resu
 
 test('checkSingleToken auto-detects Bot Token on 401 fallback and auto-unquarantines', async () => {
     const { checkSingleToken } = require('../features/tokenChecker');
-    const tokenCoordinator = require('../core/tokenCoordinator');
+    const tokenCoordinator = require('../tokens/tokenCoordinator');
 
     const botToken = 'MTUzMDk5OTk5OTk5OTk5OTk5.G_XXXX.YYYYZZZZ12345678';
     const originalFetch = global.fetch;

@@ -53,9 +53,9 @@ function evaluateStoragePaths(options = {}) {
     const assetInSource = isPathInside(resolvedAssetDir, repoRoot);
     const hasInSource = dbInSource || backupInSource || assetInSource;
 
-    const explicitDbPath = Boolean(options.dbPath || (process.env.SQLITE_DB_PATH && process.env.SQLITE_DB_PATH.trim()));
-    const explicitBackupDir = Boolean(options.backupDir || (process.env.SQLITE_BACKUP_DIR && process.env.SQLITE_BACKUP_DIR.trim()));
-    const explicitAssetDir = Boolean(options.assetDir || (process.env.SQLITE_ASSET_DIR && process.env.SQLITE_ASSET_DIR.trim()));
+    const explicitDbPath = Boolean(options.dbPath || process.env.SQLITE_DB_PATH?.trim());
+    const explicitBackupDir = Boolean(options.backupDir || process.env.SQLITE_BACKUP_DIR?.trim());
+    const explicitAssetDir = Boolean(options.assetDir || process.env.SQLITE_ASSET_DIR?.trim());
     const allowInSource = process.env.ALLOW_IN_SOURCE_STORAGE === "true";
 
     const isAutoDetectedPersistent = hasPhysicalPersistentMount && !hasInSource && (

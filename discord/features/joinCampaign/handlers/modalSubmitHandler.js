@@ -103,7 +103,7 @@ async function handleModalSubmit(interaction, client) {
         const webhookUrl = interaction.fields.getTextInputValue(CUSTOM_IDS.FIELD_WEBHOOK)?.trim();
 
         const panel = repository.findPanelByChannelId(interaction.channelId);
-        if (!panel || !panel.targetGuildId) {
+        if (!panel?.targetGuildId) {
             return interaction.reply({
                 content: `> ${emoji.alert} กรุณาเลือกรูปแบบจากเมนูด้านล่างเพื่อกำหนดเซิร์ฟเวอร์ก่อนเริ่มนะครับ`,
                 ephemeral: true

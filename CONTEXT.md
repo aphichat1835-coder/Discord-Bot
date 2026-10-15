@@ -79,11 +79,11 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Main HTTP APIs and health | `discord/index/server.js` |
 | Bot-control pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
 | Token Hub & Admin routes | `discord/index/adminRoutes.js` |
-| Token Coordinator | `discord/core/tokenCoordinator.js` |
+| Token Coordinator | `discord/tokens/tokenCoordinator.js` |
 | Memory Monitor | `discord/index/memoryMonitor.js` |
 | Quest automation subsystem | `discord/quest/` |
 | Owner verification bridge | `discord/index/verifyOwner.js` |
-| Persistence | `discord/sessionManager.js` |
+| Persistence | `discord/voiceWorker/sessionManager.js` |
 | Commands | `discord/commands.js`, `discord/commands/` |
 | Voice/session | `discord/voiceWorker.js`, `discord/voiceWorker/`, `discord/sessions/` |
 | Moderation cases | `discord/logging/modCaseManager.js` |
@@ -92,7 +92,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Verification routes | `discord/verification/routes/` |
 | Verification persistence | `discord/verification/models/` |
 | Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
-| OAuth Token Manager | `discord/core/oauthTokenManager.js` |
+| OAuth Token Manager | `discord/tokens/oauthTokenManager.js` |
 | OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
 | Verification management UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
 | Public callback UI | `discord/verification/views/callback.html`, `public/css/`, `public/js/callback.js` |

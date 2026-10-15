@@ -3,8 +3,8 @@
 const { test, describe, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 
-const tokenCoordinator = require("../core/tokenCoordinator");
-const sessionManager = require("../sessionManager");
+const tokenCoordinator = require("../tokens/tokenCoordinator");
+const sessionManager = require("../voiceWorker/sessionManager");
 const lifecycle = require("../voiceWorker/lifecycle");
 
 describe("Token Quarantine Voice Safety Suite (429 Isolation vs 401 Termination)", () => {

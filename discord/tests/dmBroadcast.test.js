@@ -514,7 +514,7 @@ test('extractDmModalInputs and validateDmModalFields process modal fields correc
 });
 
 test('dmBroadcast integrates with tokenCoordinator for quarantine and activity lifecycle', async () => { // NOSONAR
-    const tokenCoordinator = require('../core/tokenCoordinator');
+    const tokenCoordinator = require('../tokens/tokenCoordinator');
     const testBotToken = 'dm-broadcast-coord-test-token';
 
     // 1. Pre-quarantine token
@@ -560,7 +560,7 @@ test('dmBroadcast integrates with tokenCoordinator for quarantine and activity l
 });
 
 test('dmBroadcast subsystem aborts active broadcast job when token is quarantined', async () => { // NOSONAR
-    const tokenCoordinator = require('../core/tokenCoordinator');
+    const tokenCoordinator = require('../tokens/tokenCoordinator');
     const testBotToken = 'dm-broadcast-abort-test-token';
 
     _test.setActiveJob({

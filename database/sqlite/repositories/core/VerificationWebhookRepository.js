@@ -72,10 +72,7 @@ class VerificationWebhookRepository {
     }
 
     ensureDeliverySchema() {
-        if (this._deliverySchemaEnsured) return;
-        try {
-            this.db.exec(`ALTER TABLE verification_webhook_deliveries ADD COLUMN sent_parts INTEGER DEFAULT 0`);
-        } catch (_) {}
+        // Schema is managed via SQLite migration 012_verification_webhook_sent_parts.sql
         this._deliverySchemaEnsured = true;
     }
 

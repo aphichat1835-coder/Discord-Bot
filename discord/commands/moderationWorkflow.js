@@ -1,6 +1,6 @@
 const { PermissionFlagsBits } = require("discord.js");
 const config = require("../config.json");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const { requireMemberPermission, checkRoleHierarchy, safeDefer, markCommandAccepted } = require("../guards/commandGuards");
 const modCaseManager = require("../logging/modCaseManager");
 const { sendWebhookEvent, getDiscordAvatarUrl, getDiscordGuildIconUrl } = require("../core/webhooks");

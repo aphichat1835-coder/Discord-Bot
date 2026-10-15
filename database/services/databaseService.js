@@ -64,17 +64,8 @@ function getSqliteDb() {
 //  📊 1. OVERVIEW & HEALTH
 // ════════════════════════════════════════════════════════════════════════════
 
-async function getDatabaseOverview(customDb = null) {
-    const startTime = Date.now();
-    const db = customDb || (module.exports && typeof module.exports.getSqliteDb === "function" ? module.exports.getSqliteDb() : getDatabase());
-    const dbPath = (customDb && customDb.name && customDb.name !== ":memory:" ? customDb.name : null) || getCurrentDbPath() || resolveDbPath();
-
-    // 1. SQLite Status & Quota + Filesystem Health Aggregation
-    const quota = evaluateQuota(dbPath);
-    const storage = evaluateStoragePaths({ dbPath });
-    const emergency = evaluateEmergencyThresholds(dbPath);
-
-    let sqliteHealth = "ok"; // 'ok' | 'check' | 'warning' | 'error'
+function evaluateSqliteHealth({ storage, emergency, quota }) {
+    let sqliteHealth = "ok";
     let sqliteStatusLabel = "🟢 ปกติ";
     let degradedReason = quota.degradedReason;
 
@@ -94,14 +85,11 @@ async function getDatabaseOverview(customDb = null) {
         sqliteHealth = "check";
         sqliteStatusLabel = "🟡 ควรตรวจสอบ";
     }
+    return { sqliteHealth, sqliteStatusLabel, degradedReason };
+}
 
-    // 2. Table counts & record totals dynamically classified via central category map
-    let totalRecords = 0;
-    let coreCount = 0;
-    let cacheCount = 0;
-    let historyCount = 0;
-    let tempCount = 0;
-
+function summarizeTableRecordCounts(db) {
+    const records = { total: 0, core: 0, cache: 0, history: 0, temp: 0 };
     try {
         const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all().map(t => t.name);
         for (const tbl of tables) {
@@ -109,27 +97,23 @@ async function getDatabaseOverview(customDb = null) {
             try {
                 const r = db.prepare(`SELECT COUNT(*) AS c FROM "${tbl}"`).get();
                 cnt = r ? r.c : 0;
-            } catch (_) {}
-            totalRecords += cnt;
+            } catch {
+                // Table count failed; treat as 0
+            }
+            records.total += cnt;
             const category = getCategoryForTable(tbl);
-            if (category === "core") coreCount += cnt;
-            else if (category === "cache") cacheCount += cnt;
-            else if (category === "history") historyCount += cnt;
-            else tempCount += cnt;
+            if (category === "core") records.core += cnt;
+            else if (category === "cache") records.cache += cnt;
+            else if (category === "history") records.history += cnt;
+            else records.temp += cnt;
         }
-    } catch (_) {}
+    } catch {
+        // Table listing failed
+    }
+    return records;
+}
 
-    // 3. Maintenance metadata
-    const metaMap = {};
-    try {
-        const metaRows = db.prepare("SELECT key, value FROM database_meta").all();
-        for (const r of metaRows) metaMap[r.key] = r.value;
-    } catch (_) {}
-
-    // 4. Backups list & managed storage breakdown (DB, Backups, Assets, Free Disk, Total Managed)
-    const backups = listBackups();
-    const lastBackupInfo = backups.length > 0 ? backups[0] : null;
-
+function calculateManagedStorage({ db, dbPath, quota, storage }) {
     const allBackups = listBackups(null, { includePreMigration: true });
     let backupBytes = allBackups.reduce((sum, b) => sum + (b.sizeBytes || 0), 0);
     try {
@@ -141,45 +125,83 @@ async function getDatabaseOverview(customDb = null) {
                 backupBytes += stat.size;
             }
         }
-    } catch (_) {}
+    } catch {
+        // Directory scan failed when calculating backup size
+    }
 
     let assetBytes = 0;
     try {
         const assetMgr = getAssetCacheManager(db);
         const assetStats = assetMgr.getStats();
         assetBytes = assetStats.totalBytes || assetStats.totalSizeBytes || 0;
-    } catch (_) {}
+    } catch {
+        // Asset cache stats failure; default to 0
+    }
 
     const dbBytes = quota.footprint.totalBytes || 0;
     const totalManagedBytes = dbBytes + backupBytes + assetBytes;
 
-    const managedStorage = {
+    return {
         databaseBytes: dbBytes,
-        databaseMb: parseFloat((dbBytes / (1024 * 1024)).toFixed(2)),
+        databaseMb: Number.parseFloat((dbBytes / (1024 * 1024)).toFixed(2)),
         backupBytes,
-        backupMb: parseFloat((backupBytes / (1024 * 1024)).toFixed(2)),
+        backupMb: Number.parseFloat((backupBytes / (1024 * 1024)).toFixed(2)),
         assetBytes,
-        assetMb: parseFloat((assetBytes / (1024 * 1024)).toFixed(2)),
+        assetMb: Number.parseFloat((assetBytes / (1024 * 1024)).toFixed(2)),
         totalManagedBytes,
-        totalManagedMb: parseFloat((totalManagedBytes / (1024 * 1024)).toFixed(2)),
+        totalManagedMb: Number.parseFloat((totalManagedBytes / (1024 * 1024)).toFixed(2)),
         freeDiskBytes: storage.freeSpace?.availableBytes ?? null,
         freeDiskMb: storage.freeSpace?.availableMb ?? null
     };
+}
 
-    // 5. MongoDB Overview
-    const mongoStatus = mongo.getMongoStatus();
+async function measureMongoOverview(mongoInstance) {
+    const mongoStatus = mongoInstance.getMongoStatus();
     let mongoPingMs = null;
     let mongoHealthLabel = mongoStatus.connected ? "🟢 ปกติ" : "🔴 ขาดการเชื่อมต่อ";
 
-    if (mongoStatus.connected && mongo.mongoose.connection.db) {
+    if (mongoStatus.connected && mongoInstance.mongoose?.connection?.db) {
         try {
             const pStart = Date.now();
-            await mongo.mongoose.connection.db.command({ ping: 1 });
+            await mongoInstance.mongoose.connection.db.command({ ping: 1 });
             mongoPingMs = Date.now() - pStart;
-        } catch (_) {
+        } catch {
             mongoHealthLabel = "🟡 ช้า/มีปัญหา";
         }
     }
+    return { mongoStatus, mongoPingMs, mongoHealthLabel };
+}
+
+async function getDatabaseOverview(customDb = null) {
+    const startTime = Date.now();
+    const db = customDb || (module.exports && typeof module.exports.getSqliteDb === "function" ? module.exports.getSqliteDb() : getDatabase());
+    const dbPath = (customDb?.name && customDb.name !== ":memory:" ? customDb.name : null) || getCurrentDbPath() || resolveDbPath();
+
+    // 1. SQLite Status & Quota + Filesystem Health Aggregation
+    const quota = evaluateQuota(dbPath);
+    const storage = evaluateStoragePaths({ dbPath });
+    const emergency = evaluateEmergencyThresholds(dbPath);
+    const { sqliteHealth, sqliteStatusLabel, degradedReason } = evaluateSqliteHealth({ storage, emergency, quota });
+
+    // 2. Table counts & record totals dynamically classified via central category map
+    const records = summarizeTableRecordCounts(db);
+
+    // 3. Maintenance metadata
+    const metaMap = {};
+    try {
+        const metaRows = db.prepare("SELECT key, value FROM database_meta").all();
+        for (const r of metaRows) metaMap[r.key] = r.value;
+    } catch {
+        // Table database_meta unreadable
+    }
+
+    // 4. Backups list & managed storage breakdown
+    const backups = listBackups();
+    const lastBackupInfo = backups.length > 0 ? backups[0] : null;
+    const managedStorage = calculateManagedStorage({ db, dbPath, quota, storage });
+
+    // 5. MongoDB Overview
+    const { mongoStatus, mongoPingMs, mongoHealthLabel } = await measureMongoOverview(mongo);
 
     return {
         timestamp: Date.now(),
@@ -191,7 +213,7 @@ async function getDatabaseOverview(customDb = null) {
                 path: dbPath,
                 footprintMb: quota.footprint.totalMb,
                 hardLimitMb: quota.limits.hardMb,
-                usedPercent: parseFloat(((quota.footprint.totalMb / quota.limits.hardMb) * 100).toFixed(1)),
+                usedPercent: Number.parseFloat(((quota.footprint.totalMb / quota.limits.hardMb) * 100).toFixed(1)),
                 degradedReason,
                 storage: {
                     freeSpaceMb: storage.freeSpace?.availableMb ?? null,
@@ -211,13 +233,7 @@ async function getDatabaseOverview(customDb = null) {
                                 : "❌ Ephemeral / In-Source",
                     managedStorage
                 },
-                records: {
-                    total: totalRecords,
-                    core: coreCount,
-                    cache: cacheCount,
-                    history: historyCount,
-                    temp: tempCount
-                },
+                records,
                 lastMaintenance: {
                     lastCleanup: metaMap.last_cleanup || null,
                     lastBackup: lastBackupInfo?.createdAt || metaMap.last_backup || null,
@@ -244,7 +260,7 @@ async function getDatabaseOverview(customDb = null) {
 
 async function getSqliteDetailedStatus(customDb = null) {
     const db = customDb || (module.exports && typeof module.exports.getSqliteDb === "function" ? module.exports.getSqliteDb() : getDatabase());
-    const dbPath = (customDb && customDb.name && customDb.name !== ":memory:" ? customDb.name : null) || getCurrentDbPath() || resolveDbPath();
+    const dbPath = (customDb?.name && customDb.name !== ":memory:" ? customDb.name : null) || getCurrentDbPath() || resolveDbPath();
     const quota = evaluateQuota(dbPath);
     const storageCheck = evaluateStoragePaths({ dbPath });
 
@@ -281,7 +297,7 @@ async function getSqliteDetailedStatus(customDb = null) {
         return {
             count,
             bytes,
-            sizeMb: parseFloat((bytes / (1024 * 1024)).toFixed(2)),
+            sizeMb: Number.parseFloat((bytes / (1024 * 1024)).toFixed(2)),
             label
         };
     };
@@ -296,7 +312,7 @@ async function getSqliteDetailedStatus(customDb = null) {
         return {
             count,
             bytes,
-            sizeMb: parseFloat((bytes / (1024 * 1024)).toFixed(2))
+            sizeMb: Number.parseFloat((bytes / (1024 * 1024)).toFixed(2))
         };
     };
 
@@ -361,27 +377,31 @@ async function getSqliteDetailedStatus(customDb = null) {
                 backupBytes += stat.size;
             }
         }
-    } catch (_) {}
+    } catch {
+        // ignore backup folder scan error
+    }
 
     let assetBytes = 0;
     try {
         const assetMgr = getAssetCacheManager(db);
         const assetStats = assetMgr.getStats();
         assetBytes = assetStats.totalBytes || assetStats.totalSizeBytes || 0;
-    } catch (_) {}
+    } catch {
+        // ignore asset cache stats error
+    }
 
     const dbBytes = quota.footprint.totalBytes || 0;
     const totalManagedBytes = dbBytes + backupBytes + assetBytes;
 
     const managedStorage = {
         databaseBytes: dbBytes,
-        databaseMb: parseFloat((dbBytes / (1024 * 1024)).toFixed(2)),
+        databaseMb: Number.parseFloat((dbBytes / (1024 * 1024)).toFixed(2)),
         backupBytes,
-        backupMb: parseFloat((backupBytes / (1024 * 1024)).toFixed(2)),
+        backupMb: Number.parseFloat((backupBytes / (1024 * 1024)).toFixed(2)),
         assetBytes,
-        assetMb: parseFloat((assetBytes / (1024 * 1024)).toFixed(2)),
+        assetMb: Number.parseFloat((assetBytes / (1024 * 1024)).toFixed(2)),
         totalManagedBytes,
-        totalManagedMb: parseFloat((totalManagedBytes / (1024 * 1024)).toFixed(2)),
+        totalManagedMb: Number.parseFloat((totalManagedBytes / (1024 * 1024)).toFixed(2)),
         freeDiskBytes: storageCheck.freeSpace?.availableBytes ?? null,
         freeDiskMb: storageCheck.freeSpace?.availableMb ?? null
     };
@@ -669,7 +689,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
             }
 
             case "vacuum": {
-                const safePages = Math.min(10000, Math.max(1, parseInt(options.pages, 10) || 500));
+                const safePages = Math.min(10000, Math.max(1, Number.parseInt(options.pages, 10) || 500));
                 const vac = runIncrementalVacuum(db, safePages);
                 const ok = Boolean(vac && vac.ok);
                 result = {
@@ -685,7 +705,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
             }
 
             case "backup": {
-                const maxBackups = options.retention || parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
+                const maxBackups = options.retention || Number.parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
                 const bkp = await createBackup(db, { maxBackups });
                 const ok = Boolean(bkp && bkp.ok);
                 result = {
@@ -930,8 +950,14 @@ async function executeDatabaseConsole(commandString, invoker = "owner") {
 
             case "cleanup history": {
                 const act = await dispatchSqliteAction("cleanup_history", {}, invoker);
+                let cleanupHistoryMsg = `ล้างประวัติสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`;
+                if (act.message) {
+                    cleanupHistoryMsg = act.message.startsWith("✅") ? act.message : `✅ ${act.message}`;
+                } else {
+                    cleanupHistoryMsg = `✅ ${cleanupHistoryMsg}`;
+                }
                 output = act.ok
-                    ? (act.message?.startsWith("✅") ? act.message : `✅ ${act.message || `ล้างประวัติสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`}`)
+                    ? cleanupHistoryMsg
                     : `❌ ล้างประวัติล้มเหลว: ${act.message || act.error || "Unknown error"}`;
                 ok = act.ok;
                 break;
@@ -1037,7 +1063,9 @@ async function getMongoDetailedStatus() {
         const pStart = Date.now();
         await mongo.mongoose.connection.db.command({ ping: 1 });
         pingMs = Date.now() - pStart;
-    } catch (_) {}
+    } catch {
+        // ignore ping failure when measuring detailed latency
+    }
 
     // Host & Connection safe info
     const safeHost = mongo.mongoose.connection.host || "cluster.mongodb.net";

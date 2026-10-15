@@ -2,7 +2,7 @@
 
 /**
  * Central Table Category Map for SQLite Database Architecture
- * Covers all 17 tables across Core, History, Temporary, and Cache domains.
+ * Covers all 23 tables across Core, History, Temporary, and Cache domains.
  */
 const TABLE_CATEGORIES = {
     CORE: {
@@ -16,6 +16,12 @@ const TABLE_CATEGORIES = {
             dm_notifications: "คิวแจ้งเตือน DM",
             verification_recovery: "จุดกู้คืนสถานะยืนยันตัวตน",
             voice_session_runtime: "สถานะ Voice Session Runtime",
+            join_campaign_jobs: "งานดึงสมาชิก (Join Campaign Jobs)",
+            join_campaign_items: "รายการสมาชิกในงานดึง (Join Campaign Items)",
+            join_campaign_panels: "แผงควบคุมงานดึงสมาชิก (Join Campaign Panels)",
+            verification_webhook_jobs: "คิวงานส่ง Verification Webhook",
+            verification_webhook_deliveries: "ประวัติการส่ง Verification Webhook",
+            p0_journal_receipts: "ใบเสร็จ Replay บันทึก P0 Journal",
             database_meta: "ค่าสถานะระบบภายใน",
             schema_migrations: "ประวัติการ Migration โครงสร้าง",
             maintenance_runs: "บันทึกการบำรุงรักษาระบบ"

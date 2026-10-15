@@ -48,13 +48,13 @@ const diagnostics = {
 };
 
 function parseMinutes(envVar, defaultMinutes) {
-    const val = parseInt(process.env[envVar], 10);
-    return !isNaN(val) && val > 0 ? val : defaultMinutes;
+    const val = Number.parseInt(process.env[envVar], 10);
+    return !Number.isNaN(val) && val > 0 ? val : defaultMinutes;
 }
 
 function parseHours(envVar, defaultHours) {
-    const val = parseInt(process.env[envVar], 10);
-    return !isNaN(val) && val > 0 ? val : defaultHours;
+    const val = Number.parseInt(process.env[envVar], 10);
+    return !Number.isNaN(val) && val > 0 ? val : defaultHours;
 }
 
 async function runWalCheckpoint() {
@@ -511,7 +511,8 @@ function startScheduler() {
     emergencyIntervalId = setInterval(runEmergencyEvaluation, 2 * 60 * 1000);
     if (emergencyIntervalId.unref) emergencyIntervalId.unref();
 
-    console.log(`[DB_SCHEDULER] 🕒 Background Maintenance Scheduler started (WAL=${walMinutes}m, Cleanup=${cleanupMinutes}m, Vacuum=${vacuumMinutes}m, EmergencyCheck=2m, AutoBackup=${autoBackupEnabled ? `${backupHours}h` : "disabled"})`);
+    const autoBackupStr = autoBackupEnabled ? `${backupHours}h` : "disabled";
+    console.log(`[DB_SCHEDULER] 🕒 Background Maintenance Scheduler started (WAL=${walMinutes}m, Cleanup=${cleanupMinutes}m, Vacuum=${vacuumMinutes}m, EmergencyCheck=2m, AutoBackup=${autoBackupStr})`);
 }
 
 function stopScheduler() {

@@ -47,7 +47,7 @@ test("CI uploads Discord diagnostics only when the test log exists", () => { // 
 
 test("main dashboard destructive and sensitive routes are POST-only and CSRF-protected", () => { // NOSONAR -- node:test assertions are not recognized by S2699.
     const server = fs.readFileSync("discord/index/server.js", "utf8");
-    const sessions = fs.readFileSync("discord/sessionManager.js", "utf8");
+    const sessions = fs.readFileSync("discord/voiceWorker/sessionManager.js", "utf8");
     const views = fs.readFileSync("discord/index/views.js", "utf8");
     const helpers = fs.readFileSync("discord/index/viewHelpers.js", "utf8");
 

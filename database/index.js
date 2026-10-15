@@ -13,6 +13,7 @@ const { getCommandEventRepository } = require("./sqlite/repositories/history/Com
 const { getSessionEventRepository } = require("./sqlite/repositories/history/SessionEventRepository");
 const VoiceSessionRuntimeRepository = require("./sqlite/repositories/core/VoiceSessionRuntimeRepository");
 const JoinCampaignRepository = require("./sqlite/repositories/core/JoinCampaignRepository");
+const VerificationWebhookRepository = require("./sqlite/repositories/core/VerificationWebhookRepository");
 const { getAssetCacheManager } = require("./sqlite/cache/assetCacheManager");
 const scheduler = require("./sqlite/maintenance/scheduler");
 
@@ -23,6 +24,7 @@ let verificationRecoveryRepo = null;
 let verificationStateNonceRepo = null;
 let voiceSessionRuntimeRepo = null;
 let joinCampaignRepo = null;
+let verificationWebhookRepo = null;
 
 async function initialize(options = {}) {
     const results = {
@@ -50,6 +52,7 @@ async function initialize(options = {}) {
     verificationStateNonceRepo = new VerificationStateNonceRepository();
     voiceSessionRuntimeRepo = new VoiceSessionRuntimeRepository();
     joinCampaignRepo = new JoinCampaignRepository();
+    verificationWebhookRepo = new VerificationWebhookRepository();
 
     // 3. Start 24/7 background maintenance scheduler
     if (options.startScheduler !== false) {
@@ -145,6 +148,10 @@ module.exports = {
         get joinCampaign() {
             if (!joinCampaignRepo) joinCampaignRepo = new JoinCampaignRepository();
             return joinCampaignRepo;
+        },
+        get verificationWebhook() {
+            if (!verificationWebhookRepo) verificationWebhookRepo = new VerificationWebhookRepository();
+            return verificationWebhookRepo;
         }
     },
     get databaseService() {

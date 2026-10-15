@@ -58,7 +58,7 @@ module.exports = {
         countEligibleCandidates,
         CAMPAIGN_TOKEN_FIELDS,
         processAllCandidateBatches: async (summary, context, options = {}) => {
-            const tokenManager = options.oauthTokenManager || require("../core/oauthTokenManager");
+            const tokenManager = options.oauthTokenManager || require("../tokens/oauthTokenManager");
             const loadDocs = options.loadCandidateDocs;
             const targetGuildId = context.targetGuildId;
             const customManager = loadDocs ? {

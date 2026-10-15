@@ -1,3 +1,5 @@
+"use strict";
+
 /*
  * Unified verification crypto utilities.
  * - New writes use AES-256-GCM with an authenticated tag.

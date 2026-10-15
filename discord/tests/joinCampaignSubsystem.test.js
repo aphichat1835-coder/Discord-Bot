@@ -1663,7 +1663,7 @@ test("P2 audit: candidate query skips tokens with refreshFailCount >= failMax ma
         })
     };
 
-    const oauthTokenManager = require("../core/oauthTokenManager");
+    const oauthTokenManager = require("../tokens/oauthTokenManager");
     const result = await oauthTokenManager.listAccessTokenCandidates({
         allowAllGuilds: true,
         model: mockModel,
@@ -2613,7 +2613,7 @@ test("P2 audit: tokenManager.getAccessToken receives AbortSignal and stops worke
 
 test("P2 audit: oauthTokenManager.getAccessToken aborts without penalizing token with markRefreshFailure", async () => {
     process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    const oauthTokenManager = require("../core/oauthTokenManager");
+    const oauthTokenManager = require("../tokens/oauthTokenManager");
     const { encryptToken } = require("../verification/utils/crypto");
     const testUserId = "user_abort_guard_" + Date.now();
     const abortController = new AbortController();
@@ -2685,7 +2685,7 @@ test("P2 audit: oauthTokenManager.getAccessToken aborts without penalizing token
 });
 
 test("P2 audit: withTokenRefreshLock unblocks immediately when signal aborts and releases lock gate", async () => {
-    const oauthTokenManager = require("../core/oauthTokenManager");
+    const oauthTokenManager = require("../tokens/oauthTokenManager");
     const testKey = "lock_test_" + Date.now();
     const controller = new AbortController();
 

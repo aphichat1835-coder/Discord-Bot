@@ -351,7 +351,7 @@ test("Section 3.2: executeVerification 5 membership lookup scenarios ensure only
         })
     });
 
-    const oauthTokenManager = require("../discord/core/oauthTokenManager");
+    const oauthTokenManager = require("../discord/tokens/oauthTokenManager");
     const origCommit = oauthTokenManager.commitVerificationActivation;
     oauthTokenManager.commitVerificationActivation = async () => ({ activated: true, saved: true });
 

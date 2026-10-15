@@ -2,7 +2,7 @@
 
 const { EventEmitter } = require('node:events');
 const crypto = require('node:crypto');
-const { safeError, sanitizeLogText } = require('./safeLogger');
+const { safeError, sanitizeLogText } = require('../core/safeLogger');
 
 /**
  * TokenCoordinator (Universal Token Hub & Master Controller)
@@ -331,10 +331,10 @@ class TokenCoordinator extends EventEmitter {
         const gate = new Promise((resolve) => {
             release = resolve;
         });
-        const queued = previous.then(() => gate);
+        const queued = previous.catch(() => {}).then(() => gate);
         this.tokenLocks.set(hash, queued);
 
-        await previous;
+        await previous.catch(() => {});
         try {
             return await operation();
         } finally {
@@ -398,7 +398,7 @@ class TokenCoordinator extends EventEmitter {
 
         if (backoffSeconds >= 15) {
             try {
-                const { sendWebhookEvent } = require('./webhooks');
+                const { sendWebhookEvent } = require('../core/webhooks');
                 if (typeof sendWebhookEvent === 'function') {
                     sendWebhookEvent({
                         target: 'ALERT',
@@ -479,7 +479,7 @@ class TokenCoordinator extends EventEmitter {
         }
 
         // Micro-jitter to prevent thundering herd
-        const jitter = Math.floor(Math.random() * 10) + 2;
+        const jitter = crypto.randomInt(2, 12);
         await new Promise((resolve) => setTimeout(resolve, waitMs + jitter));
 
         // Double check after waking
@@ -669,7 +669,7 @@ class TokenCoordinator extends EventEmitter {
         if (shouldSendAlert) {
             this.alertHistory.set(hash, now);
             try {
-                const { sendWebhookEvent } = require('./webhooks');
+                const { sendWebhookEvent } = require('../core/webhooks');
                 if (typeof sendWebhookEvent === 'function') {
                     sendWebhookEvent({
                         target: 'ALERT',
@@ -715,7 +715,7 @@ class TokenCoordinator extends EventEmitter {
             this.emit('token:released', { tokenHash: hash });
 
             try {
-                const { sendWebhookEvent } = require('./webhooks');
+                const { sendWebhookEvent } = require('../core/webhooks');
                 if (typeof sendWebhookEvent === 'function') {
                     sendWebhookEvent({
                         target: 'LOG',

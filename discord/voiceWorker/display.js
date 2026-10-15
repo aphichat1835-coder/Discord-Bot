@@ -1,6 +1,6 @@
 const { VoiceConnectionStatus } = require("@discordjs/voice");
 const config = require("../config.json");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { st } = require("./state");
 const { withTimeoutValue } = require("./config");
 const {

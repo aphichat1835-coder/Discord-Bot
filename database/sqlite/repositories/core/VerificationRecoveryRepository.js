@@ -2,6 +2,17 @@
 
 const { getDatabase } = require("../../connection");
 
+const RECOVERY_UPDATE_FIELDS = [
+    { key: "status", column: "status", format: v => String(v) },
+    { key: "result", column: "result", format: v => String(v) },
+    { key: "roleId", column: "role_id", format: v => (v ? String(v) : null) },
+    { key: "roleApplied", column: "role_applied", format: v => (v ? 1 : 0) },
+    { key: "rollbackAttempted", column: "rollback_attempted", format: v => (v ? 1 : 0) },
+    { key: "rollbackSucceeded", column: "rollback_succeeded", format: v => (v ? 1 : 0) },
+    { key: "reason", column: "reason", format: v => (v ? String(v) : null) },
+    { key: "persistence", column: "persistence_json", format: v => (typeof v === "string" ? v : JSON.stringify(v || {})) }
+];
+
 class VerificationRecoveryRepository {
     constructor(db = null) {
         this._db = db;
@@ -68,37 +79,11 @@ class VerificationRecoveryRepository {
         const setClauses = [];
         const values = [];
 
-        if (set.status !== undefined) {
-            setClauses.push("status = ?");
-            values.push(String(set.status));
-        }
-        if (set.result !== undefined) {
-            setClauses.push("result = ?");
-            values.push(String(set.result));
-        }
-        if (set.roleId !== undefined) {
-            setClauses.push("role_id = ?");
-            values.push(set.roleId ? String(set.roleId) : null);
-        }
-        if (set.roleApplied !== undefined) {
-            setClauses.push("role_applied = ?");
-            values.push(set.roleApplied ? 1 : 0);
-        }
-        if (set.rollbackAttempted !== undefined) {
-            setClauses.push("rollback_attempted = ?");
-            values.push(set.rollbackAttempted ? 1 : 0);
-        }
-        if (set.rollbackSucceeded !== undefined) {
-            setClauses.push("rollback_succeeded = ?");
-            values.push(set.rollbackSucceeded ? 1 : 0);
-        }
-        if (set.reason !== undefined) {
-            setClauses.push("reason = ?");
-            values.push(set.reason ? String(set.reason) : null);
-        }
-        if (set.persistence !== undefined) {
-            setClauses.push("persistence_json = ?");
-            values.push(typeof set.persistence === "string" ? set.persistence : JSON.stringify(set.persistence || {}));
+        for (const { key, column, format } of RECOVERY_UPDATE_FIELDS) {
+            if (set[key] !== undefined) {
+                setClauses.push(`${column} = ?`);
+                values.push(format(set[key]));
+            }
         }
 
         const now = Date.now();

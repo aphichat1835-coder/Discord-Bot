@@ -139,7 +139,7 @@ continuation payloads when one Discord message cannot hold the full event.
 
 ### Master Token Coordinator & Concurrency Hub
 
-Located at `discord/core/tokenCoordinator.js`, the Token Coordinator provides centralized governance for all user tokens across the runtime:
+Located at `discord/tokens/tokenCoordinator.js`, the Token Coordinator provides centralized governance for all user tokens across the runtime:
 - **Subsystem Registration**: Subsystems (`voiceWorker`, `quest`, etc.) register callbacks for token quarantine events.
 - **Activity Locking**: Tracks in-flight tasks per token to prevent conflicting concurrent API operations.
 - **Rate-Limit Backoff (429 Handling)**: Detects HTTP 429 response headers and applies exponential backoff per token and globally, preventing Discord IP and token bans.
@@ -448,7 +448,7 @@ The system does not claim to discover a residential IP behind VPN/TOR.
 
 ### Tokens and OAuth Token Manager
 
-`discord/core/oauthTokenManager.js` serves as the centralized **Single Authority** for all OAuth2 token lifecycle operations:
+`discord/tokens/oauthTokenManager.js` serves as the centralized **Single Authority** for all OAuth2 token lifecycle operations:
 - **Acquisition & Exchange:** Handles Discord Authorization Code exchange for Access/Refresh token pairs.
 - **Atomic Activation & Serialized Mutation:** Executes `commitVerificationActivation()` as the single authority for atomic `OAuthUser` record updates and token activation with strict payload validation (while the OAuth callback route retains ownership of compensating snapshot rollback when the activation commit fails). Serialized under `withOAuthTokenStateLock` (`withTokenRefreshLock(`${userId}:${tokenField}`)`), guaranteeing atomic version sequencing with in-flight refreshes and revocations.
 - **Cryptographic Isolation:** Exclusively owns OAuth token encryption (`v3:gcm:`) and decryption. Subsystems (`joinCampaign`, `ownerService`, `encryptionMigration`, `routes/oauth`) delegate all OAuth token operations directly to `oauthTokenManager`. Zero independent crypto implementations exist outside the Manager.
@@ -461,7 +461,7 @@ The system does not claim to discover a residential IP behind VPN/TOR.
 - **Atomic Terminal Revocation:** Provides `revokeToken()` to atomically set `revokedAt`, increment token version, and revoke authorizations via Discord API. Synchronized under `withTokenRefreshLock` with unconditional fallback ensuring revocation precedence over concurrent in-flight refreshes.
 - **Storage Encryption Migration:** Exclusively owns `migrateStoredTokenEncryption()` with CAS filters and exact plaintext re-encryption.
 
-> **Strict Scope Boundary:** `oauthTokenManager.js` manages Discord OAuth2 user authorization tokens exclusively. Voice sessions, Quest runner tokens, and bot gateway tokens remain strictly coordinated by `discord/core/tokenCoordinator.js` and are completely isolated from OAuth tokens.
+> **Strict Scope Boundary:** `oauthTokenManager.js` manages Discord OAuth2 user authorization tokens exclusively. Voice sessions, Quest runner tokens, and bot gateway tokens remain strictly coordinated by `discord/tokens/tokenCoordinator.js` and are completely isolated from OAuth tokens.
 
 `OAuthUser.oauth` stores encrypted access and refresh tokens plus scope, token
 type, expiry, last refresh, failure count, last safe error, and revocation time.

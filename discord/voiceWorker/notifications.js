@@ -2,7 +2,7 @@
 
 const crypto = require("node:crypto");
 const config = require("../config.json");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const dm = require("./dm");
 
 const EVENTS = Object.freeze({

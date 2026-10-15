@@ -1,7 +1,7 @@
 const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 function getVoiceWorker() {
     return require("../voiceWorker");
 }

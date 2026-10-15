@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { st, clientPool, tokenLoginCooldowns } = require("./state");
 const { validateTokenFormat } = require("../sessions/tokenUtils");

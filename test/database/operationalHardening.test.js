@@ -10,7 +10,7 @@ const Database = require("better-sqlite3");
 const { runMigrations } = require("../../database/sqlite/migrations/migrationRunner");
 const { AssetCacheManager } = require("../../database/sqlite/cache/assetCacheManager");
 const scheduler = require("../../database/sqlite/maintenance/scheduler");
-const sessionManager = require("../../discord/sessionManager");
+const sessionManager = require("../../discord/voiceWorker/sessionManager");
 const database = require("../../database");
 
 describe("Operational Hardening Suite (Graceful Drain, Auto-Backup, Type TTL)", () => {

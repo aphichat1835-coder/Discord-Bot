@@ -24,7 +24,7 @@ const path = require("node:path");
 const { AttachmentBuilder, MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
@@ -926,7 +926,7 @@ async function handleSetupVerify(interaction) {
 
     try {
         if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
-        const panelMsg = await sendAndPersistVerificationPanel({
+        await sendAndPersistVerificationPanel({
             interaction,
             guildId,
             role,

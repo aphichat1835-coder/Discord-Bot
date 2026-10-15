@@ -1,3 +1,5 @@
+"use strict";
+
 /* eslint-disable complexity -- Discord API permission helpers are behavior-sensitive; refactor separately. */
 /*
 ================================================================================
@@ -222,7 +224,7 @@ function makeHeaderLookup(headers = {}) {
 }
 
 function prepareDiscordRequestHeaders(headers, body = null) {
-    const prepared = { ...(headers || {}) };
+    const prepared = { ...headers };
     if (body != null && prepared["Content-Length"] == null && prepared["content-length"] == null) {
         prepared["Content-Length"] = Buffer.byteLength(body);
     }
@@ -1246,11 +1248,13 @@ function buildMultipartFormData({ payloadJson, files = [] }) {
         if (filePath && fs.existsSync(filePath)) {
             const fileData = fs.readFileSync(filePath);
             const fileName = file.name || `file_${i}`;
-            parts.push(Buffer.from(
-                `--${boundary}\r\nContent-Disposition: form-data; name="files[${i}]"; filename="${fileName}"\r\nContent-Type: image/webp\r\n\r\n`
-            ));
-            parts.push(fileData);
-            parts.push(Buffer.from("\r\n"));
+            parts.push(
+                Buffer.from(
+                    `--${boundary}\r\nContent-Disposition: form-data; name="files[${i}]"; filename="${fileName}"\r\nContent-Type: image/webp\r\n\r\n`
+                ),
+                fileData,
+                Buffer.from("\r\n")
+            );
         }
     }
 

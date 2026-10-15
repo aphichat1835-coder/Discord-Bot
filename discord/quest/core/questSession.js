@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const { buildUserHeaders } = require('./clientProfile');
 const { fetchWithRetry } = require('../utils/httpRetry');
 const { abortableDelay, abortFailure } = require('../utils/abortableDelay');
-const tokenCoordinator = require('../../core/tokenCoordinator');
+const tokenCoordinator = require('../../tokens/tokenCoordinator');
 
 const DISCORD_API = 'https://discord.com/api/v9';
 const QUEST_LIST_PATHS = ['/quests/@me', '/users/@me/quests'];

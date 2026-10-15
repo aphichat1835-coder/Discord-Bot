@@ -937,6 +937,7 @@ async function handleUserAvatar(interaction) {
             allowedMentions: { parse: [] }
         });
     } catch (err) {
+        console.error(`[INFORMATION] ❌ Failed to fetch user avatar: ${err?.message || err}`);
         if (interaction.deferred || interaction.replied) {
             return interaction.followUp({
                 content: `> ${config.emojis?.error || "❌"} เกิดข้อผิดพลาดในการดึงรูปโปรไฟล์`,

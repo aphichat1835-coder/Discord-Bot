@@ -11,8 +11,8 @@ function read(relativePath) {
             return fs.readFileSync("discord/index/views.js", "utf8");
         case "discord/verification/utils/discordAPI.js":
             return fs.readFileSync("discord/verification/utils/discordAPI.js", "utf8");
-        case "discord/sessionManager.js":
-            return fs.readFileSync("discord/sessionManager.js", "utf8");
+        case "discord/voiceWorker/sessionManager.js":
+            return fs.readFileSync("discord/voiceWorker/sessionManager.js", "utf8");
         case "discord/verification/ownerService.js":
             return fs.readFileSync("discord/verification/ownerService.js", "utf8");
         case "discord/verification/routes/guildDashboard.js":
@@ -74,14 +74,14 @@ assertContains(
 
 assertContains(
     findings,
-    "discord/sessionManager.js",
+    "discord/voiceWorker/sessionManager.js",
     /PANEL_STATES_LOAD_MAX/,
     "sessionManager must expose a bounded panel-state load limit"
 );
 
 assertContains(
     findings,
-    "discord/sessionManager.js",
+    "discord/voiceWorker/sessionManager.js",
     /SESSION_LOAD_MAX/,
     "sessionManager must keep session auto-load bounded"
 );

@@ -102,7 +102,7 @@ test("Voice coverage is scoped to the voice/session runtime instead of unrelated
     const command = pkg.scripts["test:coverage:voice"];
     assert.match(command, /--test-coverage-include='discord\/voiceWorker\.js'/);
     assert.match(command, /--test-coverage-include='discord\/voiceWorker\/\*\*\/\*\.js'/);
-    assert.match(command, /--test-coverage-include='discord\/sessionManager\.js'/);
+    assert.match(command, /--test-coverage-include='discord\/voiceWorker\/sessionManager\.js'/);
     assert.match(command, /--test-coverage-include='discord\/sessions\/\*\*\/\*\.js'/);
     assert.equal(command.includes("--test-coverage-exclude"), false);
 });

@@ -349,7 +349,7 @@ describe("unbounded IP identity history", () => {
 
     test("runtime source no longer truncates canonical IP history arrays", () => {
         const source = require("node:fs").readFileSync(
-            "discord/verification/routes/oauth.js",
+            "discord/verification/services/verificationOrchestrator.js",
             "utf8"
         );
         expect(source).not.toContain("IP_LINK_USERS_MAX");

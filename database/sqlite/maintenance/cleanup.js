@@ -104,19 +104,23 @@ function cleanExpiredHistory(db, now = Date.now(), maxBatches = 5) {
 function cleanStaleQuestLogs(db, now = Date.now(), retentionMs = THIRTY_DAYS_MS, maxBatches = 2) {
     const cutoff = now - retentionMs;
     let totalDeleted = 0;
-    const stmt = db.prepare(`
-        DELETE FROM quest_logs
-        WHERE id IN (
-            SELECT id FROM quest_logs
-            WHERE created_at <= ?
-            LIMIT ${BATCH_SIZE}
-        )
-    `);
+    try {
+        const stmt = db.prepare(`
+            DELETE FROM quest_logs
+            WHERE id IN (
+                SELECT id FROM quest_logs
+                WHERE created_at <= ?
+                LIMIT ${BATCH_SIZE}
+            )
+        `);
 
-    for (let i = 0; i < maxBatches; i++) {
-        const info = stmt.run(cutoff);
-        totalDeleted += info.changes;
-        if (info.changes < BATCH_SIZE) break;
+        for (let i = 0; i < maxBatches; i++) {
+            const info = stmt.run(cutoff);
+            totalDeleted += info.changes;
+            if (info.changes < BATCH_SIZE) break;
+        }
+    } catch (_) {
+        // Table may not exist or be empty, continue safely
     }
     return totalDeleted;
 }
@@ -129,6 +133,7 @@ function runBoundedCleanup(db, options = {}) {
     const dms = cleanExpiredDmNotifications(db, now, options.maxBatches);
     const cache = cleanExpiredCacheEntries(db, now, options.maxBatches);
     const history = cleanExpiredHistory(db, now, options.maxBatches);
+    const questLogs = cleanStaleQuestLogs(db, now, options.questRetentionMs, options.maxBatches);
 
     return {
         now,
@@ -136,7 +141,8 @@ function runBoundedCleanup(db, options = {}) {
         dmsDeleted: dms,
         cacheDeleted: cache,
         historyDeleted: history,
-        totalDeleted: nonces + dms + cache + history
+        questLogsDeleted: questLogs,
+        totalDeleted: nonces + dms + cache + history + questLogs
     };
 }
 

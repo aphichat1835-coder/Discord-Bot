@@ -22,7 +22,7 @@ require a new explicit owner decision.
 
 ## Completed in recent milestones
 
-- **Master Token Coordinator (Token Hub)** (`discord/core/tokenCoordinator.js`):
+- **Master Token Coordinator (Token Hub)** (`discord/tokens/tokenCoordinator.js`):
   Implemented centralized token governance with dynamic subsystem registration, per-token activity locking, exponential backoff on HTTP 429, quarantine lifecycle with automatic subsystem alerts, and Dashboard Token Hub UI (`/api/token-hub/*`).
 - **Transient Gateway Error Shielding** (`discord/index/system.js`):
   Added `isTransientGatewayError` classifier in Crash Shield to intercept Cloudflare 520–525/502–504 responses, socket blips, and WebSocket handshake timeouts. Keeps the process alive for auto-reconnect and `shardResume` instead of fatal exit.

@@ -263,7 +263,7 @@ Internal port:   PORT (or 3000)
 
 ## Operational Resilience & Architecture Guards
 
-- **Master Token Coordinator (Token Hub)** (`discord/core/tokenCoordinator.js`):
+- **Master Token Coordinator (Token Hub)** (`discord/tokens/tokenCoordinator.js`):
   Centralized concurrency coordinator with dynamic subsystem registration (`voiceWorker`, `quest`, etc.), per-token activity locking, automatic HTTP 429 rate-limit backoff, token quarantine lifecycle, and profile caching. When a token is rejected or invalid, registered subsystems are alerted automatically to halt voice/quest tasks and prevent API ban.
 - **Transient Gateway Crash Shield** (`discord/index/system.js`):
   Specialized error classifier (`isTransientGatewayError`) intercepting Cloudflare 520–525 / 502–504 handshake responses, WebSocket timeouts (`Opening handshake has timed out`), and gateway network socket blips (`ECONNRESET`, `ETIMEDOUT`). Instead of terminating the bot process, Crash Shield preserves the runtime, keeping voice connections alive and allowing Discord WebSockets to execute automatic `shardResume`.

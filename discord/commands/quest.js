@@ -130,7 +130,6 @@ async function buildStopPanelPayload(ownerId, notice = null) {
     } catch {}
 
     const oneShotJobs = getUserJobs(ownerId, { mode: 'oneshot' });
-    const scheduledJobs = getUserJobs(ownerId, { mode: 'scheduled' });
     const totalActive = rows.length + oneShotJobs.length;
 
     const embedTitle = totalActive > 0 ? `${config.emojis?.stop || '🛑'} จัดการ Runner เควสอัตโนมัติ` : `${config.emojis?.success || '✅'} ไม่มี Runner ที่กำลังทำงาน`;

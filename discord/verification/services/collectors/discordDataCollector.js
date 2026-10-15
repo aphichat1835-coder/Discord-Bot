@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const oauthTokenManager = require("../../../core/oauthTokenManager");
+const oauthTokenManager = require("../../../tokens/oauthTokenManager");
 const discord = require("../../utils/discordAPI");
 
 const DAY_MS = 24 * 60 * 60 * 1000;

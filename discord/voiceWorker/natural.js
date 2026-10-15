@@ -1,5 +1,5 @@
 const { VoiceConnectionStatus } = require("@discordjs/voice");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { st, naturalTimers, naturalRunning } = require("./state");
 const { delay, randomJitter } = require("./config");
 const { isSessionRunnable } = require("./session");

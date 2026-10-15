@@ -3,7 +3,7 @@
 const OAuthUser = require("../models/OAuthUser");
 const VerifyLog = require("../models/VerifyLog");
 const IpIdentityLink = require("../models/IpIdentityLink");
-const oauthTokenManager = require("../../core/oauthTokenManager");
+const oauthTokenManager = require("../../tokens/oauthTokenManager");
 const {
     encryptIP,
     decryptIPForMigration

@@ -1,77 +1,17 @@
 "use strict";
 
-const { getDatabase } = require("../../connection");
-const { resolvePriority, evictWithPriority, notifyBufferDropped, notifyP1Dropped } = require("./bufferPolicy");
-const p0Journal = require("./p0Journal");
+const BaseBufferedEventRepository = require("./BaseBufferedEventRepository");
+const { resolvePriority } = require("./bufferPolicy");
 const { sanitizeDetails } = require("./CommandEventRepository");
-const writePolicy = require("../../maintenance/writePolicy");
 
-class SessionEventRepository {
+class SessionEventRepository extends BaseBufferedEventRepository {
     constructor(db = null) {
-        this._db = db;
-        this.buffer = [];
-        this.criticalRetryQueue = [];
-        this.flushInterval = null;
-        this.maxQueueCap = 2000;
-        this.flushSizeThreshold = 100;
-        this.isDegraded = false;
-        this.droppedEventsCount = 0;
-        this.startFlusher();
-    }
-
-    get db() {
-        return this._db || getDatabase();
-    }
-
-    startFlusher(intervalMs = 10000) {
-        if (this.flushInterval) return;
-        this.flushInterval = setInterval(() => {
-            this.flush();
-        }, intervalMs);
-        if (this.flushInterval.unref) {
-            this.flushInterval.unref();
-        }
-    }
-
-    stopFlusher() {
-        if (this.flushInterval) {
-            clearInterval(this.flushInterval);
-            this.flushInterval = null;
-        }
-        if (this.criticalRetryQueue.length > 0) {
-            while (this.criticalRetryQueue.length > 0) {
-                const cItem = this.criticalRetryQueue[0];
-                try {
-                    this._insertSingle(cItem);
-                    this.criticalRetryQueue.shift();
-                } catch (_) {
-                    const spooled = p0Journal.spoolP0Event("session_events", cItem);
-                    if (spooled) {
-                        this.criticalRetryQueue.shift();
-                    } else {
-                        break;
-                    }
-                }
-            }
-        }
-        let flushed = 0;
-        do {
-            flushed = this.flush();
-        } while (flushed > 0 && this.buffer.length > 0);
-    }
-
-    getBufferStats() {
-        return {
-            bufferedCount: this.buffer.length,
-            criticalQueueCount: this.criticalRetryQueue.length,
-            maxQueueCap: this.maxQueueCap,
-            maxCriticalCap: 500,
-            flushSizeThreshold: this.flushSizeThreshold,
-            isDegraded: this.isDegraded,
-            droppedEventsCount: this.droppedEventsCount,
-            p0StorageFailureCount: this.p0StorageFailureCount || 0,
-            p0Guaranteed: (this.p0StorageFailureCount || 0) === 0
-        };
+        super({
+            tableName: "session_events",
+            repoName: "SessionEventRepository",
+            logPrefix: "[SESSION_EVENT_BUFFER]",
+            db
+        });
     }
 
     record(event, critical = false) {
@@ -95,63 +35,19 @@ class SessionEventRepository {
             metadataJson
         };
 
-        // P0: Critical Security / Corruption / Backup Failure - Best-effort durable; never intentionally evicted while SQLite is healthy
-        if (priority === "P0") {
-            try {
-                this._insertSingle(item);
-            } catch (err) {
-                this.isDegraded = true;
-                if (this.criticalRetryQueue.length < 100) {
-                    this.criticalRetryQueue.push(item);
-                } else {
-                    const spooled = p0Journal.spoolP0Event("session_events", item);
-                    if (!spooled) {
-                        if (this.criticalRetryQueue.length < 500) {
-                            this.criticalRetryQueue.push(item);
-                        } else {
-                            this.p0StorageFailureCount = (this.p0StorageFailureCount || 0) + 1;
-                            console.error(`[SESSION_EVENT_BUFFER] 🚨 CRITICAL P0 STORAGE FAILURE: SQLite insert failed, memory retry queue full (500), and emergency journal spool failed! Event persistence cannot be guaranteed.`);
-                        }
-                    }
-                }
-                console.error(`[SESSION_EVENT_BUFFER] 🚨 CRITICAL P0 event insert failed (queued for retry): ${err.message}`);
-            }
-            return;
-        }
-
-        // P2 drop early when telemetry is degraded under quota pressure
-        if (priority === "P2" && !writePolicy.canWrite("telemetry", { priority: "P2" })) {
-            return;
-        }
-
-        // Bounded queue overflow guard with priority eviction
-        if (this.buffer.length >= this.maxQueueCap) {
-            const dropTarget = Math.min(500, Math.max(1, Math.floor(this.maxQueueCap / 4)));
-            const stats = {};
-            const dropCount = evictWithPriority(this.buffer, dropTarget, stats);
-            if (dropCount > 0) {
-                this.droppedEventsCount += dropCount;
-                this.isDegraded = true;
-                console.warn(`[SESSION_EVENT_BUFFER] ⚠️ Queue reached capacity (${this.maxQueueCap}). Dropped ${dropCount} low-priority events.`);
-                notifyBufferDropped("SessionEventRepository", dropCount, this.maxQueueCap, this.droppedEventsCount);
-                if (stats.p1 > 0) {
-                    notifyP1Dropped("SessionEventRepository", stats.p1, this.droppedEventsCount);
-                }
-            }
-        }
-
-        this.buffer.push(item);
-        if (this.buffer.length >= this.flushSizeThreshold) {
-            this.flush();
-        }
+        this.enqueueItem(item);
     }
 
-    _insertSingle(item) {
-        const stmt = this.db.prepare(`
+    getInsertStatement() {
+        return this.db.prepare(`
             INSERT INTO session_events (
-                occurred_at, session_id, account_id, event_type, metadata_json
+                occurred_at, session_id, account_id,
+                event_type, metadata_json
             ) VALUES (?, ?, ?, ?, ?)
         `);
+    }
+
+    runInsertStatement(stmt, item) {
         stmt.run(
             item.occurredAt,
             item.sessionId,
@@ -159,69 +55,6 @@ class SessionEventRepository {
             item.eventType,
             item.metadataJson
         );
-    }
-
-    flush() {
-        // Retry queued P0 events if any
-        if (this.criticalRetryQueue.length > 0) {
-            while (this.criticalRetryQueue.length > 0) {
-                const cItem = this.criticalRetryQueue[0];
-                try {
-                    this._insertSingle(cItem);
-                    this.criticalRetryQueue.shift();
-                } catch (_) {
-                    break;
-                }
-            }
-        } else {
-            try {
-                p0Journal.drainP0Spool(this.db, { session_events: this });
-            } catch (_) {}
-        }
-
-        if (this.buffer.length === 0) return 0;
-        const batchSize = Math.min(this.buffer.length, 500);
-        const items = this.buffer.slice(0, batchSize);
-
-        if (!writePolicy.canWrite("history")) {
-            const initialLen = this.buffer.length;
-            this.buffer = this.buffer.filter(i => (i.priority || "P2") !== "P2");
-            const droppedP2 = initialLen - this.buffer.length;
-            if (droppedP2 > 0) {
-                this.droppedEventsCount += droppedP2;
-                this.isDegraded = true;
-                console.warn(`[SESSION_EVENT_BUFFER] ⚠️ Storage hard limit active. Dropped ${droppedP2} P2 events; preserved P1 events in memory.`);
-            }
-            return 0;
-        }
-
-        const stmt = this.db.prepare(`
-            INSERT INTO session_events (
-                occurred_at, session_id, account_id, event_type, metadata_json
-            ) VALUES (?, ?, ?, ?, ?)
-        `);
-
-        const insertTx = this.db.transaction(() => {
-            for (const item of items) {
-                stmt.run(
-                    item.occurredAt,
-                    item.sessionId,
-                    item.accountId,
-                    item.eventType,
-                    item.metadataJson
-                );
-            }
-        });
-
-        try {
-            insertTx();
-            this.buffer.splice(0, batchSize);
-            return items.length;
-        } catch (err) {
-            this.isDegraded = true;
-            console.error(`[SESSION_EVENT_BUFFER] ❌ Batch flush failed: ${err.message}`);
-            return 0;
-        }
     }
 
     findRecent(limit = 100) {

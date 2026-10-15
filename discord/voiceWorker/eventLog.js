@@ -3,7 +3,7 @@ const { VOICE_LOG_MAX } = require("./config");
 const voiceEventLog = [];
 
 function pushVoiceLog(type, sessionId, detail = "") {
-    const session = require("../sessionManager").getSession(sessionId);
+    const session = require("./sessionManager").getSession(sessionId);
     const entry = {
         ts: Date.now(),
         type,
@@ -22,13 +22,19 @@ function pushVoiceLog(type, sessionId, detail = "") {
     try {
         const database = require("../../database/index");
         if (database?.repositories?.voiceEvent) {
+            let serializedDetail = null;
+            if (typeof detail === "string") {
+                serializedDetail = detail;
+            } else if (detail) {
+                serializedDetail = JSON.stringify(detail);
+            }
             database.repositories.voiceEvent.record({
                 eventType: type,
                 sessionId,
                 accountId: session?.accountName || null,
                 guildId: session?.serverId || null,
                 voiceId: session?.voiceId || null,
-                detail: typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : null),
+                detail: serializedDetail,
                 occurredAt: entry.ts
             });
         }

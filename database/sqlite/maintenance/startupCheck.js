@@ -104,23 +104,19 @@ function runStartupCheck(db, options = {}) {
     }
 
     // 9. Storage Pre-Flight Check (Fails only on actual filesystem failure / disk < 100MB)
-    try {
-        const storageInfo = evaluateStoragePaths({
-            dbPath: options.dbPath,
-            backupDir: options.backupDir,
-            assetDir: options.assetDir
-        });
-        if (!storageInfo.ok) {
-            throw new Error(`Storage pre-flight check failed: ${storageInfo.errors.join("; ")}`);
-        }
-        if (storageInfo.pathWarning && process.env.NODE_ENV === "production") {
-            console.warn(storageInfo.warnings.find(w => w.includes("PRODUCTION_STORAGE")) || "[STORAGE] ⚠️ Running with in-source storage in production.");
-        }
-        results.checks.storage = true;
-        results.stats.storage = storageInfo;
-    } catch (storageErr) {
-        throw storageErr;
+    const storageInfo = evaluateStoragePaths({
+        dbPath: options.dbPath,
+        backupDir: options.backupDir,
+        assetDir: options.assetDir
+    });
+    if (!storageInfo.ok) {
+        throw new Error(`Storage pre-flight check failed: ${storageInfo.errors.join("; ")}`);
     }
+    if (storageInfo.pathWarning && process.env.NODE_ENV === "production") {
+        console.warn(storageInfo.warnings.find(w => w.includes("PRODUCTION_STORAGE")) || "[STORAGE] ⚠️ Running with in-source storage in production.");
+    }
+    results.checks.storage = true;
+    results.stats.storage = storageInfo;
 
     // Gather table counts & stats (0 rows is completely healthy!)
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all().map(t => t.name);

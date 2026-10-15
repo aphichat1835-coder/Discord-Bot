@@ -461,7 +461,7 @@ function getAndDeleteFromContext(context, normalizedTarget) {
 
 function buildEventFields(event, state, target) {
     const fields = [];
-    const context = { ...(event.context || {}) };
+    const context = { ...event.context };
     const rawExplicit = Array.isArray(event.fields)
         ? event.fields.filter(f => f && f.name && f.value !== undefined && f.value !== null && f.value !== "")
         : [];
@@ -640,7 +640,6 @@ function buildWebhookEventPayload(event = {}) {
     const presentation = EVENT_PRESENTATION[severity] || EVENT_PRESENTATION.INFO;
     const categoryToken = normalizeEventToken(event.category, "SYSTEM");
     const displayCategory = EVENT_CATEGORY_LABELS[categoryToken] || categoryToken.replace(/_/g, " ");
-    const code = normalizeWebhookEventCode(event.code);
     const target = resolveWebhookEventTarget({ ...event, severity });
     const state = event.state ? normalizeEventToken(event.state, "UPDATE") : null;
     const fields = buildEventFields(event, state, target);

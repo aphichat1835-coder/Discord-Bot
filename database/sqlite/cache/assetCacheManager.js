@@ -114,7 +114,9 @@ class AssetCacheManager {
                 }
             });
             updateTx();
-        } catch (_) {}
+        } catch {
+            // Best-effort cache last_used_at touch flush; ignore transient DB access failure
+        }
     }
 
     getAsset(assetKey) {

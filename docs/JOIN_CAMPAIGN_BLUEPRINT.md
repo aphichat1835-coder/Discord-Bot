@@ -43,7 +43,7 @@
    - คำสั่ง `/join-panel` รองรับ Optional Arguments: `[target_guild]` และ `[source_guild]` เพื่อสร้าง Panel ที่มีข้อมูลพร้อมใช้งานทันที หรือพิมพ์คำสั่งสั้นๆ เพื่อไปตั้งค่าผ่าน Dropdown/Modal
 10. **Subsystem Architecture & Isolation**:
     - Subsystem โฟลเดอร์ `discord/features/joinCampaign/` แบ่งเป็น `modes/`, `ui/`, `handlers/`, `services/`, `worker/`, `recovery/`
-    - Token lifecycle ใช้ `discord/core/oauthTokenManager.js` เป็น single authority เท่านั้น
+    - Token lifecycle ใช้ `discord/tokens/oauthTokenManager.js` เป็น single authority เท่านั้น
     - ห้ามเก็บ Access Token / Refresh Token ลง SQLite
     - ห้ามแก้ไข `discord/systemProvider.js` หรือ `discord/systemProvider/*`
     - ห้ามกระทบ `discord.js-selfbot-v13` voice subsystem

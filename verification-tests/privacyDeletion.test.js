@@ -171,6 +171,27 @@ test("privacy deletion redacts logs and deletes only matching member snapshot ve
                 return writeResult(1);
             }
         }),
+        VerificationMigrationArchive: createModel({
+            find: () => queryResult([{
+                _id: "archive-1",
+                payload: {
+                    guilds: [{ id: "guild-a" }],
+                    lastMember: { guildId: "guild-a" },
+                    discord: { userId: "111111111111111111" }
+                },
+                privacyRedactions: []
+            }]),
+            updateOne: async () => writeResult(1)
+        }),
+        IpIdentityLink: createModel({
+            find: () => queryResult([{
+                _id: "link-1",
+                users: [{ userId: "111111111111111111" }],
+                deviceFingerprints: [{ userId: "111111111111111111" }],
+                roleSnapshots: [{ userId: "111111111111111111" }]
+            }]),
+            updateOne: async () => writeResult(1)
+        }),
         PrivacyDeletionJob: createModel({
             updateOne: async (_filter, update, options) => {
                 jobUpdates.push({ update, options });

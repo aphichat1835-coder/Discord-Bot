@@ -1,4 +1,5 @@
-/* eslint-disable complexity -- Voice/session lifecycle is behavior-sensitive; refactor separately. */
+"use strict";
+
 /**
  * Voice Worker Compatibility Entry Point
  * - Network timeouts, retry thresholds, and operation queue concurrency limits.

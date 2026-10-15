@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const test = require("node:test");
 
 process.env.ENCRYPTION_KEY = "voice-session-encryption-test-key-with-enough-entropy";
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 
 function legacyVoiceToken(plaintext) {
     const key = Buffer.from(

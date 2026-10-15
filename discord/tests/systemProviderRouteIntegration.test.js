@@ -7,7 +7,7 @@ const express = require("express");
 
 const dashboardAuth = require("../index/auth");
 const { makeCheckAuth } = require("../guards/dashboardGuards");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const systemProvider = require("../systemProvider");
 
 function envSnapshot(names) {

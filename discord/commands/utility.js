@@ -602,7 +602,7 @@ async function executeEmojiCopyWorkflow(interaction, { matches, quotas, delayMs 
         }
 
         applyEmojiImportResult(res, item, state);
-        await maybeReportCopyProgress(interaction, { processed: i + 1, total: matches.length });
+        maybeReportCopyProgress(interaction, { processed: i + 1, total: matches.length }).catch(() => {});
     }
 
     return buildEmojiResultEmbed({

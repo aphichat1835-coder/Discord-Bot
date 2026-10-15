@@ -1,7 +1,7 @@
 "use strict";
 
 const { VoiceConnectionStatus } = require("@discordjs/voice");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { st } = require("./state");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { getSessionShortId, isSessionRunnable } = require("./session");
@@ -156,20 +156,51 @@ function isVoiceMoveEventApplicable(sessionId, client, newState, deps = {}) {
     return session;
 }
 
-function executeFlybackRejoin(session, sessionId) {
-    const conn = session.connection;
+const FLYBACK_THROTTLE_MS = 1500;
+const flybackTimestamps = new Map();
+const flybackTimers = new Map();
+
+function executeFlybackRejoin(session, sessionId, deps = {}) {
+    const conn = session?.connection;
     if (!conn || conn.state?.status === VoiceConnectionStatus.Destroyed) {
         return;
     }
 
-    try {
-        conn.rejoin({
-            channelId: session.voiceId,
-            selfMute: true,
-            selfDeaf: true
-        });
-    } catch (err) {
-        console.warn(`[WORKER] ⚠️ Flyback rejoin failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
+    const now = Date.now();
+    const lastFlyback = flybackTimestamps.get(sessionId) || 0;
+    const elapsed = now - lastFlyback;
+    const throttleMs = Number.isFinite(Number(deps.throttleMs)) ? Number(deps.throttleMs) : FLYBACK_THROTTLE_MS;
+
+    const performRejoin = () => {
+        flybackTimestamps.set(sessionId, Date.now());
+        flybackTimers.delete(sessionId);
+        try {
+            conn.rejoin({
+                channelId: session.voiceId,
+                selfMute: true,
+                selfDeaf: true
+            });
+        } catch (err) {
+            console.warn(`[WORKER] ⚠️ Flyback rejoin failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
+        }
+    };
+
+    if (elapsed >= throttleMs) {
+        if (flybackTimers.has(sessionId)) {
+            clearTimeout(flybackTimers.get(sessionId));
+            flybackTimers.delete(sessionId);
+        }
+        performRejoin();
+    } else {
+        if (!flybackTimers.has(sessionId)) {
+            const setTimer = deps.setTimeout || setTimeout;
+            const remaining = throttleMs - elapsed;
+            const timer = setTimer(() => {
+                performRejoin();
+            }, remaining);
+            timer.unref?.();
+            flybackTimers.set(sessionId, timer);
+        }
     }
 }
 
@@ -181,12 +212,18 @@ function handleVoiceStateUpdate(sessionId, client, oldState, newState, deps = {}
     const toName = newState.channel?.name || newState.channelId || "ห้องใหม่";
     console.log(`[WORKER] 🧲 Bot moved from ${fromName} to ${toName} — flying back to target channel ${session.voiceName || session.voiceId} (${sanitizeLogText(sessionId)})`);
 
-    executeFlybackRejoin(session, sessionId);
+    executeFlybackRejoin(session, sessionId, deps);
     recordMoveIncident(sessionId, session, client, oldState, newState, deps);
     return true;
 }
 
 function cancelMoveTracking(sessionId) {
+    if (flybackTimers.has(sessionId)) {
+        clearTimeout(flybackTimers.get(sessionId));
+        flybackTimers.delete(sessionId);
+    }
+    flybackTimestamps.delete(sessionId);
+
     const record = moveTracking.get(sessionId);
     if (record) {
         if (record.timer) clearTimeout(record.timer);
@@ -197,6 +234,12 @@ function cancelMoveTracking(sessionId) {
 }
 
 function clearAllMoveTrackers() {
+    for (const timer of flybackTimers.values()) {
+        clearTimeout(timer);
+    }
+    flybackTimers.clear();
+    flybackTimestamps.clear();
+
     for (const record of moveTracking.values()) {
         if (record.timer) clearTimeout(record.timer);
     }

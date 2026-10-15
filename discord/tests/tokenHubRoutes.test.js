@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { registerAdminRoutes } = require('../index/adminRoutes');
-const tokenCoordinator = require('../core/tokenCoordinator');
+const tokenCoordinator = require('../tokens/tokenCoordinator');
 
 function createMockApp() {
     const routes = [];

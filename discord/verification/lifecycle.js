@@ -3,12 +3,13 @@
 const GuildConfig = require("./models/GuildConfig");
 const IpIdentityLink = require("./models/IpIdentityLink");
 const VerifyLog = require("./models/VerifyLog");
-const { safeError } = require("./utils/safeLogger");
+const safeLogger = require("./utils/safeLogger");
+const { safeError } = safeLogger;
 const {
     cleanupSnapshotGarbage,
     getSnapshotCleanupConfig
 } = require("./services/snapshotCleanup");
-const oauthTokenManager = require("../core/oauthTokenManager");
+const oauthTokenManager = require("../tokens/oauthTokenManager");
 const {
     runAutomaticMigration,
     config: getAutomaticMigrationConfig
@@ -325,7 +326,9 @@ async function runVerificationMaintenance(options = {}) {
             if (typeof verificationWebhookManager?.performStartupRecovery === "function" && !verificationWebhookManager?.startupRecoveryCompleted) {
                 try {
                     await verificationWebhookManager.performStartupRecovery();
-                } catch (_) {}
+                } catch (err) {
+                    safeLogger.warn?.("[Lifecycle] Webhook startup recovery encountered error:", err?.message || String(err));
+                }
             } else if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
                 try {
                     const recovery = verificationWebhookManager.repo.recoverStuckSendingDeliveries(300000);
@@ -335,7 +338,9 @@ async function runVerificationMaintenance(options = {}) {
                             verificationWebhookManager.triggerWorker(gId);
                         }
                     }
-                } catch (_) {}
+                } catch (err) {
+                    safeLogger.warn?.("[Lifecycle] Webhook recoverStuckSendingDeliveries encountered error:", err?.message || String(err));
+                }
             }
         }
 
@@ -391,27 +396,35 @@ async function startVerificationRuntime(options = {}) {
             }
         }
         if (!maintenanceTimer) {
-            maintenanceTimer = createInterval(() => maintenanceRunner().catch(err => {
-                lastError = safeError(err);
-                console.error("[VERIFICATION] maintenance failed:", lastError);
-                sendWebhookEvent({
-                    target: "ALERT",
-                    severity: "ERROR",
-                    category: "VERIFICATION",
-                    code: "verification.maintenance_failed",
-                    state: "OPEN",
-                    title: "MAINTENANCE FAILED",
-                    description: `การบำรุงรักษาระบบยืนยันตัวตนรอบปกติล้มเหลว: ${lastError}`,
-                    fields: [
-                        { name: "สถานะ", value: "OPEN" },
-                        { name: "ผลกระทบ", value: "การล้างข้อมูลเก่าหรืออัปเดตสิทธิ์ยืนยันตัวตนอาจล่าช้า" },
-                        { name: "สิ่งที่ควรทำ", value: "ตรวจสอบฐานข้อมูลและการเชื่อมต่อ Discord API" },
-                        { name: "รหัสข้อผิดพลาด", value: String(err?.code || err?.name || "maintenance_error") }
-                    ],
-                    dedupeKey: "verification-maintenance-failed",
-                    dedupeMs: 30 * 60 * 1000
-                }).catch(() => {});
-            }), MAINTENANCE_INTERVAL_MS);
+            maintenanceTimer = createInterval(async () => {
+                try {
+                    await maintenanceRunner();
+                } catch (err) {
+                    lastError = safeError(err);
+                    console.error("[VERIFICATION] maintenance failed:", lastError);
+                    try {
+                        await sendWebhookEvent({
+                            target: "ALERT",
+                            severity: "ERROR",
+                            category: "VERIFICATION",
+                            code: "verification.maintenance_failed",
+                            state: "OPEN",
+                            title: "MAINTENANCE FAILED",
+                            description: `การบำรุงรักษาระบบยืนยันตัวตนรอบปกติล้มเหลว: ${lastError}`,
+                            fields: [
+                                { name: "สถานะ", value: "OPEN" },
+                                { name: "ผลกระทบ", value: "การล้างข้อมูลเก่าหรืออัปเดตสิทธิ์ยืนยันตัวตนอาจล่าช้า" },
+                                { name: "สิ่งที่ควรทำ", value: "ตรวจสอบฐานข้อมูลและการเชื่อมต่อ Discord API" },
+                                { name: "รหัสข้อผิดพลาด", value: String(err?.code || err?.name || "maintenance_error") }
+                            ],
+                            dedupeKey: "verification-maintenance-failed",
+                            dedupeMs: 30 * 60 * 1000
+                        });
+                    } catch {
+                        // ignore webhook delivery failure in background maintenance
+                    }
+                }
+            }, MAINTENANCE_INTERVAL_MS);
             maintenanceTimer.unref?.();
         }
         return getVerificationDiagnostics();

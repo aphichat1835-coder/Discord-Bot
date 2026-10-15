@@ -18,7 +18,7 @@ const {
 const { evaluateSecurity } = require("./securityEvaluator");
 const { evaluateCriticalPersistence, coordinatePersistenceFailure } = require("./verificationPersistence");
 const { verificationWebhookManager } = require("./webhook/verificationWebhookManager");
-const oauthTokenManager = require("../../core/oauthTokenManager");
+const oauthTokenManager = require("../../tokens/oauthTokenManager");
 const snapshotBudget = require("./snapshotBudget");
 const ipIdentityHistory = require("./ipIdentityHistoryService");
 const { withSnapshotMutationLock } = require("./snapshotMutationLock");
@@ -264,7 +264,7 @@ async function saveOAuthUserSafe({
             const safeAttemptStartedAt = Math.max(0, Number(attemptStartedAt) || nowMs);
 
             let finalGuildSummary = guildSummary || null;
-            if (finalGuildSummary && finalGuildSummary.status === "failed" && !finalGuildSummary.fetchedAt) {
+            if (finalGuildSummary?.status === "failed" && !finalGuildSummary.fetchedAt) {
                 const existingDoc = await OAuthUser.findOne({ "discord.userId": profileUserId }).select("guildSummary").lean().catch(() => null);
                 if (existingDoc?.guildSummary && existingDoc.guildSummary.status === "success") {
                     finalGuildSummary = {

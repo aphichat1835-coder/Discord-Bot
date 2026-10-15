@@ -35,10 +35,10 @@ class DmNotificationRepository {
                 String(recordData.recipientId),
                 String(recordData.category),
                 String(recordData.priority || "normal"),
-                parseInt(recordData.priorityRank, 10) || 2,
+                Number.parseInt(recordData.priorityRank, 10) || 2,
                 payloadJson,
                 String(recordData.status || "pending"),
-                parseInt(recordData.attempts, 10) || 0,
+                Number.parseInt(recordData.attempts, 10) || 0,
                 Number(recordData.nextAttemptAt) || now,
                 recordData.lastError ? String(recordData.lastError) : null,
                 recordData.sentAt ? Number(recordData.sentAt) : null,
@@ -48,7 +48,7 @@ class DmNotificationRepository {
             );
             return this.findById(info.lastInsertRowid);
         } catch (err) {
-            if (err.message && err.message.includes("UNIQUE constraint failed")) {
+            if (err.message?.includes("UNIQUE constraint failed")) {
                 const dupErr = new Error(`E11000 duplicate key error collection: dm_notifications index: eventKey_1 dup key: { eventKey: "${recordData.eventKey}" }`);
                 dupErr.code = 11000;
                 dupErr.keyPattern = { eventKey: 1 };

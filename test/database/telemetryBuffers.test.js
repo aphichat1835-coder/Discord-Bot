@@ -169,7 +169,7 @@ describe("Telemetry Buffers Suite (Command & Session Events)", () => {
     });
 
     test("TokenCoordinator: emits source=rest_api and records retryAfter without interrupting voice", () => {
-        const { TokenCoordinator } = require("../../discord/core/tokenCoordinator");
+        const { TokenCoordinator } = require("../../discord/tokens/tokenCoordinator");
         const coordinator = new TokenCoordinator();
 
         let emittedEvent = null;
