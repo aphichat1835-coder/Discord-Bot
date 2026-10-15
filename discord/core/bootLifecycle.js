@@ -1,5 +1,72 @@
 "use strict";
 
+function stageTag(total, num, action, pastAction) {
+    const pad = n => String(n).padStart(2, "0");
+    const prefix = `${pad(num)}/${pad(total)}`;
+    return {
+        label: `${prefix} ${action}`,
+        successMessage: `${prefix} ${pastAction}`
+    };
+}
+
+async function runStorageStages(stage, options, total, shouldAbort) {
+    const s1 = stageTag(total, 1, "Start HTTP server", "HTTP server listening");
+    await stage("HTTP", s1.label, options.startHttpServer, { successMessage: s1.successMessage, details: value => value });
+
+    const s2 = stageTag(total, 2, "Connect MongoDB", "MongoDB connected");
+    await stage("DATABASE", s2.label, options.connectDatabase, { successMessage: s2.successMessage });
+    if (shouldAbort("MongoDB connect")) return "MongoDB connect";
+
+    if (options.connectSqlite) {
+        const s3 = stageTag(total, 3, "Open and validate SQLite", "SQLite operational database ready");
+        await stage("DATABASE", s3.label, options.connectSqlite, { successMessage: s3.successMessage, details: value => value });
+        if (shouldAbort("SQLite open")) return "SQLite open";
+    }
+
+    const dataIndex = options.connectSqlite ? 4 : 3;
+    const sData = stageTag(total, dataIndex, "Load application data", "Application data loaded");
+    await stage("DATABASE", sData.label, options.loadDatabase, { successMessage: sData.successMessage });
+    if (shouldAbort("database load")) return "database load";
+
+    return null;
+}
+
+async function runAppStages(stage, options, total, degradedStages, shouldAbort) {
+    const verifyIndex = options.connectSqlite ? 5 : 4;
+    if (options.verificationEnabled) {
+        const sVerify = stageTag(total, verifyIndex, "Start verification lifecycle", "Verification lifecycle started");
+        const result = await stage("VERIFICATION", sVerify.label, options.startVerification, {
+            required: false,
+            successMessage: sVerify.successMessage
+        });
+        if (!result?.ok) degradedStages.push("verification");
+    } else {
+        options.onVerificationSkipped?.();
+    }
+
+    const cmdIndex = options.connectSqlite ? 6 : 5;
+    const sCmd = stageTag(total, cmdIndex, "Load disabled commands", "Disabled commands loaded");
+    const commandResult = await stage("COMMANDS", sCmd.label, options.loadDisabledCommands, {
+        required: false,
+        successMessage: sCmd.successMessage,
+        details: value => value
+    });
+    if (!commandResult?.ok) degradedStages.push("command_settings");
+    if (shouldAbort("before Discord login")) return { aborted: true, abortedAt: "before Discord login" };
+
+    const discordIndex = options.connectSqlite ? 7 : 6;
+    const sDiscord = stageTag(total, discordIndex, "Login Discord client", "Discord client connected");
+    const discordResult = await stage("DISCORD", sDiscord.label, options.loginDiscord, {
+        required: false,
+        successMessage: sDiscord.successMessage,
+        details: value => value
+    });
+    if (!discordResult?.ok) degradedStages.push("discord");
+    if (shouldAbort("Discord login")) return { aborted: true, abortedAt: "Discord login" };
+
+    return { aborted: false, discordReady: Boolean(discordResult?.ok) };
+}
+
 async function runBootLifecycle(options = {}) {
     if (typeof options.runStage !== "function") throw new TypeError("runStage must be a function");
     const degradedStages = [];
@@ -10,45 +77,19 @@ async function runBootLifecycle(options = {}) {
         return options.runStage(category, label, task, stageOptions);
     };
 
-    await stage("HTTP", options.connectSqlite ? "01/07 Start HTTP server" : "01/06 Start HTTP server", options.startHttpServer, {
-        successMessage: options.connectSqlite ? "01/07 HTTP server listening" : "01/06 HTTP server listening", details: value => value
-    });
-    await stage("DATABASE", options.connectSqlite ? "02/07 Connect MongoDB" : "02/06 Connect MongoDB", options.connectDatabase, {
-        successMessage: options.connectSqlite ? "02/07 MongoDB connected" : "02/06 MongoDB connected"
-    });
-    if (shouldAbort("MongoDB connect")) return { aborted: true, abortedAt: "MongoDB connect", degradedStages, stageOrder, discordReady: false };
+    const total = options.connectSqlite ? 7 : 6;
 
-    if (options.connectSqlite) {
-        await stage("DATABASE", "03/07 Open and validate SQLite", options.connectSqlite, {
-            successMessage: "03/07 SQLite operational database ready", details: value => value
-        });
-        if (shouldAbort("SQLite open")) return { aborted: true, abortedAt: "SQLite open", degradedStages, stageOrder, discordReady: false };
+    const storageAbort = await runStorageStages(stage, options, total, shouldAbort);
+    if (storageAbort) {
+        return { aborted: true, abortedAt: storageAbort, degradedStages, stageOrder, discordReady: false };
     }
 
-    await stage("DATABASE", options.connectSqlite ? "04/07 Load application data" : "03/06 Load application data", options.loadDatabase, {
-        successMessage: options.connectSqlite ? "04/07 Application data loaded" : "03/06 Application data loaded"
-    });
-    if (shouldAbort("database load")) return { aborted: true, abortedAt: "database load", degradedStages, stageOrder, discordReady: false };
+    const appOutcome = await runAppStages(stage, options, total, degradedStages, shouldAbort);
+    if (appOutcome.aborted) {
+        return { aborted: true, abortedAt: appOutcome.abortedAt, degradedStages, stageOrder, discordReady: false };
+    }
 
-    if (options.verificationEnabled) {
-        const result = await stage("VERIFICATION", options.connectSqlite ? "05/07 Start verification lifecycle" : "04/06 Start verification lifecycle", options.startVerification, {
-            required: false, successMessage: options.connectSqlite ? "05/07 Verification lifecycle started" : "04/06 Verification lifecycle started"
-        });
-        if (!result?.ok) degradedStages.push("verification");
-    } else options.onVerificationSkipped?.();
-
-    const commandResult = await stage("COMMANDS", options.connectSqlite ? "06/07 Load disabled commands" : "05/06 Load disabled commands", options.loadDisabledCommands, {
-        required: false, successMessage: options.connectSqlite ? "06/07 Disabled commands loaded" : "05/06 Disabled commands loaded", details: value => value
-    });
-    if (!commandResult?.ok) degradedStages.push("command_settings");
-    if (shouldAbort("before Discord login")) return { aborted: true, abortedAt: "before Discord login", degradedStages, stageOrder, discordReady: false };
-
-    const discordResult = await stage("DISCORD", options.connectSqlite ? "07/07 Login Discord client" : "06/06 Login Discord client", options.loginDiscord, {
-        required: false, successMessage: options.connectSqlite ? "07/07 Discord client connected" : "06/06 Discord client connected", details: value => value
-    });
-    if (!discordResult?.ok) degradedStages.push("discord");
-    if (shouldAbort("Discord login")) return { aborted: true, abortedAt: "Discord login", degradedStages, stageOrder, discordReady: false };
-    return { aborted: false, abortedAt: null, degradedStages, stageOrder, discordReady: Boolean(discordResult?.ok) };
+    return { aborted: false, abortedAt: null, degradedStages, stageOrder, discordReady: appOutcome.discordReady };
 }
 
 module.exports = { runBootLifecycle };

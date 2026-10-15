@@ -641,8 +641,8 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
             }
 
             case "cleanup_history": {
-                const days = parseInt(process.env.SQLITE_HISTORY_RETENTION_DAYS, 10);
-                const retentionDays = (!isNaN(days) && days > 0) ? days : 30;
+                const days = Number.parseInt(process.env.SQLITE_HISTORY_RETENTION_DAYS, 10);
+                const retentionDays = (!Number.isNaN(days) && days > 0) ? days : 30;
                 const cutoff = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
                 const batchSize = 1000;
 
@@ -698,7 +698,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
             case "vacuum": {
                 const safePages = Math.min(10000, Math.max(1, Number.parseInt(options.pages, 10) || 500));
                 const vac = runIncrementalVacuum(db, safePages);
-                const ok = Boolean(vac && vac.ok);
+                const ok = Boolean(vac?.ok);
                 result = {
                     ok,
                     action,
@@ -1141,12 +1141,7 @@ async function getMongoDetailedStatus() {
     };
 }
 
-function maskSensitiveValue(key, value) {
-    if (value === null || value === undefined) return value;
-
-    const lowerKey = String(key).toLowerCase();
-
-    // 1. Tokens, Secrets, Passwords, Cryptographic blobs
+function maskSensitiveScalar(lowerKey, value) {
     if (/token|secret|password|key|hash|salt|iv|cipher|auth/i.test(lowerKey)) {
         if (typeof value === "string" && value.length > 8) {
             return `${value.slice(0, 4)}...${value.slice(-3)} [PROTECTED]`;
@@ -1154,20 +1149,21 @@ function maskSensitiveValue(key, value) {
         return "[PROTECTED_SECRET]";
     }
 
-    // 2. IP Addresses (IPv4 & IPv6)
     if (typeof value === "string") {
-        // IPv4 regex
         if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(value)) {
             return value.replace(/\.\d{1,3}\.\d{1,3}$/, ".***.***");
         }
-        // Email
         if (value.includes("@") && value.includes(".")) {
             const [local, dom] = value.split("@");
             return `${local.slice(0, 1)}***@${dom}`;
         }
     }
+    return value;
+}
 
-    // Recursive object masking
+function maskSensitiveValue(key, value) {
+    if (value === null || value === undefined) return value;
+
     if (typeof value === "object") {
         if (Array.isArray(value)) {
             return value.map((item, idx) => maskSensitiveValue(idx, item));
@@ -1179,7 +1175,8 @@ function maskSensitiveValue(key, value) {
         return maskedObj;
     }
 
-    return value;
+    const lowerKey = String(key).toLowerCase();
+    return maskSensitiveScalar(lowerKey, value);
 }
 
 async function getMongoCollectionSample(collectionName, limit = 5) {

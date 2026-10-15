@@ -858,10 +858,6 @@ function buildSecretResultEmbed(command, result, guild = null) {
         statusText = `${warningEmoji} ดำเนินการสำเร็จบางส่วน`;
     }
 
-    const durationText = Number.isFinite(result.durationMs) && result.durationMs > 0
-        ? `${(result.durationMs / 1000).toFixed(1)} วินาที`
-        : "ทันที";
-
     const lines = [
         `### ${statusText}`,
         `> คำสั่งลับสำหรับผู้ดูแลระบบห้องเสียง • คำสั่ง: **${command}**\n`,

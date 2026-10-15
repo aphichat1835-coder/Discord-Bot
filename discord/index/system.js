@@ -51,6 +51,32 @@ const TOGGLE_COOLDOWN_MAX_KEYS = readFiniteInteger(process.env.TOGGLE_COOLDOWN_M
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
 // ════════════════════════════════════════════════════════════════════════════
+function isMutedLogLine(line) {
+    if (line.includes("[WEBHOOK]") || line.includes("ALERT delivery unavailable")) return true;
+    if (line.includes("[SHADOW")) return true;
+    return line.includes("MongoDB Connection Lost") ||
+        line.includes("MongoDB Error:") ||
+        line.includes("MongoDB save failed:") ||
+        (line.includes("[GATEWAY]") && (line.includes("event=error") || line.includes("event=shardError") || line.includes("event=shardDisconnect") || line.includes("event=shardResume"))) ||
+        line.includes("[SLASH] ❌ Error in") ||
+        line.includes("[CRITICAL] uncaughtException") ||
+        line.includes("[CRITICAL] unhandledRejection");
+}
+
+function deriveLogCategory(rawTag) {
+    if (rawTag.includes("DATA") || rawTag.includes("MONGO") || rawTag.includes("SQLITE")) return "DATABASE";
+    if (rawTag.includes("VOICE") || rawTag.includes("WORKER") || rawTag.includes("SESSION") || rawTag.includes("AUTODEAF") || rawTag.includes("NATURAL") || rawTag.includes("HEARTBEAT")) return "VOICE";
+    if (rawTag.includes("VERIFY") || rawTag.includes("OAUTH") || rawTag.includes("SNAPSHOT")) return "VERIFICATION";
+    if (rawTag.includes("GATEWAY") || rawTag.includes("SHARD")) return "GATEWAY";
+    if (rawTag.includes("COMMAND") || rawTag.includes("SLASH") || rawTag.includes("ROLE")) return "COMMAND";
+    if (rawTag.includes("SECURITY") || rawTag.includes("PROTECTION") || rawTag.includes("RAID") || rawTag.includes("SPAM")) return "SECURITY";
+    if (rawTag.includes("QUEST")) return "QUEST";
+    if (rawTag.includes("MODCASE")) return "MODERATION";
+    if (rawTag.includes("HTTP") || rawTag.includes("API") || rawTag.includes("ROUTE")) return "RUNTIME";
+    if (rawTag.includes("CRITICAL") || rawTag.includes("FATAL")) return "SYSTEM";
+    return "RUNTIME";
+}
+
 function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
     function pushLog(type, msg) {
         msg = sanitizeLogText(msg);
@@ -63,32 +89,6 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
     const DEDUPE_WINDOW_MS = 2 * 60 * 1000;
     const MAX_DEDUPE_ENTRIES = 500;
     let isForwardingAlert = false;
-
-    function isMutedLogLine(line) {
-        if (line.includes("[WEBHOOK]") || line.includes("ALERT delivery unavailable")) return true;
-        if (line.includes("[SHADOW")) return true;
-        return line.includes("MongoDB Connection Lost") ||
-            line.includes("MongoDB Error:") ||
-            line.includes("MongoDB save failed:") ||
-            (line.includes("[GATEWAY]") && (line.includes("event=error") || line.includes("event=shardError") || line.includes("event=shardDisconnect") || line.includes("event=shardResume"))) ||
-            line.includes("[SLASH] ❌ Error in") ||
-            line.includes("[CRITICAL] uncaughtException") ||
-            line.includes("[CRITICAL] unhandledRejection");
-    }
-
-    function deriveLogCategory(rawTag) {
-        if (rawTag.includes("DATA") || rawTag.includes("MONGO") || rawTag.includes("SQLITE")) return "DATABASE";
-        if (rawTag.includes("VOICE") || rawTag.includes("WORKER") || rawTag.includes("SESSION") || rawTag.includes("AUTODEAF") || rawTag.includes("NATURAL") || rawTag.includes("HEARTBEAT")) return "VOICE";
-        if (rawTag.includes("VERIFY") || rawTag.includes("OAUTH") || rawTag.includes("SNAPSHOT")) return "VERIFICATION";
-        if (rawTag.includes("GATEWAY") || rawTag.includes("SHARD")) return "GATEWAY";
-        if (rawTag.includes("COMMAND") || rawTag.includes("SLASH") || rawTag.includes("ROLE")) return "COMMAND";
-        if (rawTag.includes("SECURITY") || rawTag.includes("PROTECTION") || rawTag.includes("RAID") || rawTag.includes("SPAM")) return "SECURITY";
-        if (rawTag.includes("QUEST")) return "QUEST";
-        if (rawTag.includes("MODCASE")) return "MODERATION";
-        if (rawTag.includes("HTTP") || rawTag.includes("API") || rawTag.includes("ROUTE")) return "RUNTIME";
-        if (rawTag.includes("CRITICAL") || rawTag.includes("FATAL")) return "SYSTEM";
-        return "RUNTIME";
-    }
 
     function forwardConsoleAlert(level, line) {
         if (isForwardingAlert) return;

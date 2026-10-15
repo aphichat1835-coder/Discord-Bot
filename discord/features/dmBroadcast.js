@@ -459,6 +459,37 @@ async function validateSecondaryBot(token, guildId, options = {}) {
     }
 }
 
+async function executeBroadcastMemberList({ memberList, dmPayload, webhookClient, botUser, onProgress }) {
+    let index = 0;
+    for (const member of memberList) {
+        if (activeBroadcastJob?.aborted) {
+            console.warn(`[DM_BROADCAST] ⚠️ Broadcast job aborted: ${activeBroadcastJob.abortReason || 'Quarantined or cancelled'}`);
+            break;
+        }
+        index++;
+        await processMemberBroadcast({
+            member,
+            index,
+            total: memberList.length,
+            dmPayload,
+            webhookClient,
+            botUser,
+            activeJob: activeBroadcastJob,
+            onProgress
+        });
+    }
+}
+
+function safeInvokeOnComplete(onComplete, payload) {
+    if (typeof onComplete === 'function') {
+        try {
+            onComplete(payload);
+        } catch {
+            // Ignore callback exceptions
+        }
+    }
+}
+
 async function runBroadcastJobLoop({
     broadcastClient,
     webhookClient,
@@ -491,24 +522,7 @@ async function runBroadcastJobLoop({
 
         const dmPayload = buildDmPayload(cleanMessage, cleanImageUrl);
 
-        let index = 0;
-        for (const member of memberList) {
-            if (activeBroadcastJob?.aborted) {
-                console.warn(`[DM_BROADCAST] ⚠️ Broadcast job aborted: ${activeBroadcastJob.abortReason || 'Quarantined or cancelled'}`);
-                break;
-            }
-            index++;
-            await processMemberBroadcast({
-                member,
-                index,
-                total: memberList.length,
-                dmPayload,
-                webhookClient,
-                botUser,
-                activeJob: activeBroadcastJob,
-                onProgress
-            });
-        }
+        await executeBroadcastMemberList({ memberList, dmPayload, webhookClient, botUser, onProgress });
 
         const durationMs = Date.now() - startTime;
         await notifyFinalSummary(webhookClient, {
@@ -520,31 +534,23 @@ async function runBroadcastJobLoop({
             durationMs
         });
 
-        if (typeof onComplete === 'function') {
-            try {
-                onComplete({
-                    ok: true,
-                    total: memberList.length,
-                    sent: activeBroadcastJob.sent,
-                    failed: activeBroadcastJob.failed,
-                    durationMs
-                });
-            } catch {}
-        }
+        safeInvokeOnComplete(onComplete, {
+            ok: true,
+            total: memberList.length,
+            sent: activeBroadcastJob.sent,
+            failed: activeBroadcastJob.failed,
+            durationMs
+        });
     } catch (jobErr) {
         console.error('[DM_BROADCAST] ❌ Broadcast job fatal error:', jobErr.message);
         await notifyFatalError(webhookClient, { jobErr, activeJob: activeBroadcastJob });
 
-        if (typeof onComplete === 'function') {
-            try {
-                onComplete({
-                    ok: false,
-                    error: jobErr.message,
-                    sent: activeBroadcastJob?.sent || 0,
-                    failed: activeBroadcastJob?.failed || 0
-                });
-            } catch {}
-        }
+        safeInvokeOnComplete(onComplete, {
+            ok: false,
+            error: jobErr.message,
+            sent: activeBroadcastJob?.sent || 0,
+            failed: activeBroadcastJob?.failed || 0
+        });
     } finally {
         tokenCoordinator.releaseActivity(trimmedToken, 'dmBroadcast');
         activeBroadcastJob = null;

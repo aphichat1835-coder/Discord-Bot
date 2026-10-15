@@ -448,6 +448,13 @@ async function stopVerificationRuntime(options = {}) {
 }
 
 function getVerificationDiagnostics() {
+    let oauthRunStatus = "ok";
+    if (lastOAuthRefreshError) {
+        oauthRunStatus = "error";
+    } else if (lastOAuthRefreshSummary?.failed > 0 || lastOAuthRefreshSummary?.persistenceFailed > 0) {
+        oauthRunStatus = "partial_failure";
+    }
+
     return {
         ready: lastRunAt !== null && !lastError,
         timerActive: !!maintenanceTimer,
@@ -486,7 +493,7 @@ function getVerificationDiagnostics() {
             lastRunAt: lastOAuthRefreshAt,
             lastError: lastOAuthRefreshError,
             lastSummary: lastOAuthRefreshSummary,
-            lastRunStatus: lastOAuthRefreshError ? "error" : (lastOAuthRefreshSummary?.failed > 0 || lastOAuthRefreshSummary?.persistenceFailed > 0 ? "partial_failure" : "ok"),
+            lastRunStatus: oauthRunStatus,
             lastRunFailedCount: Number(lastOAuthRefreshSummary?.failed || 0),
             lastRunPersistenceFailed: Number(lastOAuthRefreshSummary?.persistenceFailed || 0),
             diagnostics: oauthTokenManager.getDiagnostics()

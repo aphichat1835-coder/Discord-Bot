@@ -79,15 +79,7 @@ function formatDate(timestamp) {
     }
 }
 
-/**
- * Splits lines into multiple embed fields to avoid truncation (P1-8).
- */
-function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
-    const safeTitle = truncate(title, MAX_FIELD_NAME_CHARS);
-    if (!Array.isArray(lines) || !lines.length) {
-        return [{ name: safeTitle, value: "ไม่มี", inline: false }];
-    }
-    // Flatten any lines that exceed maxChars to prevent single-line overflow
+function flattenOversizedLines(lines, maxChars) {
     const normalizedLines = [];
     for (const rawLine of lines) {
         const s = String(rawLine || "");
@@ -102,6 +94,19 @@ function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
             }
         }
     }
+    return normalizedLines;
+}
+
+/**
+ * Splits lines into multiple embed fields to avoid truncation (P1-8).
+ */
+function chunkLinesToFields(title, lines, maxChars = MAX_FIELD_VALUE_CHARS) {
+    const safeTitle = truncate(title, MAX_FIELD_NAME_CHARS);
+    if (!Array.isArray(lines) || !lines.length) {
+        return [{ name: safeTitle, value: "ไม่มี", inline: false }];
+    }
+
+    const normalizedLines = flattenOversizedLines(lines, maxChars);
 
     const fields = [];
     let currentLines = [];
@@ -459,10 +464,17 @@ function buildWebhookPayload({
         }
     }
 
+    let embedColor = 0xF39C12;
+    if (result === "success") {
+        embedColor = 0x2ECC71;
+    } else if (result === "blocked") {
+        embedColor = 0xE74C3C;
+    }
+
     const embed = {
         title: `${EMOJIS.BELL} Log Verify ผู้ใช้งาน`,
         description,
-        color: result === "success" ? 0x2ECC71 : (result === "blocked" ? 0xE74C3C : 0xF39C12),
+        color: embedColor,
         thumbnail: userAvatarUrl ? { url: userAvatarUrl } : undefined,
         fields,
         timestamp: new Date(verifiedAt).toISOString()
@@ -594,13 +606,15 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
     if (res.status === 429) {
         const rawHeader = res.headers.get("retry-after");
         let retryAfter = Number(rawHeader);
-        if (!retryAfter || isNaN(retryAfter)) {
+        if (!retryAfter || Number.isNaN(retryAfter)) {
             try {
                 const errJson = await res.json().catch(() => null);
                 if (errJson && typeof errJson.retry_after === "number") {
                     retryAfter = errJson.retry_after;
                 }
-            } catch (_) {}
+            } catch (err) {
+                // Ignore json parsing error on 429 error body
+            }
         }
         const safeSeconds = Math.max(0.5, Math.min(60, Number(retryAfter) || 2));
         const backoffMs = Math.round(safeSeconds * 1000) + 500;
@@ -782,9 +796,7 @@ class VerificationWebhookManager {
             // 2. Recover active backfill jobs (requires MongoDB)
             if (mongoose.connection?.readyState === 1 && typeof this.repo.getAllActiveJobs === "function") {
                 const activeJobs = this.repo.getAllActiveJobs();
-                for (const job of activeJobs) {
-                    await this._recoverActiveJob(job);
-                }
+                await Promise.all(activeJobs.map(job => this._recoverActiveJob(job)));
             }
 
             // 3. Wake up all guilds with PENDING or ready RETRY deliveries
@@ -1592,9 +1604,16 @@ class VerificationWebhookManager {
         if (!initialWebhookUrl) return;
         const initialVersion = Number(config?.verification?.webhookLog?.destinationVersion) || 1;
 
-        while (true) {
+        const deliverBatch = async (items, index, context) => {
+            if (index >= items.length) return;
+            await this._deliverSingleItem(items[index], guildId, context);
+            await sleep(RATE_LIMIT_DELAY_MS);
+            return deliverBatch(items, index + 1, context);
+        };
+
+        const processBatches = async () => {
             const deliveries = this.repo.claimNextDeliveries(guildId, 5, initialVersion);
-            if (!deliveries.length) break;
+            if (!deliveries.length) return;
 
             const latestConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
             const activeVersion = Number(latestConfig?.verification?.webhookLog?.destinationVersion) || 1;
@@ -1602,11 +1621,11 @@ class VerificationWebhookManager {
             const currentMode = latestConfig?.verification?.webhookLog?.mode;
             const context = { activeVersion, activeUrl, currentMode, config };
 
-            for (const item of deliveries) {
-                await this._deliverSingleItem(item, guildId, context);
-                await sleep(RATE_LIMIT_DELAY_MS);
-            }
-        }
+            await deliverBatch(deliveries, 0, context);
+            return processBatches();
+        };
+
+        await processBatches();
 
         // P1-7: Schedule next retry timer if any items remain in RETRY
         this.scheduleNextRetry(guildId);

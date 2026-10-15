@@ -37,45 +37,47 @@ function resolveDbPath(customPath = null) {
     return path.resolve(process.cwd(), "data", "discordbot.sqlite");
 }
 
-function openDatabase(options = {}) {
-    if (activeDb) {
-        return activeDb;
+function openMemoryDatabase(options) {
+    const db = new Database(":memory:", {
+        timeout: options.timeout || 5000,
+        verbose: options.verbose || null
+    });
+    applyPragmas(db, { isNew: true });
+    activeDb = db;
+    currentDbPath = ":memory:";
+    return activeDb;
+}
+
+function validateDatabaseFile(dbPath) {
+    if (!fs.existsSync(dbPath)) return;
+
+    let stats;
+    try {
+        stats = fs.statSync(dbPath);
+    } catch (err) {
+        const error = new Error(`[SQLITE] ❌ Database path cannot be inspected: ${dbPath} (${err.message})`);
+        error.code = "SQLITE_PATH_INACCESSIBLE";
+        throw error;
+    }
+    if (stats.isDirectory()) {
+        const error = new Error(`[SQLITE] ❌ Database path is a directory, not a database file: ${dbPath}`);
+        error.code = "SQLITE_PATH_IS_DIRECTORY";
+        throw error;
     }
 
-    const requestedPath = resolveDbPath(options.path);
-
-    if (requestedPath === ":memory:") {
-        const db = new Database(":memory:", {
-            timeout: options.timeout || 5000,
-            verbose: options.verbose || null
-        });
-        applyPragmas(db, { isNew: true });
-        activeDb = db;
-        currentDbPath = ":memory:";
-        return activeDb;
+    try {
+        fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
+    } catch (err) {
+        const error = new Error(`[SQLITE] ❌ Database file exists but is not readable/writable: ${dbPath} (${err.message})`);
+        error.code = "SQLITE_FILE_NOT_WRITABLE";
+        throw error;
     }
+}
 
+function validateParentDirectory(requestedPath, options) {
     let dbPath = requestedPath;
     let parentDir = path.dirname(dbPath);
 
-    // Fail-fast check 1: Check if dbPath itself is already a directory
-    if (fs.existsSync(dbPath)) {
-        let stats;
-        try {
-            stats = fs.statSync(dbPath);
-        } catch (err) {
-            const error = new Error(`[SQLITE] ❌ Database path cannot be inspected: ${dbPath} (${err.message})`);
-            error.code = "SQLITE_PATH_INACCESSIBLE";
-            throw error;
-        }
-        if (stats.isDirectory()) {
-            const error = new Error(`[SQLITE] ❌ Database path is a directory, not a database file: ${dbPath}`);
-            error.code = "SQLITE_PATH_IS_DIRECTORY";
-            throw error;
-        }
-    }
-
-    // Fail-fast check 2: Check / create parent directory
     try {
         if (!fs.existsSync(parentDir)) {
             fs.mkdirSync(parentDir, { recursive: true });
@@ -97,18 +99,10 @@ function openDatabase(options = {}) {
             throw error;
         }
     }
+    return dbPath;
+}
 
-    // Fail-fast check 3: If database file already exists, verify readability and writability
-    if (fs.existsSync(dbPath)) {
-        try {
-            fs.accessSync(dbPath, fs.constants.R_OK | fs.constants.W_OK);
-        } catch (err) {
-            const error = new Error(`[SQLITE] ❌ Database file exists but is not readable/writable: ${dbPath} (${err.message})`);
-            error.code = "SQLITE_FILE_NOT_WRITABLE";
-            throw error;
-        }
-    }
-
+function assertDatabaseLocks(dbPath) {
     const restoreLock = isRestoreLockActive(dbPath);
     if (restoreLock.active && restoreLock.pid !== process.pid) {
         const error = new Error(`[SQLITE] ❌ Database is currently locked for maintenance/restore by PID ${restoreLock.pid}`);
@@ -116,13 +110,27 @@ function openDatabase(options = {}) {
         throw error;
     }
 
-    // Atomic Process Lock: ensure no other bot process holds lock before opening
     const lockRes = acquireProcessLock(dbPath);
     if (!lockRes.acquired) {
         const error = new Error(`[SQLITE] ❌ Failed to acquire process lock: database is already locked by active process PID ${lockRes.pid} (${dbPath})`);
         error.code = "SQLITE_PROCESS_LOCKED";
         throw error;
     }
+}
+
+function openDatabase(options = {}) {
+    if (activeDb) {
+        return activeDb;
+    }
+
+    const requestedPath = resolveDbPath(options.path);
+    if (requestedPath === ":memory:") {
+        return openMemoryDatabase(options);
+    }
+
+    validateDatabaseFile(requestedPath);
+    const dbPath = validateParentDirectory(requestedPath, options);
+    assertDatabaseLocks(dbPath);
 
     const isNew = !fs.existsSync(dbPath) || fs.statSync(dbPath).size === 0;
 

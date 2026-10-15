@@ -57,7 +57,9 @@ class CacheManager {
                 }
             });
             updateTx();
-        } catch (_) {}
+        } catch (err) {
+            // Best-effort flush; ignore sqlite lock errors on transient touches
+        }
     }
 
     recordTouch(namespace, cacheKey, now = Date.now()) {

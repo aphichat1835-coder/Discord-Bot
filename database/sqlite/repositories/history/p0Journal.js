@@ -9,11 +9,11 @@ const DEFAULT_SPOOL_PATH = path.resolve(process.cwd(), "data", "p0_emergency_jou
 
 function resolveJournalPath() {
     const custom = process.env.SQLITE_P0_JOURNAL_PATH;
-    if (custom && custom.trim()) {
+    if (custom?.trim()) {
         return path.resolve(custom.trim());
     }
     const dbPath = process.env.SQLITE_DB_PATH;
-    if (dbPath && dbPath.trim()) {
+    if (dbPath?.trim()) {
         return path.join(path.dirname(path.resolve(dbPath.trim())), "p0_emergency_journal.jsonl");
     }
     return DEFAULT_SPOOL_PATH;

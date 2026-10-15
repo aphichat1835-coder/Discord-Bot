@@ -32,26 +32,7 @@ function uniqueStrings(values = []) {
     return Array.from(new Set((values || []).map(v => String(v || "").trim()).filter(Boolean)));
 }
 
-/**
- * Evaluates security detections and enforcement rules.
- * Detection always runs and records all findings.
- * Enforcement is only applied if the corresponding rule has enabled: true.
- */
-function evaluateSecurity({
-    profile,
-    ipInfo = {},
-    device = null,
-    connections = [],
-    existingIpLink = null,
-    securityRules = {},
-    policySnapshot = {},
-    trackedUsers = [],
-    deviceSummary = null
-}) {
-    const findings = [];
-    const violations = [];
-
-    // --- 1. Account Age & Profile Detections ---
+function evaluateProfilePolicy({ profile, policySnapshot, connections, findings, violations }) {
     const minAge = Number(policySnapshot.minAccountAgeDays) || 0;
     if (minAge > 0 && profile.accountAgeDays < minAge) {
         findings.push("new_account");
@@ -81,7 +62,7 @@ function evaluateSecurity({
         });
     }
 
-    if (policySnapshot.requireConnections && (!connections || !connections.length)) {
+    if (policySnapshot.requireConnections && !connections?.length) {
         findings.push("no_connections");
         violations.push({
             key: "requireConnections",
@@ -90,8 +71,9 @@ function evaluateSecurity({
             userError: "เซิร์ฟเวอร์นี้ต้องการให้บัญชี Discord ของคุณเชื่อมต่อกับบริการภายนอก (เช่น Steam, YouTube, GitHub) ก่อนยืนยันตัวตน"
         });
     }
+}
 
-    // --- 2. Network Intelligence Detections & Rules ---
+function evaluateNetworkIntelligence({ ipInfo, securityRules, findings, violations }) {
     const isAnonymizer = Boolean(ipInfo.isVPN || ipInfo.isProxy || ipInfo.isTOR);
     const isHosting = Boolean(ipInfo.hosting);
 
@@ -149,68 +131,92 @@ function evaluateSecurity({
             ));
         }
     }
+}
 
-    // --- 3. Duplicate IP & Device Detections & Rules ---
-    if (existingIpLink) {
-        const otherUsers = trackedUsers.filter(u => String(u.userId || "") !== String(profile.id));
-        const projectedUniqueUsers = otherUsers.length + 1;
-        const ipDupRule = securityRules.ipDuplicate;
-        const ipThreshold = Number(ipDupRule?.threshold || 3);
+function evaluateIpDuplicates({ existingIpLink, trackedUsers, profile, securityRules, findings, violations }) {
+    if (!existingIpLink) return;
 
-        if (projectedUniqueUsers > ipThreshold) {
-            findings.push(`ip_duplicate_limit:${projectedUniqueUsers}`);
-            if (ipDupRule?.enabled === true && ipDupRule?.action !== "allow") {
-                violations.push(makeRuleViolation(
-                    "ipDuplicate",
-                    ipDupRule,
-                    `ip_duplicate_limit:${projectedUniqueUsers}`,
-                    "เครือข่ายนี้มีจำนวนบัญชีที่ยืนยันเกินขีดจำกัดที่กำหนดไว้"
-                ));
-            }
-        }
+    const otherUsers = trackedUsers.filter(u => String(u.userId || "") !== String(profile.id));
+    const projectedUniqueUsers = otherUsers.length + 1;
+    const ipDupRule = securityRules.ipDuplicate;
+    const ipThreshold = Number(ipDupRule?.threshold || 3);
 
-        const previouslyBlocked = existingIpLink.lastResult === "blocked" || trackedUsers.some(u =>
-            Number(u.blockedCount || 0) > 0 ||
-            (Array.isArray(u.lastFindings) && u.lastFindings.some(f => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(f)))
-        );
-        if (previouslyBlocked) {
-            findings.push("previously_blocked_ip");
-            const prevBlockRule = securityRules.previouslyBlockedIp;
-            if (prevBlockRule?.enabled === true) {
-                violations.push(makeRuleViolation(
-                    "previouslyBlockedIp",
-                    prevBlockRule,
-                    "previously_blocked_ip",
-                    "เครือข่ายนี้เคยถูกระงับสิทธิ์ในการยืนยันตัวตนมาก่อน"
-                ));
-            }
+    if (projectedUniqueUsers > ipThreshold) {
+        findings.push(`ip_duplicate_limit:${projectedUniqueUsers}`);
+        if (ipDupRule?.enabled === true && ipDupRule?.action !== "allow") {
+            violations.push(makeRuleViolation(
+                "ipDuplicate",
+                ipDupRule,
+                `ip_duplicate_limit:${projectedUniqueUsers}`,
+                "เครือข่ายนี้มีจำนวนบัญชีที่ยืนยันเกินขีดจำกัดที่กำหนดไว้"
+            ));
         }
     }
 
-    // --- Device Duplicate Detection & Enforcement ---
-    if (device?.fingerprintHash) {
-        const deviceUsers = Array.isArray(deviceSummary?.userIds)
-            ? deviceSummary.userIds
-            : [];
-        const otherDeviceUsers = deviceUsers.filter(uid => String(uid || "") !== String(profile?.id || ""));
-        const projectedDeviceUsers = otherDeviceUsers.length + 1;
-        const devRule = securityRules.deviceDuplicate;
-        const devThreshold = Number(devRule?.threshold || 2);
-
-        if (projectedDeviceUsers > devThreshold) {
-            findings.push(`device_duplicate_limit:${projectedDeviceUsers}`);
-            if (devRule?.enabled === true && devRule?.action !== "allow") {
-                violations.push(makeRuleViolation(
-                    "deviceDuplicate",
-                    devRule,
-                    `device_duplicate_limit:${projectedDeviceUsers}`,
-                    "อุปกรณ์นี้มีจำนวนบัญชีที่ยืนยันเกินขีดจำกัดที่กำหนดไว้"
-                ));
-            }
+    const previouslyBlocked = existingIpLink.lastResult === "blocked" || trackedUsers.some(u =>
+        Number(u.blockedCount || 0) > 0 ||
+        (Array.isArray(u.lastFindings) && u.lastFindings.some(f => /blocked|vpn|proxy|tor|spoof|duplicate|hosting/i.test(f)))
+    );
+    if (previouslyBlocked) {
+        findings.push("previously_blocked_ip");
+        const prevBlockRule = securityRules.previouslyBlockedIp;
+        if (prevBlockRule?.enabled === true) {
+            violations.push(makeRuleViolation(
+                "previouslyBlockedIp",
+                prevBlockRule,
+                "previously_blocked_ip",
+                "เครือข่ายนี้เคยถูกระงับสิทธิ์ในการยืนยันตัวตนมาก่อน"
+            ));
         }
     }
+}
 
-    // --- 4. Select Strongest Violation ---
+function evaluateDeviceDuplicates({ device, deviceSummary, profile, securityRules, findings, violations }) {
+    if (!device?.fingerprintHash) return;
+
+    const deviceUsers = Array.isArray(deviceSummary?.userIds) ? deviceSummary.userIds : [];
+    const otherDeviceUsers = deviceUsers.filter(uid => String(uid || "") !== String(profile?.id || ""));
+    const projectedDeviceUsers = otherDeviceUsers.length + 1;
+    const devRule = securityRules.deviceDuplicate;
+    const devThreshold = Number(devRule?.threshold || 2);
+
+    if (projectedDeviceUsers > devThreshold) {
+        findings.push(`device_duplicate_limit:${projectedDeviceUsers}`);
+        if (devRule?.enabled === true && devRule?.action !== "allow") {
+            violations.push(makeRuleViolation(
+                "deviceDuplicate",
+                devRule,
+                `device_duplicate_limit:${projectedDeviceUsers}`,
+                "อุปกรณ์นี้มีจำนวนบัญชีที่ยืนยันเกินขีดจำกัดที่กำหนดไว้"
+            ));
+        }
+    }
+}
+
+/**
+ * Evaluates security detections and enforcement rules.
+ * Detection always runs and records all findings.
+ * Enforcement is only applied if the corresponding rule has enabled: true.
+ */
+function evaluateSecurity({
+    profile,
+    ipInfo = {},
+    device = null,
+    connections = [],
+    existingIpLink = null,
+    securityRules = {},
+    policySnapshot = {},
+    trackedUsers = [],
+    deviceSummary = null
+}) {
+    const findings = [];
+    const violations = [];
+
+    evaluateProfilePolicy({ profile, policySnapshot, connections, findings, violations });
+    evaluateNetworkIntelligence({ ipInfo, securityRules, findings, violations });
+    evaluateIpDuplicates({ existingIpLink, trackedUsers, profile, securityRules, findings, violations });
+    evaluateDeviceDuplicates({ device, deviceSummary, profile, securityRules, findings, violations });
+
     const primaryViolation = strongestRuleViolation(violations);
 
     return {

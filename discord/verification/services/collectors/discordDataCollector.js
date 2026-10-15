@@ -189,9 +189,12 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
     const guildsFetchFailed = rawGuilds?.fetchFailed === true || !Array.isArray(rawGuilds);
 
     const isConnectionsFallback = Boolean(connectionsFetchFailed && Array.isArray(previousConnections) && previousConnections.length > 0);
-    const connections = connectionsFetchFailed
-        ? (isConnectionsFallback ? previousConnections : [])
-        : normalizeConnections(rawConnections);
+    let connections = [];
+    if (!connectionsFetchFailed) {
+        connections = normalizeConnections(rawConnections);
+    } else if (isConnectionsFallback) {
+        connections = previousConnections;
+    }
 
     const fetchMetadata = {
         connectionsFetchFailed,

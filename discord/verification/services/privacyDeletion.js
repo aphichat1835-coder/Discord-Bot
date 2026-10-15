@@ -827,6 +827,38 @@ async function claimPrivacyRecoveryJob(PrivacyDeletionJobModel, job, opKey, clai
     }
 }
 
+async function tryAcquireMongooseSession(mongooseInstance) {
+    if (!mongooseInstance || typeof mongooseInstance.startSession !== "function") return null;
+    try {
+        return await mongooseInstance.startSession();
+    } catch (_err) {
+        // Mongoose standalone connection cannot start sessions
+        return null;
+    }
+}
+
+async function executeTxWithStandaloneFallback(dbSession, runTx) {
+    if (!dbSession) {
+        const res = await runTx(null);
+        return Array.isArray(res?.memberVersions) ? res.memberVersions : [];
+    }
+
+    try {
+        let versions = [];
+        await dbSession.withTransaction(async () => {
+            const res = await runTx(dbSession);
+            if (Array.isArray(res?.memberVersions)) versions = res.memberVersions;
+        });
+        return versions;
+    } catch (txError) {
+        if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
+            const res = await runTx(null);
+            return Array.isArray(res?.memberVersions) ? res.memberVersions : [];
+        }
+        throw txError;
+    }
+}
+
 async function runPrivacyDeletionWithFallback({
     models,
     safeGuildId,
@@ -839,15 +871,7 @@ async function runPrivacyDeletionWithFallback({
     manifest,
     mongooseInstance
 }) {
-    let dbSession = null;
-    if (mongooseInstance && typeof mongooseInstance.startSession === "function") {
-        try {
-            dbSession = await mongooseInstance.startSession();
-        } catch (_err) {
-            // Mongoose standalone connection cannot start sessions
-            dbSession = null;
-        }
-    }
+    const dbSession = await tryAcquireMongooseSession(mongooseInstance);
 
     const runTx = (session = null) => executePrivacyDeletionTransaction({
         models,
@@ -863,25 +887,7 @@ async function runPrivacyDeletionWithFallback({
     });
 
     try {
-        if (!dbSession) {
-            const res = await runTx(null);
-            return Array.isArray(res?.memberVersions) ? res.memberVersions : [];
-        }
-
-        try {
-            let versions = [];
-            await dbSession.withTransaction(async () => {
-                const res = await runTx(dbSession);
-                if (Array.isArray(res?.memberVersions)) versions = res.memberVersions;
-            });
-            return versions;
-        } catch (txError) {
-            if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
-                const res = await runTx(null);
-                return Array.isArray(res?.memberVersions) ? res.memberVersions : [];
-            }
-            throw txError;
-        }
+        return await executeTxWithStandaloneFallback(dbSession, runTx);
     } finally {
         if (dbSession) {
             try { await dbSession.endSession(); } catch (_err) {

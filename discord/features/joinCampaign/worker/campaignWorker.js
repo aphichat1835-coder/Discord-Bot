@@ -68,6 +68,47 @@ function determineFinalStatus({ isStopping, joinedCount, requestedQuota, isGuild
     };
 }
 
+function formatFinalStatusSummary({ finalStatus, joinedCount, alreadyCount, failedCount }) {
+    let statusPrefix = "ดึงสมาชิกเข้าสำเร็จ";
+    if (finalStatus === "SERVER_FULL") {
+        statusPrefix = "หยุดทำงาน (เซิร์ฟเวอร์เต็ม)";
+    } else if (finalStatus === "FAILED") {
+        statusPrefix = "เกิดข้อผิดพลาด";
+    } else if (finalStatus === "PARTIAL") {
+        statusPrefix = "ดึงเข้าสำเร็จบางส่วน";
+    } else if (finalStatus === "INTERRUPTED") {
+        statusPrefix = "หยุดชั่วคราวเพื่อรีสตาร์ต (พร้อมทำต่ออัตโนมัติ)";
+    }
+
+    return `${statusPrefix} **${Number(joinedCount).toLocaleString("th-TH")}** คน` +
+        (alreadyCount > 0 ? ` | อยู่ในเซิร์ฟแล้ว **${Number(alreadyCount).toLocaleString("th-TH")}** คน` : "") +
+        (failedCount > 0 ? ` | ไม่สำเร็จ **${Number(failedCount).toLocaleString("th-TH")}** คน` : "");
+}
+
+async function resolveTargetGuildFreshReadyCount({ client, job, mode, tokenManager, fallbackCount }) {
+    try {
+        let targetGuild = client.guilds.cache.get(String(job.targetGuildId));
+        if (!targetGuild && client.guilds?.fetch) {
+            targetGuild = await client.guilds.fetch(String(job.targetGuildId)).catch(() => null);
+        }
+        if (!targetGuild) return fallbackCount;
+
+        const liveMemberIds = await getLiveTargetMemberIds(targetGuild);
+        return await countEligibleCandidates({
+            mode,
+            baseConfig: {
+                sourceGuildId: job.sourceGuildId,
+                targetGuildId: job.targetGuildId
+            },
+            tokenManager,
+            targetMemberIds: liveMemberIds
+        });
+    } catch (_err) {
+        // Ignored: If member check failed, retain previous count to avoid presenting inflated numbers
+        return fallbackCount;
+    }
+}
+
 class CampaignWorker {
     constructor() {
         this._activeWorkerPromise = null;
@@ -361,7 +402,9 @@ class CampaignWorker {
                         return;
                     }
                     repository.renewItemLease(job.id, item.userId, 60000);
-                } catch (_) {}
+                } catch (err) {
+                    // Ignore lease renewal heartbeat error on transient lock
+                }
             }, 15000);
         }
 
@@ -869,89 +912,60 @@ class CampaignWorker {
         tokenManager
     }) {
         try {
-            let statusPrefix = "ดึงสมาชิกเข้าสำเร็จ";
-            if (finalStatus === "SERVER_FULL") {
-                statusPrefix = "หยุดทำงาน (เซิร์ฟเวอร์เต็ม)";
-            } else if (finalStatus === "FAILED") {
-                statusPrefix = "เกิดข้อผิดพลาด";
-            } else if (finalStatus === "PARTIAL") {
-                statusPrefix = "ดึงเข้าสำเร็จบางส่วน";
-            } else if (finalStatus === "INTERRUPTED") {
-                statusPrefix = "หยุดชั่วคราวเพื่อรีสตาร์ต (พร้อมทำต่ออัตโนมัติ)";
-            }
-
-            const summaryText = `${statusPrefix} **${Number(joinedCount).toLocaleString("th-TH")}** คน` +
-                (alreadyCount > 0 ? ` | อยู่ในเซิร์ฟแล้ว **${Number(alreadyCount).toLocaleString("th-TH")}** คน` : "") +
-                (failedCount > 0 ? ` | ไม่สำเร็จ **${Number(failedCount).toLocaleString("th-TH")}** คน` : "");
-
+            const summaryText = formatFinalStatusSummary({ finalStatus, joinedCount, alreadyCount, failedCount });
             const isInterrupted = finalStatus === "INTERRUPTED";
             const targetChannelId = job.startedByChannelId || "";
             let panel = (targetChannelId && repository.findPanelByChannelId) ? repository.findPanelByChannelId(targetChannelId) : null;
             if (!panel && repository.findPanelByActiveJobId) {
                 panel = repository.findPanelByActiveJobId(job.id);
             }
+            if (!panel) return;
 
-            let freshReadyCount = null;
-            try {
-                let targetGuild = client.guilds.cache.get(String(job.targetGuildId));
-                if (!targetGuild && client.guilds?.fetch) {
-                    targetGuild = await client.guilds.fetch(String(job.targetGuildId)).catch(() => null);
-                }
-                if (targetGuild) {
-                    const liveMemberIds = await getLiveTargetMemberIds(targetGuild);
-                    freshReadyCount = await countEligibleCandidates({
+            const freshReadyCount = await resolveTargetGuildFreshReadyCount({
+                client,
+                job,
+                mode,
+                tokenManager,
+                fallbackCount: panel?.lastReadyCount ?? null
+            });
+
+            const nextActiveJobId = isInterrupted ? job.id : null;
+            const nextLiveJob = isInterrupted ? {
+                status: "INTERRUPTED",
+                joinedCount,
+                requestedAmount: job.requestedAmount || 0,
+                currentConcurrency: job.currentConcurrency || 8
+            } : null;
+
+            repository.savePanel({
+                ...panel,
+                activeJobId: nextActiveJobId,
+                lastReadyCount: freshReadyCount,
+                lastStatusSummary: summaryText
+            });
+
+            const channel = await client.channels.fetch(panel.channelId).catch(() => null);
+            if (channel) {
+                const message = await channel.messages.fetch(panel.messageId).catch(() => null);
+                if (message) {
+                    const payload = buildPanelPayload({
                         mode,
-                        baseConfig: {
-                            sourceGuildId: job.sourceGuildId,
-                            targetGuildId: job.targetGuildId
+                        panelState: {
+                            ...panel,
+                            activeJobId: nextActiveJobId,
+                            lastReadyCount: freshReadyCount,
+                            lastStatusSummary: summaryText
                         },
-                        tokenManager,
-                        targetMemberIds: liveMemberIds
+                        readyCount: freshReadyCount,
+                        liveJob: nextLiveJob,
+                        targetGuildName
                     });
-                } else {
-                    freshReadyCount = panel?.lastReadyCount ?? null;
-                }
-            } catch (_err) {
-                // Ignored: If member check failed, retain previous count to avoid presenting inflated numbers
-                freshReadyCount = panel?.lastReadyCount ?? null;
-            }
-            if (panel) {
-                const nextActiveJobId = isInterrupted ? job.id : null;
-                const nextLiveJob = isInterrupted ? {
-                    status: "INTERRUPTED",
-                    joinedCount,
-                    requestedAmount: job.requestedAmount || 0,
-                    currentConcurrency: job.currentConcurrency || 8
-                } : null;
-
-                repository.savePanel({
-                    ...panel,
-                    activeJobId: nextActiveJobId,
-                    lastReadyCount: freshReadyCount,
-                    lastStatusSummary: summaryText
-                });
-
-                const channel = await client.channels.fetch(panel.channelId).catch(() => null);
-                if (channel) {
-                    const message = await channel.messages.fetch(panel.messageId).catch(() => null);
-                    if (message) {
-                        const payload = buildPanelPayload({
-                            mode,
-                            panelState: {
-                                ...panel,
-                                activeJobId: nextActiveJobId,
-                                lastReadyCount: freshReadyCount,
-                                lastStatusSummary: summaryText
-                            },
-                            readyCount: freshReadyCount,
-                            liveJob: nextLiveJob,
-                            targetGuildName
-                        });
-                        await message.edit(payload).catch(() => {});
-                    }
+                    await message.edit(payload).catch(() => {});
                 }
             }
-        } catch (_) {}
+        } catch (err) {
+            // Ignore failure during finish panel update
+        }
     }
 }
 

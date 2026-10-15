@@ -24,7 +24,9 @@ function dispatchRecoveryAlert({ code, title, description, details = {} }) {
                 }))
             });
         }
-    } catch (_) {}
+    } catch (err) {
+        // Silently ignore telemetry failure during recovery alert dispatch
+    }
 }
 
 async function editRecoveryFailureMessage({ client, panel, updatedPanel, targetGuildName }) {
@@ -46,7 +48,9 @@ async function editRecoveryFailureMessage({ client, panel, updatedPanel, targetG
             targetGuildName: targetGuildName || panel.targetGuildId || "เซิร์ฟเวอร์เป้าหมาย"
         });
         await message.edit(payload).catch(() => {});
-    } catch (_) {}
+    } catch (err) {
+        // Ignore failure when editing recovery message if Discord API is unreachable
+    }
 }
 
 async function updatePanelRecoveryFailure({ client, repository, jobId, channelId, errorMsg, targetGuildName }) {
@@ -72,19 +76,10 @@ async function updatePanelRecoveryFailure({ client, repository, jobId, channelId
         }
 
         await editRecoveryFailureMessage({ client, panel, updatedPanel, targetGuildName });
-    } catch (_) {}
+    } catch (err) {
+        // Ignore failure when updating panel state for recovery failure
+    }
 }
-
-let activeRecoveryPromise = null;
-
-function runStartupRecovery({ client, repository, tokenManager, discord }) {
-    if (!repository || typeof repository.findActiveRunningJob !== "function") {
-        return Promise.resolve({ recovered: false, reason: "no_repository" });
-    }
-
-    if (activeRecoveryPromise) {
-        return activeRecoveryPromise;
-    }
 
 async function handleStagedInterruptedJob({ client, repository, interruptedJob }) {
     const expireReason = "staged_job_expired";
@@ -104,6 +99,17 @@ async function handleStagedInterruptedJob({ client, repository, interruptedJob }
     });
     return { recovered: false, reason: "staged_job_expired", jobId: interruptedJob.id };
 }
+
+let activeRecoveryPromise = null;
+
+function runStartupRecovery({ client, repository, tokenManager, discord }) {
+    if (!repository || typeof repository.findActiveRunningJob !== "function") {
+        return Promise.resolve({ recovered: false, reason: "no_repository" });
+    }
+
+    if (activeRecoveryPromise) {
+        return activeRecoveryPromise;
+    }
 
 function claimInterruptedJobExecution({ repository, interruptedJob }) {
     if (interruptedJob.status === "RUNNING") {
@@ -225,6 +231,74 @@ async function resolveRecoveryTargetGuildMembers({ client, repository, interrupt
     }
 }
 
+function reconcileJobCountersAndPanel(repository, interruptedJob) {
+    if (typeof repository.reconcileJobCounters === "function") {
+        const reconciled = repository.reconcileJobCounters(interruptedJob.id);
+        if (reconciled) {
+            interruptedJob.joinedCount = reconciled.joinedCount;
+            interruptedJob.alreadyCount = reconciled.alreadyCount;
+            interruptedJob.failedCount = reconciled.failedCount;
+            interruptedJob.processedCount = reconciled.processedCount;
+        }
+    }
+
+    if (!interruptedJob.startedByChannelId && typeof repository.findPanelByActiveJobId === "function") {
+        const associatedPanel = repository.findPanelByActiveJobId(interruptedJob.id);
+        if (associatedPanel?.channelId) {
+            interruptedJob.startedByChannelId = associatedPanel.channelId;
+            try {
+                repository.updateJob(interruptedJob.id, { startedByChannelId: associatedPanel.channelId });
+            } catch (err) {
+                // Ignore failure saving reconnected panel channel ID
+            }
+        }
+    }
+}
+
+async function resumeInterruptedWorker({ client, repository, interruptedJob, targetMemberIds, tokenManager, discord }) {
+    try {
+        const startResult = await campaignWorker.startWorker({
+            job: interruptedJob,
+            client,
+            repository,
+            targetMemberIds,
+            ...(tokenManager ? { tokenManager } : {}),
+            ...(discord ? { discord } : {})
+        });
+        const workerPromise = startResult?.workerPromise || null;
+        if (!workerPromise) {
+            throw new Error("Worker promise was null or undefined");
+        }
+        return { recovered: true, jobId: interruptedJob.id, workerPromise };
+    } catch (err) {
+        console.error(`[JoinCampaign] ❌ ไม่สามารถกู้คืนงานเดิมได้:`, err.message);
+        const failMsg = `กู้คืนงานเดิมไม่สำเร็จ: ${sanitizeUserFacingError(err.message)}`;
+        repository.updateJob(interruptedJob.id, {
+            status: "FAILED",
+            lastError: failMsg,
+            completedAt: Date.now()
+        });
+        await updatePanelRecoveryFailure({
+            client,
+            repository,
+            jobId: interruptedJob.id,
+            channelId: interruptedJob.startedByChannelId,
+            errorMsg: failMsg,
+            targetGuildName: interruptedJob.targetGuildName
+        });
+        dispatchRecoveryAlert({
+            code: "join_campaign.recovery_worker_start_failed",
+            title: "Join Campaign: ไม่สามารถเริ่ม Worker กู้คืนได้",
+            description: err.message,
+            details: {
+                campaignId: interruptedJob.id,
+                targetGuildId: interruptedJob.targetGuildId
+            }
+        });
+        return { recovered: false, error: failMsg, jobId: interruptedJob.id };
+    }
+}
+
     activeRecoveryPromise = (async () => {
         try {
             const interruptedJob = repository.findActiveRunningJob();
@@ -247,27 +321,8 @@ async function resolveRecoveryTargetGuildMembers({ client, repository, interrupt
             const limitCheck = await checkRecoveryLimitExceeded({ client, repository, interruptedJob, currentRecoveryCount });
             if (limitCheck) return limitCheck;
 
-            // Reconcile job counters with actual item status records to guarantee crash-consistency (P1 #1)
-            if (typeof repository.reconcileJobCounters === "function") {
-                const reconciled = repository.reconcileJobCounters(interruptedJob.id);
-                if (reconciled) {
-                    interruptedJob.joinedCount = reconciled.joinedCount;
-                    interruptedJob.alreadyCount = reconciled.alreadyCount;
-                    interruptedJob.failedCount = reconciled.failedCount;
-                    interruptedJob.processedCount = reconciled.processedCount;
-                }
-            }
-
-            // Reconnect panel channel ID if not set directly on job (P1 #3)
-            if (!interruptedJob.startedByChannelId && typeof repository.findPanelByActiveJobId === "function") {
-                const associatedPanel = repository.findPanelByActiveJobId(interruptedJob.id);
-                if (associatedPanel?.channelId) {
-                    interruptedJob.startedByChannelId = associatedPanel.channelId;
-                    try {
-                        repository.updateJob(interruptedJob.id, { startedByChannelId: associatedPanel.channelId });
-                    } catch (_) {}
-                }
-            }
+            // Reconcile job counters and rebind panel
+            reconcileJobCountersAndPanel(repository, interruptedJob);
 
             console.log(`[JoinCampaign] 🔄 ตรวจพบงานที่ค้างอยู่จากการรีสตาร์ต: ${interruptedJob.id} (สำเร็จแล้ว ${interruptedJob.joinedCount}/${interruptedJob.requestedAmount})`);
             console.log(`[JoinCampaign] ℹ️ งานเดิมถูกกู้คืนแล้ว (Webhook URL ไม่ได้ถูกบันทึกลงฐานข้อมูลตามนโยบายความปลอดภัย จึงไม่สามารถส่งความคืบหน้าผ่าน Webhook เดิมได้)`);
@@ -293,50 +348,15 @@ async function resolveRecoveryTargetGuildMembers({ client, repository, interrupt
             }
             const targetMemberIds = targetMembersResult.targetMemberIds;
 
-        // 4. Auto-resume campaign worker asynchronously
-        let workerPromise = null;
-        try {
-            const startResult = await campaignWorker.startWorker({
-                job: interruptedJob,
+            // 4. Auto-resume campaign worker asynchronously
+            return await resumeInterruptedWorker({
                 client,
                 repository,
+                interruptedJob,
                 targetMemberIds,
-                ...(tokenManager ? { tokenManager } : {}),
-                ...(discord ? { discord } : {})
+                tokenManager,
+                discord
             });
-            workerPromise = startResult?.workerPromise || null;
-            if (!workerPromise) {
-                throw new Error("Worker promise was null or undefined");
-            }
-        } catch (err) {
-            console.error(`[JoinCampaign] ❌ ไม่สามารถกู้คืนงานเดิมได้:`, err.message);
-            const failMsg = `กู้คืนงานเดิมไม่สำเร็จ: ${sanitizeUserFacingError(err.message)}`;
-            repository.updateJob(interruptedJob.id, {
-                status: "FAILED",
-                lastError: failMsg,
-                completedAt: Date.now()
-            });
-            await updatePanelRecoveryFailure({
-                client,
-                repository,
-                jobId: interruptedJob.id,
-                channelId: interruptedJob.startedByChannelId,
-                errorMsg: failMsg,
-                targetGuildName: interruptedJob.targetGuildName
-            });
-            dispatchRecoveryAlert({
-                code: "join_campaign.recovery_worker_start_failed",
-                title: "Join Campaign: ไม่สามารถเริ่ม Worker กู้คืนได้",
-                description: err.message,
-                details: {
-                    campaignId: interruptedJob.id,
-                    targetGuildId: interruptedJob.targetGuildId
-                }
-            });
-            return { recovered: false, error: failMsg, jobId: interruptedJob.id };
-        }
-
-        return { recovered: true, jobId: interruptedJob.id, workerPromise };
         } catch (err) {
             console.error(`[JoinCampaign] ❌ เกิดข้อผิดพลาดในการตรวจสอบงานค้าง:`, err.message);
             const userError = sanitizeUserFacingError(err.message);

@@ -55,6 +55,15 @@ function notifyP0SpoolFailed(repoName, reason, details = {}) {
     if (!canSendAlert(alertKey)) return;
     recordAlertSent(alertKey);
 
+    let formattedDetails = "";
+    if (details instanceof Error) {
+        formattedDetails = details.stack || details.message;
+    } else if (details && typeof details === "object") {
+        formattedDetails = JSON.stringify(details);
+    } else {
+        formattedDetails = String(details ?? "");
+    }
+
     try {
         webhooks.sendWebhookEvent({
             target: "ALERT",
@@ -66,11 +75,13 @@ function notifyP0SpoolFailed(repoName, reason, details = {}) {
             context: {
                 "Repository": repoName,
                 "สาเหตุ": String(reason),
-                "รายละเอียด": typeof details === "object" ? JSON.stringify(details) : String(details),
+                "รายละเอียด": formattedDetails,
                 "เวลาที่เกิด": new Date().toISOString()
             }
         }).catch(() => {});
-    } catch (_) {}
+    } catch (err) {
+        // Silently ignore p0 spool alert dispatch errors
+    }
 }
 
 module.exports = {

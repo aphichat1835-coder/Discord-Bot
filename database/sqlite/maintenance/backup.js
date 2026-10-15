@@ -56,7 +56,7 @@ function listBackups(customDir = null, options = {}) {
                 filename: f,
                 path: p,
                 sizeBytes: stat.size,
-                sizeMb: parseFloat((stat.size / (1024 * 1024)).toFixed(2)),
+                sizeMb: Number.parseFloat((stat.size / (1024 * 1024)).toFixed(2)),
                 createdAt: new Date(stat.mtimeMs).toISOString(),
                 mtime: stat.mtimeMs
             };

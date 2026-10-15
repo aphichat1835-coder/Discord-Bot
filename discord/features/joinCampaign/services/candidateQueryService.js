@@ -38,10 +38,12 @@ async function* streamCandidates({
         if (typeof onPage === "function") {
             try {
                 const pagePayload = (page && typeof page === "object")
-                    ? Object.assign({}, page, { nextCursor, candidates, page })
+                    ? { ...page, nextCursor, candidates, page }
                     : { nextCursor, candidates, page };
                 onPage(pagePayload);
-            } catch (_) {}
+            } catch (err) {
+                // Ignore onPage telemetry callback errors
+            }
         }
 
         for (const candidate of candidates) {

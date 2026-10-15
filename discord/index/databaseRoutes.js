@@ -84,7 +84,7 @@ function registerDatabaseRoutes({ app, express, checkAuth }) {
         if (!checkAuth(req, res)) return;
         try {
             const { name } = req.params;
-            const limit = parseInt(req.query.limit, 10) || 5;
+            const limit = Number.parseInt(req.query.limit, 10) || 5;
             const data = await databaseService.getMongoCollectionSample(name, limit);
             res.json({ success: true, ...data });
         } catch (err) {

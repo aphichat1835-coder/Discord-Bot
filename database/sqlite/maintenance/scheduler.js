@@ -562,11 +562,15 @@ function hasRunningTasks() {
 }
 
 async function drainSchedulerTasks(timeoutMs = null) {
-    const configuredTimeout = parseInt(process.env.SQLITE_SHUTDOWN_DRAIN_TIMEOUT_MS, 10);
+    const configuredTimeout = Number.parseInt(process.env.SQLITE_SHUTDOWN_DRAIN_TIMEOUT_MS, 10);
     const defaultTimeout = hasCriticalRunningTasks() ? 60000 : 30000;
+    let fallbackTimeout = defaultTimeout;
+    if (!Number.isNaN(configuredTimeout) && configuredTimeout > 0) {
+        fallbackTimeout = configuredTimeout;
+    }
     const effectiveTimeoutMs = (typeof timeoutMs === "number" && timeoutMs > 0)
         ? timeoutMs
-        : (!isNaN(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : defaultTimeout);
+        : fallbackTimeout;
 
     if (hasCriticalRunningTasks()) {
         console.log(`[DB_SCHEDULER] ⏳ Waiting for critical database backup to finish before shutdown (timeout: ${effectiveTimeoutMs}ms)...`);

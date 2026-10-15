@@ -302,7 +302,9 @@ class JoinCampaignService {
                             targetGuildName: preflight.targetGuildName,
                             readyCount: freshReadyCount
                         });
-                    } catch (_) {}
+                    } catch (panelErr) {
+                        // Ignore secondary failure when updating panel failure state
+                    }
                 });
             }
         } catch (err) {

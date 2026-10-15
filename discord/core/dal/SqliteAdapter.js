@@ -45,7 +45,7 @@ function applyDocUpdate(existing, updateData) {
                 curr = curr[parts[i]];
             }
             if (curr && typeof curr === 'object') {
-                delete curr[parts[parts.length - 1]];
+                delete curr[parts.at(-1)];
             }
         }
     }
@@ -111,7 +111,7 @@ class SqliteAdapter extends BaseRepository {
     }
 
     parseRow(row) {
-        if (!row || !row.data) return null;
+        if (!row?.data) return null;
         try {
             return JSON.parse(row.data);
         } catch {

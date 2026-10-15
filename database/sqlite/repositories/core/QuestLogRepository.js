@@ -103,7 +103,7 @@ class QuestLogRepository {
     }
 
     findRecent(limit = 50) {
-        const boundedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+        const boundedLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
         const rows = this.db.prepare(`
             SELECT * FROM quest_logs
             ORDER BY created_at DESC

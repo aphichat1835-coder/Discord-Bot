@@ -929,7 +929,9 @@ function attachTelemetryListeners(coordinator) {
                     }
                 });
             }
-        } catch (_) {}
+        } catch (err) {
+            // Silently ignore telemetry failure during rate limit recording
+        }
     });
 
     coordinator.on("token:quarantined", ({ tokenHash, reason, state }) => {
@@ -943,7 +945,9 @@ function attachTelemetryListeners(coordinator) {
                     metadata: { reason: sanitizeLogText(reason || "quarantined"), state: state?.tokenType || "unknown" }
                 });
             }
-        } catch (_) {}
+        } catch (err) {
+            // Silently ignore telemetry failure during quarantine recording
+        }
     });
 
     coordinator.on("token:released", ({ tokenHash }) => {
@@ -956,7 +960,9 @@ function attachTelemetryListeners(coordinator) {
                     metadata: {}
                 });
             }
-        } catch (_) {}
+        } catch (err) {
+            // Silently ignore telemetry failure during release recording
+        }
     });
 
     coordinator.on("token:error", ({ tokenHash, subsystem, error }) => {
@@ -969,7 +975,9 @@ function attachTelemetryListeners(coordinator) {
                     metadata: { subsystem, error: safeError(error) }
                 });
             }
-        } catch (_) {}
+        } catch (err) {
+            // Silently ignore telemetry failure during token error recording
+        }
     });
 }
 

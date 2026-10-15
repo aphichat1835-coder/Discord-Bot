@@ -266,7 +266,7 @@ async function saveOAuthUserSafe({
             let finalGuildSummary = guildSummary || null;
             if (finalGuildSummary?.status === "failed" && !finalGuildSummary.fetchedAt) {
                 const existingDoc = await OAuthUser.findOne({ "discord.userId": profileUserId }).select("guildSummary").lean().catch(() => null);
-                if (existingDoc?.guildSummary && existingDoc.guildSummary.status === "success") {
+                if (existingDoc?.guildSummary?.status === "success") {
                     finalGuildSummary = {
                         ...finalGuildSummary,
                         totalCount: existingDoc.guildSummary.totalCount,

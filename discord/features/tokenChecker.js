@@ -376,9 +376,10 @@ async function checkBatchTokens(tokens = [], optionsOrDelay = {}) {
         }
     }
 
-    // Process tokens in parallel batches of size 5 (or configured batchSize)
-    for (let i = 0; i < list.length; i += batchSize) {
-        const chunk = list.slice(i, i + batchSize);
+    // Process tokens in batches of size 5 (or configured batchSize) using recursive async chaining
+    const processBatch = async (startIndex) => {
+        if (startIndex >= list.length) return;
+        const chunk = list.slice(startIndex, startIndex + batchSize);
         const chunkPromises = chunk.map(token => checkSingleToken(token, { priority: 'BACKGROUND' }));
         const chunkResults = await Promise.all(chunkPromises);
 
@@ -397,11 +398,14 @@ async function checkBatchTokens(tokens = [], optionsOrDelay = {}) {
             }
         }
 
-        // Inter-batch smooth delay
-        if (i + batchSize < list.length && delayMs > 0) {
+        if (startIndex + batchSize < list.length && delayMs > 0) {
             await new Promise(resolve => setTimeout(resolve, delayMs));
         }
-    }
+
+        return processBatch(startIndex + batchSize);
+    };
+
+    await processBatch(0);
 
     return {
         results,
@@ -504,10 +508,14 @@ function buildSingleTokenEmbed(result) {
         ? `${boostEmoji} มีสิทธิ์ Server Boost (พร้อมใช้งาน 2 บูสต์)`
         : `${errorEmoji} ไม่มีสิทธิ์ Server Boost`;
 
+    const emailStatus = result.emailVerified ? `${successEmoji} ยืนยันแล้ว` : `${errorEmoji} ยังไม่ยืนยัน`;
+    const phoneStatus = result.phoneVerified ? `${successEmoji} ผูกแล้ว` : `${errorEmoji} ยังไม่ผูก`;
+    const mfaStatus = result.mfaEnabled ? `${lockEmoji} เปิดใช้งานแล้ว` : `${errorEmoji} ปิดอยู่`;
+
     const securityLines = [
-        `• ยืนยันอีเมล: ${result.emailVerified ? `${successEmoji} ยืนยันแล้ว` : `${errorEmoji} ยังไม่ยืนยัน`}`,
-        `• ผูกเบอร์โทรศัพท์: ${result.phoneVerified ? `${successEmoji} ผูกแล้ว` : `${errorEmoji} ยังไม่ผูก`}`,
-        `• ระบบ 2FA: ${result.mfaEnabled ? `${lockEmoji} เปิดใช้งานแล้ว` : `${errorEmoji} ปิดอยู่`}`
+        `• ยืนยันอีเมล: ${emailStatus}`,
+        `• ผูกเบอร์โทรศัพท์: ${phoneStatus}`,
+        `• ระบบ 2FA: ${mfaStatus}`
     ].join('\n');
 
     return new MessageEmbed()

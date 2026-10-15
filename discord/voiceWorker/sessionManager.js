@@ -944,7 +944,9 @@ async function createSession(token, serverId, voiceId, serverName, ownerId, owne
                 statusLabel: "active"
             });
         }
-    } catch (_) {}
+    } catch (err) {
+        // Ignored: Best-effort upsert of active session runtime state
+    }
 
     try {
         const db = require("../../database");

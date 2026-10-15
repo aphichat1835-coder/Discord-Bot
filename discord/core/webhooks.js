@@ -401,8 +401,8 @@ function buildWebhookEventTitle(event, presentation, category, target = "LOG") {
 
     // If title redundantly begins with the category name (e.g. "GATEWAY SHARD ERROR" in category "GATEWAY"),
     // strip the redundant category prefix to yield e.g. "SHARD ERROR".
-    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-    const redundantCategoryRegex = new RegExp(`^${escapedCat}\\s+(?=\\S)`, "i");
+    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const redundantCategoryRegex = new RegExp(String.raw`^${escapedCat}\s+(?=\S)`, "i");
     if (redundantCategoryRegex.test(title)) {
         title = title.replace(redundantCategoryRegex, "").trim();
     }
@@ -625,7 +625,7 @@ function buildWebhookEventPayload(event = {}) {
     const severity = normalizeEventToken(event.severity, WEBHOOK_SEVERITIES.INFO);
     const presentation = EVENT_PRESENTATION[severity] || EVENT_PRESENTATION.INFO;
     const categoryToken = normalizeEventToken(event.category, "SYSTEM");
-    const displayCategory = EVENT_CATEGORY_LABELS[categoryToken] || categoryToken.replace(/_/g, " ");
+    const displayCategory = EVENT_CATEGORY_LABELS[categoryToken] || categoryToken.replaceAll("_", " ");
     const target = resolveWebhookEventTarget({ ...event, severity });
     const state = event.state ? normalizeEventToken(event.state, "UPDATE") : null;
     const fields = buildEventFields(event, state, target);

@@ -131,7 +131,7 @@ function reconcileUserVersion(db) {
     if (!db) return 0;
     try {
         const row = db.prepare("SELECT MAX(version) as max_version FROM schema_migrations").get();
-        const maxVersion = row && row.max_version ? Number(row.max_version) : 0;
+        const maxVersion = row?.max_version ? Number(row.max_version) : 0;
         const currentPragma = Number(db.pragma("user_version", { simple: true }) || 0);
         if (maxVersion > currentPragma) {
             db.pragma(`user_version = ${maxVersion}`);

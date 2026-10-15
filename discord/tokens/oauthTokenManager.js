@@ -800,6 +800,37 @@ function recordRefreshException(summary, tokenField, doc, error) {
     });
 }
 
+async function refreshSingleOAuthDoc(doc, { model, tokenField, redirectUri, now, config, discordApiInstance, summary }) {
+    const lockUserId = doc.discord?.userId || String(doc._id);
+    const lockKey = `${lockUserId}:${tokenField}`;
+    try {
+        const outcome = await withTokenRefreshLock(lockKey, async () => {
+            const fresh = await readFreshOAuthDocument(model, doc, tokenField);
+            if (!fresh) return conflictOutcome(tokenField, lockUserId, "document_missing");
+
+            const userId = fresh.discord?.userId || lockUserId;
+            const tokenState = fresh[tokenField] || {};
+            if (!refreshStateIsDue(tokenState, { now, marginMs: config.marginMs, failMax: config.failMax })) {
+                return conflictOutcome(tokenField, userId, "not_due");
+            }
+
+            return performTokenRefreshUnderLock({
+                doc: fresh,
+                model,
+                discord: discordApiInstance,
+                tokenField,
+                now,
+                failMax: config.failMax,
+                redirectUri,
+                force: true
+            });
+        });
+        applyRefreshOutcome(summary, outcome);
+    } catch (error) {
+        recordRefreshException(summary, tokenField, doc, error);
+    }
+}
+
 async function refreshTokenField({
     model,
     tokenField,
@@ -825,38 +856,21 @@ async function refreshTokenField({
         errors: []
     };
 
-    for (const doc of docs) {
-        const lockUserId = doc.discord?.userId || String(doc._id);
-        const lockKey = `${lockUserId}:${tokenField}`;
-        try {
-            const outcome = await withTokenRefreshLock(lockKey, async () => {
-                const fresh = await readFreshOAuthDocument(model, doc, tokenField);
-                if (!fresh) return conflictOutcome(tokenField, lockUserId, "document_missing");
+    const processDocs = async (index) => {
+        if (index >= docs.length) return summary;
+        await refreshSingleOAuthDoc(docs[index], {
+            model,
+            tokenField,
+            redirectUri,
+            now,
+            config,
+            discordApiInstance,
+            summary
+        });
+        return processDocs(index + 1);
+    };
 
-                const userId = fresh.discord?.userId || lockUserId;
-                const tokenState = fresh[tokenField] || {};
-                if (!refreshStateIsDue(tokenState, { now, marginMs: config.marginMs, failMax: config.failMax })) {
-                    return conflictOutcome(tokenField, userId, "not_due");
-                }
-
-                return performTokenRefreshUnderLock({
-                    doc: fresh,
-                    model,
-                    discord: discordApiInstance,
-                    tokenField,
-                    now,
-                    failMax: config.failMax,
-                    redirectUri,
-                    force: true
-                });
-            });
-            applyRefreshOutcome(summary, outcome);
-        } catch (error) {
-            recordRefreshException(summary, tokenField, doc, error);
-        }
-    }
-
-    return summary;
+    return await processDocs(0);
 }
 
 async function refreshDueTokens(options = {}) {
