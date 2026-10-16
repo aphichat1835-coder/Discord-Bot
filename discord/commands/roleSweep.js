@@ -321,41 +321,56 @@ function buildPreviewEmbed(guild, stats, exceptRoleIds = [], actorId = null, tar
 }
 
 /** Builds the rich embed summary with server icon thumbnail and sweep statistics. */
-function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAssignments, cancelled, exceptRoleIds = [], actorId = null, targetRoleId = null }) {
-    const isSuccess = !cancelled && failedAssignments === 0;
+function _resolveSweepState({ cancelled, isSuccess, removedAssignments, failedAssignments }) {
     const warningEmoji = config.emojis?.warning || "⚠️";
     const successEmoji = config.emojis?.success || "✅";
     const errorEmoji = config.emojis?.error || "❌";
-    const membersEmoji = config.emojis?.members ? `${config.emojis.members} ` : "";
-
-    let color = config.system?.themeColors?.error || 0xED4245;
-    let title = `${warningEmoji} ถอดยศได้บางส่วน`;
-    let statusText = "";
 
     if (cancelled) {
-        color = config.system?.themeColors?.warning || 0xFEE75C;
-        title = `${warningEmoji} ยกเลิกการถอดยศแล้ว`;
-        statusText = "> หยุดการถอดยศแล้ว ไม่มีการเปลี่ยนแปลงยศเพิ่มเติม";
-    } else if (isSuccess) {
-        color = config.system?.themeColors?.success || 0x57F287;
-        title = `${successEmoji} ถอดยศเรียบร้อย`;
-    } else if (removedAssignments === 0 && failedAssignments > 0) {
-        color = config.system?.themeColors?.error || 0xED4245;
-        title = `${errorEmoji} ถอดยศไม่สำเร็จ`;
-        statusText = "> ถอดยศไม่สำเร็จ";
-    } else {
-        statusText = "> ถอดยศได้บางส่วน มีบางรายการไม่สำเร็จ";
+        return {
+            color: config.system?.themeColors?.warning || 0xFEE75C,
+            title: `${warningEmoji} ยกเลิกการถอดยศแล้ว`,
+            statusText: "> หยุดการถอดยศแล้ว ไม่มีการเปลี่ยนแปลงยศเพิ่มเติม"
+        };
     }
+    if (isSuccess) {
+        return {
+            color: config.system?.themeColors?.success || 0x57F287,
+            title: `${successEmoji} ถอดยศเรียบร้อย`,
+            statusText: ""
+        };
+    }
+    if (removedAssignments === 0 && failedAssignments > 0) {
+        return {
+            color: config.system?.themeColors?.error || 0xED4245,
+            title: `${errorEmoji} ถอดยศไม่สำเร็จ`,
+            statusText: "> ถอดยศไม่สำเร็จ"
+        };
+    }
+    return {
+        color: config.system?.themeColors?.error || 0xED4245,
+        title: `${warningEmoji} ถอดยศได้บางส่วน`,
+        statusText: "> ถอดยศได้บางส่วน มีบางรายการไม่สำเร็จ"
+    };
+}
 
+function _resolveSweepDescription(statusText, targetRoleId, exceptRoleIds) {
     let targetDesc = "";
     if (targetRoleId) {
         targetDesc = `**ยศเป้าหมายที่ถอด:** <@&${targetRoleId}>`;
     } else if (exceptRoleIds.length > 0) {
         targetDesc = `**ยศที่ได้รับการยกเว้นจากการถอดยศ:**\n${formatExceptRoles(exceptRoleIds)}`;
     }
-
     const descParts = [statusText, targetDesc].filter(Boolean);
-    const description = descParts.length > 0 ? descParts.join("\n\n") : "> ถอดยศเสร็จสิ้นเรียบร้อย";
+    return descParts.length > 0 ? descParts.join("\n\n") : "> ถอดยศเสร็จสิ้นเรียบร้อย";
+}
+
+/** Builds the rich embed summary with server icon thumbnail and sweep statistics. */
+function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAssignments, cancelled, exceptRoleIds = [], actorId = null, targetRoleId = null }) {
+    const isSuccess = !cancelled && failedAssignments === 0;
+    const membersEmoji = config.emojis?.members ? `${config.emojis.members} ` : "";
+    const { color, title, statusText } = _resolveSweepState({ cancelled, isSuccess, removedAssignments, failedAssignments });
+    const description = _resolveSweepDescription(statusText, targetRoleId, exceptRoleIds);
 
     const embed = new EmbedBuilder()
         .setColor(color)

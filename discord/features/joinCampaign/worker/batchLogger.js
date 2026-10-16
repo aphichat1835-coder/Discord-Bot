@@ -109,38 +109,60 @@ async function sendBatchLog({
     await sendRawWebhook(webhookUrl, payload);
 }
 
+const USER_ERROR_RULES = Object.freeze([
+    {
+        keywords: ["sqlite_busy", "database is locked"],
+        message: "ฐานข้อมูลกำลังประมวลผลงานอื่นอยู่ชั่วคราว กรุณารอสักครู่แล้วลองใหม่ครับ"
+    },
+    {
+        keywords: ["mongoserverselectionerror", "mongonetworkerror", "topology was destroyed"],
+        message: "การเชื่อมต่อฐานข้อมูลหลักขัดข้องชั่วคราว"
+    },
+    {
+        keywords: ["aborterror", "etimedout", "econnreset", "econnrefused"],
+        message: "การเชื่อมต่อไปยัง Discord เกิดความล่าช้าหรือหลุดการเชื่อมต่อชั่วคราว"
+    },
+    {
+        keywords: ["fail-closed", "ตรวจสอบรายชื่อสมาชิก"],
+        message: "ไม่สามารถตรวจสอบรายชื่อสมาชิกในเซิร์ฟเวอร์เป้าหมายได้ครบถ้วน (ระบบหยุดเพื่อความปลอดภัย)"
+    },
+    {
+        keywords: ["guild_full", "สมาชิกเต็ม", "30005", "maximum number of guilds"],
+        message: "เซิร์ฟเวอร์ปลายทางมีสมาชิกถึงจำนวนสูงสุดแล้ว"
+    },
+    {
+        keywords: ["active_campaign_exists", "มีงานดึงสมาชิกกำลังทำงาน"],
+        message: "มีงานดึงสมาชิกกำลังทำงานอยู่แล้วในระบบ กรุณารอให้งานเดิมเสร็จก่อนนะครับ"
+    },
+    {
+        keywords: ["token_unavailable", "invalid_grant"],
+        message: "โทเค็นสำหรับดึงสมาชิกไม่พร้อมใช้งานหรือหมดอายุ"
+    },
+    {
+        keywords: ["50001", "50013", "missing access", "missing permissions"],
+        message: "บอทไม่มีสิทธิ์ที่จำเป็นในการดำเนินการนี้ (กรุณาตรวจสอบสิทธิ์ของบอทในเซิร์ฟเวอร์)"
+    },
+    {
+        keywords: ["10004", "unknown guild"],
+        message: "ไม่พบเซิร์ฟเวอร์ปลายทาง หรือบอทไม่ได้อยู่ในเซิร์ฟเวอร์ดังกล่าวแล้ว"
+    }
+]);
+
+function _isTechnicalStackTrace(reason, lower) {
+    return lower.includes("error") || reason.includes("at ") || reason.includes("SQLITE_") || reason.includes("ENOENT");
+}
+
 function sanitizeUserFacingError(reason) {
     if (!reason || typeof reason !== "string") return "เกิดข้อผิดพลาดในการเชื่อมต่อ";
     const lower = reason.toLowerCase();
-    if (lower.includes("sqlite_busy") || lower.includes("database is locked")) {
-        return "ฐานข้อมูลกำลังประมวลผลงานอื่นอยู่ชั่วคราว กรุณารอสักครู่แล้วลองใหม่ครับ";
+
+    for (const rule of USER_ERROR_RULES) {
+        if (rule.keywords.some(k => lower.includes(k))) {
+            return rule.message;
+        }
     }
-    if (lower.includes("mongoserverselectionerror") || lower.includes("mongonetworkerror") || lower.includes("topology was destroyed")) {
-        return "การเชื่อมต่อฐานข้อมูลหลักขัดข้องชั่วคราว";
-    }
-    if (lower.includes("aborterror") || lower.includes("etimedout") || lower.includes("econnreset") || lower.includes("econnrefused")) {
-        return "การเชื่อมต่อไปยัง Discord เกิดความล่าช้าหรือหลุดการเชื่อมต่อชั่วคราว";
-    }
-    if (lower.includes("fail-closed") || lower.includes("ตรวจสอบรายชื่อสมาชิก")) {
-        return "ไม่สามารถตรวจสอบรายชื่อสมาชิกในเซิร์ฟเวอร์เป้าหมายได้ครบถ้วน (ระบบหยุดเพื่อความปลอดภัย)";
-    }
-    if (lower.includes("guild_full") || lower.includes("สมาชิกเต็ม") || lower.includes("30005") || lower.includes("maximum number of guilds")) {
-        return "เซิร์ฟเวอร์ปลายทางมีสมาชิกถึงจำนวนสูงสุดแล้ว";
-    }
-    if (lower.includes("active_campaign_exists") || lower.includes("มีงานดึงสมาชิกกำลังทำงาน")) {
-        return "มีงานดึงสมาชิกกำลังทำงานอยู่แล้วในระบบ กรุณารอให้งานเดิมเสร็จก่อนนะครับ";
-    }
-    if (lower.includes("token_unavailable") || lower.includes("invalid_grant")) {
-        return "โทเค็นสำหรับดึงสมาชิกไม่พร้อมใช้งานหรือหมดอายุ";
-    }
-    if (lower.includes("50001") || lower.includes("50013") || lower.includes("missing access") || lower.includes("missing permissions")) {
-        return "บอทไม่มีสิทธิ์ที่จำเป็นในการดำเนินการนี้ (กรุณาตรวจสอบสิทธิ์ของบอทในเซิร์ฟเวอร์)";
-    }
-    if (lower.includes("10004") || lower.includes("unknown guild")) {
-        return "ไม่พบเซิร์ฟเวอร์ปลายทาง หรือบอทไม่ได้อยู่ในเซิร์ฟเวอร์ดังกล่าวแล้ว";
-    }
-    // If reason looks like a technical error / stack trace:
-    if (lower.includes("error") || reason.includes("at ") || reason.includes("SQLITE_") || reason.includes("ENOENT")) {
+
+    if (_isTechnicalStackTrace(reason, lower)) {
         return "ระบบขัดข้องชั่วคราว ไม่สามารถดำเนินการต่อได้";
     }
     return reason;

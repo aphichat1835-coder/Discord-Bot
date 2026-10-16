@@ -609,6 +609,157 @@ async function cleanupDeletionSession(dbSession, operationError, manifest, jobId
     }
 }
 
+async function _runMongoDeletionPhase({
+    mongooseInstance,
+    models,
+    safeGuildId,
+    safeUserId,
+    safeRequestedBy,
+    hash,
+    jobId,
+    operationKey,
+    now,
+    manifest
+}) {
+    let dbSession = await mongooseInstance.startSession();
+    let txResult = null;
+    try {
+        await dbSession.withTransaction(async () => {
+            txResult = await executePrivacyDeletionTransaction({
+                models,
+                safeGuildId,
+                safeUserId,
+                safeRequestedBy,
+                hash,
+                jobId,
+                operationKey,
+                now,
+                manifest,
+                dbSession
+            });
+        });
+    } catch (txError) {
+        if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
+            dbSession = null;
+            txResult = await executePrivacyDeletionTransaction({
+                models,
+                safeGuildId,
+                safeUserId,
+                safeRequestedBy,
+                hash,
+                jobId,
+                operationKey,
+                now,
+                manifest,
+                dbSession: null
+            });
+        } else {
+            throw txError;
+        }
+    }
+    return { dbSession, txResult };
+}
+
+async function _runSqliteDeletionPhase({
+    models,
+    safeGuildId,
+    safeUserId,
+    manifest,
+    jobId,
+    operationKey,
+    PrivacyDeletionJobModel
+}) {
+    try {
+        const recoveryResult = await models.VerificationRecovery.deleteMany({
+            guildId: safeGuildId,
+            userId: safeUserId
+        });
+        manifest.counts.verificationRecovery = resultCount(recoveryResult);
+        manifest.phases.sqlite = "completed";
+    } catch (sqliteErr) {
+        manifest.phases.sqlite = "failed";
+        const error = new Error(`SQLite verification recovery deletion failed: ${sqliteErr.message}`);
+        error.code = "PRIVACY_DELETION_SQLITE_FAILED";
+        await PrivacyDeletionJobModel.updateOne(
+            { jobId, activeKey: operationKey },
+            {
+                $set: {
+                    status: "failed",
+                    errorCode: error.code,
+                    manifest,
+                    updatedAt: Date.now()
+                },
+                $unset: { activeKey: "" }
+            }
+        ).catch(() => {});
+        throw error;
+    }
+}
+
+async function _runFinalVerificationPhase({
+    models,
+    safeGuildId,
+    safeUserId,
+    memberVersions,
+    manifest,
+    jobId,
+    operationKey,
+    PrivacyDeletionJobModel
+}) {
+    const verification = await verifyNoRemainingReferences({
+        models,
+        guildId: safeGuildId,
+        userId: safeUserId,
+        memberVersions: memberVersions || [],
+        session: null
+    });
+    manifest.verification = verification;
+    manifest.deletedCount = totalDeletionCount(manifest.counts);
+    if (verification.remainingReferences !== 0) {
+        const error = new Error("Privacy deletion left remaining guild-scoped references");
+        error.code = "PRIVACY_DELETION_INCOMPLETE";
+        await PrivacyDeletionJobModel.updateOne(
+            { jobId, activeKey: operationKey },
+            {
+                $set: {
+                    status: "failed",
+                    errorCode: error.code,
+                    manifest,
+                    updatedAt: Date.now()
+                },
+                $unset: { activeKey: "" }
+            }
+        ).catch(() => {});
+        throw error;
+    }
+}
+
+async function _markJobCompleted({
+    PrivacyDeletionJobModel,
+    jobId,
+    operationKey,
+    hash,
+    manifest,
+    dbSession
+}) {
+    const completedNow = Date.now();
+    await PrivacyDeletionJobModel.updateOne(
+        { jobId, activeKey: operationKey },
+        {
+            $set: {
+                userId: deletedSubjectId(hash),
+                subjectHash: hash,
+                status: "completed",
+                manifest,
+                completedAt: completedNow,
+                updatedAt: completedNow
+            },
+            $unset: { activeKey: "" }
+        },
+        dbSession ? { session: dbSession } : undefined
+    );
+}
+
 async function runMemberPrivacyDeletion({
     guildId,
     userId,
@@ -644,116 +795,51 @@ async function runMemberPrivacyDeletion({
     let dbSession = null;
     let operationError = null;
     let result = null;
-    let txResult = null;
     try {
-        dbSession = await mongooseInstance.startSession();
-        try {
-            await dbSession.withTransaction(async () => {
-                txResult = await executePrivacyDeletionTransaction({
-                    models,
-                    safeGuildId,
-                    safeUserId,
-                    safeRequestedBy,
-                    hash,
-                    jobId,
-                    operationKey,
-                    now,
-                    manifest,
-                    dbSession
-                });
-            });
-        } catch (txError) {
-            if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
-                dbSession = null;
-                txResult = await executePrivacyDeletionTransaction({
-                    models,
-                    safeGuildId,
-                    safeUserId,
-                    safeRequestedBy,
-                    hash,
-                    jobId,
-                    operationKey,
-                    now,
-                    manifest,
-                    dbSession: null
-                });
-            } else {
-                throw txError;
-            }
-        }
-
-        // Phase B: Execute SQLite Deletion outside Mongo transaction (idempotent step)
-        try {
-            const recoveryResult = await models.VerificationRecovery.deleteMany({
-                guildId: safeGuildId,
-                userId: safeUserId
-            });
-            manifest.counts.verificationRecovery = resultCount(recoveryResult);
-            manifest.phases.sqlite = "completed";
-        } catch (sqliteErr) {
-            manifest.phases.sqlite = "failed";
-            const error = new Error(`SQLite verification recovery deletion failed: ${sqliteErr.message}`);
-            error.code = "PRIVACY_DELETION_SQLITE_FAILED";
-            await PrivacyDeletionJobModel.updateOne(
-                { jobId, activeKey: operationKey },
-                {
-                    $set: {
-                        status: "failed",
-                        errorCode: error.code,
-                        manifest,
-                        updatedAt: Date.now()
-                    },
-                    $unset: { activeKey: "" }
-                }
-            ).catch(() => {});
-            throw error;
-        }
-
-        // Phase C: Final verification across all storages
-        const verification = await verifyNoRemainingReferences({
+        const mongoRes = await _runMongoDeletionPhase({
+            mongooseInstance,
             models,
-            guildId: safeGuildId,
-            userId: safeUserId,
-            memberVersions: txResult?.memberVersions || [],
-            session: null
+            safeGuildId,
+            safeUserId,
+            safeRequestedBy,
+            hash,
+            jobId,
+            operationKey,
+            now,
+            manifest
         });
-        manifest.verification = verification;
-        manifest.deletedCount = totalDeletionCount(manifest.counts);
-        if (verification.remainingReferences !== 0) {
-            const error = new Error("Privacy deletion left remaining guild-scoped references");
-            error.code = "PRIVACY_DELETION_INCOMPLETE";
-            await PrivacyDeletionJobModel.updateOne(
-                { jobId, activeKey: operationKey },
-                {
-                    $set: {
-                        status: "failed",
-                        errorCode: error.code,
-                        manifest,
-                        updatedAt: Date.now()
-                    },
-                    $unset: { activeKey: "" }
-                }
-            ).catch(() => {});
-            throw error;
-        }
+        dbSession = mongoRes.dbSession;
 
-        // Phase D: Atomically mark job completed
-        const completedNow = Date.now();
-        await PrivacyDeletionJobModel.updateOne(
-            { jobId, activeKey: operationKey },
-            {
-                $set: {
-                    userId: deletedSubjectId(hash),
-                    subjectHash: hash,
-                    status: "completed",
-                    manifest,
-                    completedAt: completedNow,
-                    updatedAt: completedNow
-                },
-                $unset: { activeKey: "" }
-            },
-            dbSession ? { session: dbSession } : undefined
-        );
+        await _runSqliteDeletionPhase({
+            models,
+            safeGuildId,
+            safeUserId,
+            manifest,
+            jobId,
+            operationKey,
+            PrivacyDeletionJobModel
+        });
+
+        await _runFinalVerificationPhase({
+            models,
+            safeGuildId,
+            safeUserId,
+            memberVersions: mongoRes.txResult?.memberVersions || [],
+            manifest,
+            jobId,
+            operationKey,
+            PrivacyDeletionJobModel
+        });
+
+        await _markJobCompleted({
+            PrivacyDeletionJobModel,
+            jobId,
+            operationKey,
+            hash,
+            manifest,
+            dbSession
+        });
+
         result = { success: true, jobId, manifest, reused: false, status: "completed", pending: false };
     } catch (error) {
         operationError = error;

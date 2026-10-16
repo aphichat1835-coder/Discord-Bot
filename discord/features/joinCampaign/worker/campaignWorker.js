@@ -450,6 +450,85 @@ class CampaignWorker {
         await recordItemOutcome({ userId, status: "failed", error: errReason });
     }
 
+    async _performGuildAdd(discord, targetGuildId, userId, accessToken) {
+        try {
+            return await discord.addMemberToGuild(targetGuildId, userId, accessToken, {
+                callerManagedRetry: true,
+                signal: this._abortController?.signal
+            });
+        } catch (err) {
+            return { ok: false, status: 500, error: err };
+        }
+    }
+
+    async _executeCandidateJoinWorkflow({
+        item,
+        tokenManager,
+        discord,
+        config,
+        targetGuildId,
+        requestedQuota,
+        minConcurrency,
+        maxConcurrency,
+        ctx,
+        targetMemberIds,
+        processedUserIds,
+        rateLimitRetries,
+        networkRetries,
+        recordItemOutcome
+    }) {
+        const userId = item.userId;
+        const eligibility = _checkCandidateEligibility(userId, targetMemberIds, ctx, requestedQuota, processedUserIds);
+        if (!eligibility.eligible) {
+            await recordItemOutcome({ userId, status: eligibility.status });
+            return;
+        }
+
+        const itemTokenField = String(item.tokenField || "").trim();
+        const tokenRes = await _resolveCandidateAccessToken(tokenManager, userId, itemTokenField, config, this._abortController?.signal, () => this._isStopping);
+        if (tokenRes.aborted) return;
+        if (!tokenRes.ok) {
+            await recordItemOutcome({ userId, status: "failed", error: tokenRes.error });
+            return;
+        }
+
+        if (ctx.joinedCount >= requestedQuota) {
+            processedUserIds.delete(userId);
+            ctx.processedCount = processedUserIds.size;
+            await recordItemOutcome({ userId, status: "requeue_pending" });
+            return;
+        }
+
+        const res = await this._performGuildAdd(discord, targetGuildId, userId, tokenRes.accessToken);
+        if (this._isStopping && (res?.error?.name === "AbortError" || this._abortController?.signal?.aborted)) {
+            return;
+        }
+
+        await this._handleMemberAddResponse({
+            res,
+            userId,
+            ctx,
+            config,
+            minConcurrency,
+            maxConcurrency,
+            rateLimitRetries,
+            networkRetries,
+            recordItemOutcome
+        });
+    }
+
+    async _handleCandidateTaskError(taskErr, userId, recordItemOutcome) {
+        if (this._isStopping && (taskErr?.name === "AbortError" || this._abortController?.signal?.aborted)) {
+            return;
+        }
+        console.error(`[JoinCampaign] Task execution error for user ${userId}:`, taskErr?.message);
+        try {
+            await recordItemOutcome({ userId, status: "failed", error: taskErr?.message || "task_error" });
+        } catch (_err) {
+            // Best-effort outcome recording on unexpected failure
+        }
+    }
+
     async _processCandidateItem({
         item,
         job,
@@ -473,63 +552,24 @@ class CampaignWorker {
         const heartbeatTimer = _startLeaseHeartbeat(repository, job.id, item.userId, currentlyProcessingUsers);
 
         try {
-            const userId = item.userId;
-            const eligibility = _checkCandidateEligibility(userId, targetMemberIds, ctx, requestedQuota, processedUserIds);
-            if (!eligibility.eligible) {
-                await recordItemOutcome({ userId, status: eligibility.status });
-                return;
-            }
-
-            const itemTokenField = String(item.tokenField || "").trim();
-            const tokenRes = await _resolveCandidateAccessToken(tokenManager, userId, itemTokenField, config, this._abortController?.signal, () => this._isStopping);
-            if (tokenRes.aborted) return;
-            if (!tokenRes.ok) {
-                await recordItemOutcome({ userId, status: "failed", error: tokenRes.error });
-                return;
-            }
-
-            if (ctx.joinedCount >= requestedQuota) {
-                processedUserIds.delete(userId);
-                ctx.processedCount = processedUserIds.size;
-                await recordItemOutcome({ userId, status: "requeue_pending" });
-                return;
-            }
-
-            let res;
-            try {
-                res = await discord.addMemberToGuild(targetGuildId, userId, tokenRes.accessToken, {
-                    callerManagedRetry: true,
-                    signal: this._abortController?.signal
-                });
-            } catch (err) {
-                res = { ok: false, status: 500, error: err };
-            }
-
-            if (this._isStopping && (res?.error?.name === "AbortError" || this._abortController?.signal?.aborted)) {
-                return;
-            }
-
-            await this._handleMemberAddResponse({
-                res,
-                userId,
-                ctx,
+            await this._executeCandidateJoinWorkflow({
+                item,
+                tokenManager,
+                discord,
                 config,
+                targetGuildId,
+                requestedQuota,
                 minConcurrency,
                 maxConcurrency,
+                ctx,
+                targetMemberIds,
+                processedUserIds,
                 rateLimitRetries,
                 networkRetries,
                 recordItemOutcome
             });
         } catch (taskErr) {
-            if (this._isStopping && (taskErr?.name === "AbortError" || this._abortController?.signal?.aborted)) {
-                return;
-            }
-            console.error(`[JoinCampaign] Task execution error for user ${item.userId}:`, taskErr?.message);
-            try {
-                await recordItemOutcome({ userId: item.userId, status: "failed", error: taskErr?.message || "task_error" });
-            } catch (_err) {
-                // Best-effort outcome recording on unexpected failure
-            }
+            await this._handleCandidateTaskError(taskErr, item.userId, recordItemOutcome);
         } finally {
             if (heartbeatTimer) clearInterval(heartbeatTimer);
             currentlyProcessingUsers.delete(item.userId);
@@ -549,6 +589,225 @@ class CampaignWorker {
             () => activeTasks.delete(taskPromise),
             () => activeTasks.delete(taskPromise)
         );
+    }
+
+    _handleExecutionCrash({ err, ctx, startTime, repository, job, requestedQuota }) {
+        ctx.finalStatus = "FAILED";
+        ctx.statusReason = sanitizeUserFacingError(err.message || "เกิดข้อผิดพลาดในการประมวลผล");
+        const elapsedSeconds = Math.max(1, (Date.now() - startTime) / 1000);
+        repository.updateJob(job.id, {
+            status: "FAILED",
+            lastError: ctx.statusReason,
+            joinedCount: ctx.joinedCount,
+            alreadyCount: ctx.alreadyCount,
+            failedCount: ctx.failedCount,
+            processedCount: ctx.processedCount,
+            retryCount: ctx.retryCount,
+            currentThroughput: Number((ctx.joinedCount / elapsedSeconds).toFixed(2)),
+            completedAt: Date.now()
+        });
+        dispatchSystemicAlert({
+            code: "join_campaign.worker_crash",
+            title: "Join Campaign: การประมวลผลล้มเหลว",
+            description: err.message || ctx.statusReason,
+            details: {
+                campaignId: job.id,
+                joinedCount: ctx.joinedCount,
+                requestedQuota
+            }
+        });
+    }
+
+    async _finalizeExecution({
+        ctx,
+        startTime,
+        repository,
+        job,
+        mode,
+        targetGuildName,
+        targetGuildId,
+        requestedQuota,
+        client,
+        tokenManager
+    }) {
+        const completedAt = Date.now();
+        const durationMs = completedAt - startTime;
+        const elapsedSeconds = Math.max(1, durationMs / 1000);
+        const currentThroughput = Number((ctx.joinedCount / elapsedSeconds).toFixed(2));
+        const isInterrupted = ctx.finalStatus === "INTERRUPTED";
+        const completedTimestamp = isInterrupted ? null : completedAt;
+
+        if (repository.releaseExpiredLeases) {
+            repository.releaseExpiredLeases(job.id);
+        }
+
+        repository.updateJob(job.id, {
+            status: ctx.finalStatus,
+            lastError: ctx.statusReason ? sanitizeUserFacingError(ctx.statusReason) : null,
+            joinedCount: ctx.joinedCount,
+            alreadyCount: ctx.alreadyCount,
+            failedCount: ctx.failedCount,
+            processedCount: ctx.processedCount,
+            retryCount: ctx.retryCount,
+            currentConcurrency: ctx.currentConcurrency,
+            currentThroughput,
+            candidateCursor: ctx.candidateCursor,
+            completedAt: completedTimestamp
+        });
+
+        try {
+            await sendFinalSummaryEmbed({
+                webhookUrl: job.webhookUrl,
+                mode,
+                targetGuildName,
+                targetGuildId,
+                sourceGuildName: job.sourceGuildName,
+                sourceGuildId: job.sourceGuildId,
+                requestedQuota,
+                joinedCount: ctx.joinedCount,
+                alreadyCount: ctx.alreadyCount,
+                failedCount: ctx.failedCount,
+                processedCount: ctx.processedCount,
+                retryCount: ctx.retryCount,
+                durationMs,
+                finalStatus: ctx.finalStatus,
+                statusReason: ctx.statusReason
+            });
+        } catch (_err) {
+            // Best-effort summary embed delivery
+        }
+
+        try {
+            await this._finishPanelUpdate({
+                job,
+                client,
+                repository,
+                mode,
+                joinedCount: ctx.joinedCount,
+                alreadyCount: ctx.alreadyCount,
+                failedCount: ctx.failedCount,
+                finalStatus: ctx.finalStatus,
+                targetGuildName,
+                tokenManager
+            });
+        } catch (_err) {
+            // Best-effort final panel update
+        }
+    }
+
+    async _runWorkerLoop(params) {
+        const {
+            candidateStream,
+            repository,
+            job,
+            seenUsers,
+            ctx,
+            activeTasks,
+            currentlyProcessingUsers,
+            requestedQuota,
+            tokenManager,
+            discord,
+            config,
+            targetGuildId,
+            minConcurrency,
+            maxConcurrency,
+            targetMemberIds,
+            processedUserIds,
+            rateLimitRetries,
+            networkRetries,
+            recordItemOutcome,
+            checkpointJobCounters
+        } = params;
+
+        const shouldStopWorker = () => {
+            if (this._isStopping || ctx.joinedCount >= requestedQuota) {
+                return true;
+            }
+            if (ctx.isGuildFull) {
+                ctx.finalStatus = "SERVER_FULL";
+                ctx.statusReason = "เซิร์ฟเวอร์ปลายทางมีสมาชิกเต็มแล้ว";
+                return true;
+            }
+            return false;
+        };
+
+        const handleNoClaimableItem = async () => {
+            if (activeTasks.size > 0) {
+                await Promise.race(activeTasks);
+                return this._runWorkerLoop(params);
+            }
+            const hasPendingItems = repository.countPendingItems ? repository.countPendingItems(job.id, "all") > 0 : false;
+            if (ctx.streamExhausted && !hasPendingItems) {
+                ctx.finalStatus = ctx.joinedCount > 0 ? "PARTIAL" : "FAILED";
+                if (ctx.joinedCount === 0 && !ctx.statusReason) {
+                    ctx.statusReason = "ไม่สามารถดึงสมาชิกเข้าเซิร์ฟเวอร์ได้ตามเป้าหมาย (ไม่มีสมาชิกที่พร้อมดึงหรือเกิดข้อผิดพลาด)";
+                }
+                return;
+            }
+            await this._interruptibleSleep(200);
+            return this._runWorkerLoop(params);
+        };
+
+        if (shouldStopWorker()) {
+            return;
+        }
+
+        const now = Date.now();
+        if (now < ctx.backoffUntil) {
+            await this._interruptibleSleep(ctx.backoffUntil - now);
+            return this._runWorkerLoop(params);
+        }
+
+        await this._refillCandidateQueue({
+            candidateStream,
+            repository,
+            jobId: job.id,
+            seenUsers,
+            ctx
+        });
+
+        const remainingSlots = requestedQuota - (ctx.joinedCount + ctx.inFlightJoins);
+        if (remainingSlots <= 0 || activeTasks.size >= ctx.currentConcurrency) {
+            await Promise.race(activeTasks);
+            return this._runWorkerLoop(params);
+        }
+
+        const item = repository.claimNextPendingItem(job.id, 120000);
+        if (!item) {
+            return handleNoClaimableItem();
+        }
+
+        if (currentlyProcessingUsers.has(item.userId)) {
+            if (typeof repository.renewItemLease === "function") {
+                repository.renewItemLease(job.id, item.userId, 60000);
+            }
+            return this._runWorkerLoop(params);
+        }
+
+        this._spawnCandidateTask({
+            item,
+            job,
+            repository,
+            tokenManager,
+            discord,
+            config,
+            targetGuildId,
+            requestedQuota,
+            minConcurrency,
+            maxConcurrency,
+            ctx,
+            targetMemberIds,
+            processedUserIds,
+            currentlyProcessingUsers,
+            rateLimitRetries,
+            networkRetries,
+            recordItemOutcome,
+            checkpointJobCounters,
+            activeTasks
+        });
+
+        await new Promise(resolve => setImmediate(resolve));
+        return this._runWorkerLoop(params);
     }
 
     async _executeLoop({
@@ -593,7 +852,6 @@ class CampaignWorker {
 
         const rateLimitRetries = new Map();
         const networkRetries = new Map();
-
         const batchBuffer = [];
         let batchIndex = 1;
         let lastPanelUpdateAt = Date.now();
@@ -742,99 +1000,28 @@ class CampaignWorker {
             const activeTasks = new Set();
             const currentlyProcessingUsers = new Set();
 
-            const shouldStopWorker = () => {
-                if (this._isStopping || ctx.joinedCount >= requestedQuota) {
-                    return true;
-                }
-                if (ctx.isGuildFull) {
-                    ctx.finalStatus = "SERVER_FULL";
-                    ctx.statusReason = "เซิร์ฟเวอร์ปลายทางมีสมาชิกเต็มแล้ว";
-                    return true;
-                }
-                return false;
-            };
-
-            const handleNoClaimableItem = async () => {
-                if (activeTasks.size > 0) {
-                    await Promise.race(activeTasks);
-                    return runWorkerLoop();
-                }
-                const hasPendingItems = repository.countPendingItems ? repository.countPendingItems(job.id, "all") > 0 : false;
-                if (ctx.streamExhausted && !hasPendingItems) {
-                    ctx.finalStatus = ctx.joinedCount > 0 ? "PARTIAL" : "FAILED";
-                    if (ctx.joinedCount === 0 && !ctx.statusReason) {
-                        ctx.statusReason = "ไม่สามารถดึงสมาชิกเข้าเซิร์ฟเวอร์ได้ตามเป้าหมาย (ไม่มีสมาชิกที่พร้อมดึงหรือเกิดข้อผิดพลาด)";
-                    }
-                    return;
-                }
-                await this._interruptibleSleep(200);
-                return runWorkerLoop();
-            };
-
-            const runWorkerLoop = async () => {
-                if (shouldStopWorker()) {
-                    return;
-                }
-
-                const now = Date.now();
-                if (now < ctx.backoffUntil) {
-                    await this._interruptibleSleep(ctx.backoffUntil - now);
-                    return runWorkerLoop();
-                }
-
-                await this._refillCandidateQueue({
-                    candidateStream,
-                    repository,
-                    jobId: job.id,
-                    seenUsers,
-                    ctx
-                });
-
-                const remainingSlots = requestedQuota - (ctx.joinedCount + ctx.inFlightJoins);
-                if (remainingSlots <= 0 || activeTasks.size >= ctx.currentConcurrency) {
-                    await Promise.race(activeTasks);
-                    return runWorkerLoop();
-                }
-
-                const item = repository.claimNextPendingItem(job.id, 120000);
-                if (!item) {
-                    return handleNoClaimableItem();
-                }
-
-                if (currentlyProcessingUsers.has(item.userId)) {
-                    if (typeof repository.renewItemLease === "function") {
-                        repository.renewItemLease(job.id, item.userId, 60000);
-                    }
-                    return runWorkerLoop();
-                }
-
-                this._spawnCandidateTask({
-                    item,
-                    job,
-                    repository,
-                    tokenManager,
-                    discord,
-                    config,
-                    targetGuildId,
-                    requestedQuota,
-                    minConcurrency,
-                    maxConcurrency,
-                    ctx,
-                    targetMemberIds,
-                    processedUserIds,
-                    currentlyProcessingUsers,
-                    rateLimitRetries,
-                    networkRetries,
-                    recordItemOutcome,
-                    checkpointJobCounters,
-                    activeTasks
-                });
-
-                await new Promise(resolve => setImmediate(resolve));
-                return runWorkerLoop();
-            };
-
-            await runWorkerLoop();
+            await this._runWorkerLoop({
+                candidateStream,
+                repository,
+                job,
+                seenUsers,
+                ctx,
+                activeTasks,
+                currentlyProcessingUsers,
+                requestedQuota,
+                tokenManager,
+                discord,
+                config,
+                targetGuildId,
+                minConcurrency,
+                maxConcurrency,
+                targetMemberIds,
+                processedUserIds,
+                rateLimitRetries,
+                networkRetries,
+                recordItemOutcome,
+                checkpointJobCounters
+            });
 
             if (activeTasks.size > 0) {
                 await Promise.allSettled(Array.from(activeTasks));
@@ -867,95 +1054,21 @@ class CampaignWorker {
             ctx.finalStatus = statusOutcome.finalStatus;
             ctx.statusReason = statusOutcome.statusReason;
         } catch (err) {
-            ctx.finalStatus = "FAILED";
-            ctx.statusReason = sanitizeUserFacingError(err.message || "เกิดข้อผิดพลาดในการประมวลผล");
-            const elapsedSeconds = Math.max(1, (Date.now() - startTime) / 1000);
-            repository.updateJob(job.id, {
-                status: "FAILED",
-                lastError: ctx.statusReason,
-                joinedCount: ctx.joinedCount,
-                alreadyCount: ctx.alreadyCount,
-                failedCount: ctx.failedCount,
-                processedCount: ctx.processedCount,
-                retryCount: ctx.retryCount,
-                currentThroughput: Number((ctx.joinedCount / elapsedSeconds).toFixed(2)),
-                completedAt: Date.now()
-            });
-            dispatchSystemicAlert({
-                code: "join_campaign.worker_crash",
-                title: "Join Campaign: การประมวลผลล้มเหลว",
-                description: err.message || ctx.statusReason,
-                details: {
-                    campaignId: job.id,
-                    joinedCount: ctx.joinedCount,
-                    requestedQuota
-                }
-            });
+            this._handleExecutionCrash({ err, ctx, startTime, repository, job, requestedQuota });
             throw err;
         } finally {
-            const completedAt = Date.now();
-            const durationMs = completedAt - startTime;
-            const elapsedSeconds = Math.max(1, durationMs / 1000);
-            const currentThroughput = Number((ctx.joinedCount / elapsedSeconds).toFixed(2));
-            const isInterrupted = ctx.finalStatus === "INTERRUPTED";
-            const completedTimestamp = isInterrupted ? null : completedAt;
-
-            if (repository.releaseExpiredLeases) {
-                repository.releaseExpiredLeases(job.id);
-            }
-
-            repository.updateJob(job.id, {
-                status: ctx.finalStatus,
-                lastError: ctx.statusReason ? sanitizeUserFacingError(ctx.statusReason) : null,
-                joinedCount: ctx.joinedCount,
-                alreadyCount: ctx.alreadyCount,
-                failedCount: ctx.failedCount,
-                processedCount: ctx.processedCount,
-                retryCount: ctx.retryCount,
-                currentConcurrency: ctx.currentConcurrency,
-                currentThroughput,
-                candidateCursor: ctx.candidateCursor,
-                completedAt: completedTimestamp
+            await this._finalizeExecution({
+                ctx,
+                startTime,
+                repository,
+                job,
+                mode,
+                targetGuildName,
+                targetGuildId,
+                requestedQuota,
+                client,
+                tokenManager
             });
-
-            try {
-                await sendFinalSummaryEmbed({
-                    webhookUrl: job.webhookUrl,
-                    mode,
-                    targetGuildName,
-                    targetGuildId,
-                    sourceGuildName: job.sourceGuildName,
-                    sourceGuildId: job.sourceGuildId,
-                    requestedQuota,
-                    joinedCount: ctx.joinedCount,
-                    alreadyCount: ctx.alreadyCount,
-                    failedCount: ctx.failedCount,
-                    processedCount: ctx.processedCount,
-                    retryCount: ctx.retryCount,
-                    durationMs,
-                    finalStatus: ctx.finalStatus,
-                    statusReason: ctx.statusReason
-                });
-            } catch (_err) {
-                // Best-effort summary embed delivery
-            }
-
-            try {
-                await this._finishPanelUpdate({
-                    job,
-                    client,
-                    repository,
-                    mode,
-                    joinedCount: ctx.joinedCount,
-                    alreadyCount: ctx.alreadyCount,
-                    failedCount: ctx.failedCount,
-                    finalStatus: ctx.finalStatus,
-                    targetGuildName,
-                    tokenManager
-                });
-            } catch (_err) {
-                // Best-effort final panel update
-            }
         }
     }
 

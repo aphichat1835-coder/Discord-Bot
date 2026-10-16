@@ -426,3 +426,81 @@ test('checkSingleToken auto-detects Bot Token on 401 fallback and auto-unquarant
         tokenCoordinator.reset();
     }
 });
+
+test('handleTokenCheckModal processes single token and batch tokens successfully', async () => {
+    const tcModule = require('../features/tokenChecker');
+    const originalCheckSingle = tcModule.checkSingleToken;
+    const originalCheckBatch = tcModule.checkBatchTokens;
+
+    try {
+        // 1. Single token flow
+        const singleReplies = [];
+        tcModule.checkSingleToken = async (tok) => ({
+            valid: true,
+            token: tok,
+            maskedToken: 'single...1234',
+            id: '123456789012345678',
+            username: 'SingleHero',
+            hasNitro: false,
+            hasBoost: false,
+            category: 'normal'
+        });
+
+        await handleTokenCheckModal({
+            fields: {
+                getTextInputValue: () => 'single_valid_token_1234'
+            },
+            deferReply: async () => {},
+            editReply: async (payload) => {
+                singleReplies.push(payload);
+                return payload;
+            },
+            deferred: true,
+            replied: false
+        });
+
+        assert.ok(singleReplies.length >= 2);
+        const finalSingle = singleReplies[singleReplies.length - 1];
+        assert.equal(finalSingle.content, null);
+        assert.ok(finalSingle.embeds && finalSingle.embeds.length === 1);
+        assert.match(finalSingle.embeds[0].data.title, /ข้อมูลบัญชี Discord/);
+
+        // 2. Batch token flow
+        const batchReplies = [];
+        tcModule.checkBatchTokens = async (tokens, opts) => {
+            if (opts.onProgress) {
+                await opts.onProgress(1, 2);
+            }
+            return {
+                summary: { total: 2, valid: 2, invalid: 0, boost: 0, nitro: 0, normal: 2, bot: 0 },
+                results: [
+                    { valid: true, maskedToken: 'tok1...1111', username: 'BatchUser1', id: '111111111111111111', hasNitro: false, hasBoost: false },
+                    { valid: true, maskedToken: 'tok2...2222', username: 'BatchUser2', id: '222222222222222222', hasNitro: false, hasBoost: false }
+                ]
+            };
+        };
+
+        await handleTokenCheckModal({
+            fields: {
+                getTextInputValue: () => 'token_1\ntoken_2'
+            },
+            deferReply: async () => {},
+            editReply: async (payload) => {
+                batchReplies.push(payload);
+                return payload;
+            },
+            deferred: true,
+            replied: false
+        });
+
+        assert.ok(batchReplies.length >= 2);
+        const finalBatch = batchReplies[batchReplies.length - 1];
+        assert.equal(finalBatch.content, null);
+        assert.ok(finalBatch.embeds && finalBatch.embeds.length === 1);
+        assert.match(finalBatch.embeds[0].data.title, /ตรวจสอบเสร็จแล้ว/);
+    } finally {
+        tcModule.checkSingleToken = originalCheckSingle;
+        tcModule.checkBatchTokens = originalCheckBatch;
+    }
+});
+

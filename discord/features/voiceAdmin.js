@@ -548,7 +548,16 @@ function buildResult(action, result) {
     const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
     return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}`;
 }
+function _isOperationCompleteSuccess(targeted, succeeded, incomplete) {
+    return targeted > 0 && succeeded === targeted && incomplete === 0;
+}
+
+function _isOperationWarning(targeted, succeeded, skipped, timedOut) {
+    return succeeded > 0 || targeted === 0 || skipped > 0 || timedOut > 0;
+}
+
 function resultEmoji(result, cfg) {
+    const emojis = (cfg || config).emojis || {};
     const targeted = Number(result?.targeted ?? 0);
     const succeeded = Number(result?.succeeded ?? 0);
     const failed = Number(result?.failed ?? 0);
@@ -556,9 +565,14 @@ function resultEmoji(result, cfg) {
     const timedOut = Number(result?.timedOut ?? 0);
     const persistenceFailed = Number(result?.persistenceFailed ?? 0);
     const incomplete = failed + skipped + timedOut + persistenceFailed;
-    if (targeted > 0 && succeeded === targeted && incomplete === 0) return (cfg || config).emojis?.success || "✅";
-    if (succeeded > 0 || targeted === 0 || skipped > 0 || timedOut > 0) return (cfg || config).emojis?.warning || "⚠️";
-    return (cfg || config).emojis?.error || "❌";
+
+    if (_isOperationCompleteSuccess(targeted, succeeded, incomplete)) {
+        return emojis.success || "✅";
+    }
+    if (_isOperationWarning(targeted, succeeded, skipped, timedOut)) {
+        return emojis.warning || "⚠️";
+    }
+    return emojis.error || "❌";
 }
 
 function getBotMember(guild) { return guild?.members?.me || guild?.members?.cache?.get?.(guild?.client?.user?.id) || null; }
@@ -743,22 +757,26 @@ async function handleVoiceAdminCommand(interaction) {
     return reply;
 }
 function isVoiceAdminInteraction(interaction) { return (interaction?.isButton?.() || interaction?.isChannelSelectMenu?.()) && String(interaction.customId || "").startsWith(IDS.PREFIX); }
-async function handleVoiceAdminInteraction(interaction) {
-    const access = verifyVoiceAdminAccess(interaction.member, interaction.channel);
-    if (access) return interaction.reply({ content: `> ${config.emojis?.no_entry || "⛔"} ${access}`, ephemeral: true });
-    if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
-    await interaction.deferUpdate();
-    const action = ({ [IDS.DISCONNECT]: "disconnect", [IDS.LOCK_MUTE]: "mute", [IDS.LOCK_DEAF]: "deaf", [IDS.UNLOCK_MUTE]: "unmute", [IDS.UNLOCK_DEAF]: "undeaf", [IDS.MOVE]: "move" })[interaction.customId];
-    const destinationId = interaction.values?.[0];
-    let destination = null;
-    if (action === "move") {
-        destination = interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(destinationId) || null;
-        if (!destination && destinationId && typeof interaction.guild?.channels?.fetch === "function") {
-            destination = await interaction.guild.channels.fetch(destinationId).catch(() => null);
-        }
-    }
-    if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} คำสั่งแผงนี้ไม่ถูกต้อง`));
 
+const PANEL_ACTION_MAP = Object.freeze({
+    [IDS.DISCONNECT]: "disconnect",
+    [IDS.LOCK_MUTE]: "mute",
+    [IDS.LOCK_DEAF]: "deaf",
+    [IDS.UNLOCK_MUTE]: "unmute",
+    [IDS.UNLOCK_DEAF]: "undeaf",
+    [IDS.MOVE]: "move"
+});
+
+async function _resolveMoveDestination(interaction) {
+    const destinationId = interaction.values?.[0];
+    let destination = interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(destinationId) || null;
+    if (!destination && destinationId && typeof interaction.guild?.channels?.fetch === "function") {
+        destination = await interaction.guild.channels.fetch(destinationId).catch(() => null);
+    }
+    return destination;
+}
+
+function _resolveActionLoadingText(action) {
     const actionLoadingText = ({
         disconnect: `${config.emojis?.loading || "⏳"} กำลังตัดสายทั้งหมด...`,
         mute: `${config.emojis?.loading || "⏳"} กำลังปิดไมค์...`,
@@ -766,9 +784,12 @@ async function handleVoiceAdminInteraction(interaction) {
         unmute: `${config.emojis?.loading || "⏳"} กำลังเปิดไมค์...`,
         undeaf: `${config.emojis?.loading || "⏳"} กำลังเปิดหู...`,
         move: `${config.emojis?.loading || "⏳"} กำลังย้ายสมาชิก...`
-    })[action] || `${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`;
-    await interaction.editReply(buildPanel(interaction.channel, `> ${actionLoadingText}`)).catch(() => {});
+    })[action];
+    return actionLoadingText || `${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`;
+}
 
+async function _executePanelAction(interaction, action, destination) {
+    await interaction.editReply(buildPanel(interaction.channel, `> ${_resolveActionLoadingText(action)}`)).catch(() => {});
     try {
         const result = await runPanelAction(interaction, action, destination);
         return interaction.editReply(buildPanel(interaction.channel, `> ${resultEmoji(result)} ${buildResult("ผลการทำงาน", result)}`));
@@ -777,6 +798,17 @@ async function handleVoiceAdminInteraction(interaction) {
         const detail = describePanelActionFailure(error);
         return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} ${detail}`));
     }
+}
+
+async function handleVoiceAdminInteraction(interaction) {
+    const access = verifyVoiceAdminAccess(interaction.member, interaction.channel);
+    if (access) return interaction.reply({ content: `> ${config.emojis?.no_entry || "⛔"} ${access}`, ephemeral: true });
+    if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
+    await interaction.deferUpdate();
+    const action = PANEL_ACTION_MAP[interaction.customId];
+    if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} คำสั่งแผงนี้ไม่ถูกต้อง`));
+    const destination = action === "move" ? await _resolveMoveDestination(interaction) : null;
+    return _executePanelAction(interaction, action, destination);
 }
 
 function describeBotPermissionMissing(error) {

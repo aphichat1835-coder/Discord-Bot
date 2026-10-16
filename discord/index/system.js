@@ -63,17 +63,26 @@ function isMutedLogLine(line) {
         line.includes("[CRITICAL] unhandledRejection");
 }
 
+const LOG_CATEGORY_RULES = Object.freeze([
+    { category: "DATABASE", keywords: ["DATA", "MONGO", "SQLITE"] },
+    { category: "VOICE", keywords: ["VOICE", "WORKER", "SESSION", "AUTODEAF", "NATURAL", "HEARTBEAT"] },
+    { category: "VERIFICATION", keywords: ["VERIFY", "OAUTH", "SNAPSHOT"] },
+    { category: "GATEWAY", keywords: ["GATEWAY", "SHARD"] },
+    { category: "COMMAND", keywords: ["COMMAND", "SLASH", "ROLE"] },
+    { category: "SECURITY", keywords: ["SECURITY", "PROTECTION", "RAID", "SPAM"] },
+    { category: "QUEST", keywords: ["QUEST"] },
+    { category: "MODERATION", keywords: ["MODCASE"] },
+    { category: "RUNTIME", keywords: ["HTTP", "API", "ROUTE"] },
+    { category: "SYSTEM", keywords: ["CRITICAL", "FATAL"] }
+]);
+
 function deriveLogCategory(rawTag) {
-    if (rawTag.includes("DATA") || rawTag.includes("MONGO") || rawTag.includes("SQLITE")) return "DATABASE";
-    if (rawTag.includes("VOICE") || rawTag.includes("WORKER") || rawTag.includes("SESSION") || rawTag.includes("AUTODEAF") || rawTag.includes("NATURAL") || rawTag.includes("HEARTBEAT")) return "VOICE";
-    if (rawTag.includes("VERIFY") || rawTag.includes("OAUTH") || rawTag.includes("SNAPSHOT")) return "VERIFICATION";
-    if (rawTag.includes("GATEWAY") || rawTag.includes("SHARD")) return "GATEWAY";
-    if (rawTag.includes("COMMAND") || rawTag.includes("SLASH") || rawTag.includes("ROLE")) return "COMMAND";
-    if (rawTag.includes("SECURITY") || rawTag.includes("PROTECTION") || rawTag.includes("RAID") || rawTag.includes("SPAM")) return "SECURITY";
-    if (rawTag.includes("QUEST")) return "QUEST";
-    if (rawTag.includes("MODCASE")) return "MODERATION";
-    if (rawTag.includes("HTTP") || rawTag.includes("API") || rawTag.includes("ROUTE")) return "RUNTIME";
-    if (rawTag.includes("CRITICAL") || rawTag.includes("FATAL")) return "SYSTEM";
+    if (typeof rawTag !== "string") return "RUNTIME";
+    for (const rule of LOG_CATEGORY_RULES) {
+        if (rule.keywords.some(keyword => rawTag.includes(keyword))) {
+            return rule.category;
+        }
+    }
     return "RUNTIME";
 }
 
@@ -306,6 +315,22 @@ const TRANSIENT_GATEWAY_CODES = new Set([
     "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_STREAM_PREMATURE_CLOSE"
 ]);
 
+const CLOUDFLARE_5XX_REGEX = /Unexpected server response:\s*(?:520|521|522|523|524|525|502|503|504)/i;
+const WS_HANDSHAKE_TIMEOUT_REGEX = /Opening handshake has timed out|WebSocket was closed before the connection was established|Connection reset by peer|premature close/i;
+const DISCORD_API_5XX_REGEX = /DiscordAPIError.*(?:500|502|503|504|520|521|522|523|524|525)/i;
+const GATEWAY_CONTEXT_REGEX = /websocket|gateway|discord/i;
+
+function _matchesAnyText(regex, ...texts) {
+    return texts.some(text => regex.test(text));
+}
+
+function _isTransientSocketBlip(code, causeCode, stack, msg, causeMsg) {
+    if (!TRANSIENT_GATEWAY_CODES.has(code) && !TRANSIENT_GATEWAY_CODES.has(causeCode)) {
+        return false;
+    }
+    return _matchesAnyText(GATEWAY_CONTEXT_REGEX, stack, msg, causeMsg);
+}
+
 function isTransientGatewayError(err) {
     if (!err) return false;
     const msg = String(err?.message || "");
@@ -314,32 +339,10 @@ function isTransientGatewayError(err) {
     const causeCode = String(err?.cause?.code || "");
     const causeMsg = String(err?.cause?.message || "");
 
-    // 1. Cloudflare / Discord gateway HTTP response errors on WebSocket handshake
-    if (/Unexpected server response:\s*(?:520|521|522|523|524|525|502|503|504)/i.test(msg) ||
-        /Unexpected server response:\s*(?:520|521|522|523|524|525|502|503|504)/i.test(causeMsg)) {
-        return true;
-    }
-
-    // 2. Common transient socket/DNS blips on gateway connection
-    if (TRANSIENT_GATEWAY_CODES.has(code) || TRANSIENT_GATEWAY_CODES.has(causeCode)) {
-        if (/websocket|gateway|discord/i.test(stack) || /websocket|gateway|discord/i.test(msg) || /websocket|gateway|discord/i.test(causeMsg)) {
-            return true;
-        }
-    }
-
-    // 3. WS handshake timeout or connection abort or premature close
-    if (/Opening handshake has timed out|WebSocket was closed before the connection was established|Connection reset by peer|premature close/i.test(msg) ||
-        /Opening handshake has timed out|WebSocket was closed before the connection was established|Connection reset by peer|premature close/i.test(causeMsg)) {
-        return true;
-    }
-
-    // 4. Discord REST 5xx transient server outages (DiscordAPIError 500, 502, 503, 504, 520-525)
-    if (/DiscordAPIError.*(?:500|502|503|504|520|521|522|523|524|525)/i.test(msg) ||
-        /DiscordAPIError.*(?:500|502|503|504|520|521|522|523|524|525)/i.test(causeMsg)) {
-        return true;
-    }
-
-    return false;
+    return _matchesAnyText(CLOUDFLARE_5XX_REGEX, msg, causeMsg) ||
+        _isTransientSocketBlip(code, causeCode, stack, msg, causeMsg) ||
+        _matchesAnyText(WS_HANDSHAKE_TIMEOUT_REGEX, msg, causeMsg) ||
+        _matchesAnyText(DISCORD_API_5XX_REGEX, msg, causeMsg);
 }
 
 function isRecoverableRuntimeError(err) {

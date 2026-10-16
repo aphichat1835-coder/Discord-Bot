@@ -479,6 +479,32 @@ function _buildBotTokenEmbed(result) {
     return embed;
 }
 
+function _resolveTokenThemeColor(result) {
+    if (result.hasBoost) return THEME_COLORS.BOOST;
+    if (result.hasNitro) return THEME_COLORS.NITRO;
+    return THEME_COLORS.NORMAL;
+}
+
+function _buildNitroDetail(result) {
+    if (!result.hasNitro) return 'ไม่มี Nitro';
+    const expireInfo = result.expireDate
+        ? `หมดอายุวันที่ ${formatDateBangkok(result.expireDate)} (เหลืออีก **${result.expireDays}** วัน)`
+        : `เหลืออีก **${result.expireDays}** วัน`;
+    return `**ประเภท:** \`${result.nitroPlan}\`\n**วันหมดอายุ:** ${expireInfo}`;
+}
+
+function _buildSecurityLines(result, successEmoji, errorEmoji, lockEmoji) {
+    const emailStatus = result.emailVerified ? `${successEmoji} ยืนยันแล้ว` : `${errorEmoji} ยังไม่ยืนยัน`;
+    const phoneStatus = result.phoneVerified ? `${successEmoji} ผูกแล้ว` : `${errorEmoji} ยังไม่ผูก`;
+    const mfaStatus = result.mfaEnabled ? `${lockEmoji} เปิดใช้งานแล้ว` : `${errorEmoji} ปิดอยู่`;
+
+    return [
+        `• ยืนยันอีเมล: ${emailStatus}`,
+        `• ผูกเบอร์โทรศัพท์: ${phoneStatus}`,
+        `• ระบบ 2FA: ${mfaStatus}`
+    ].join('\n');
+}
+
 function _buildUserTokenEmbed(result) {
     const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
     const successEmoji = config.emojis?.success || '✅';
@@ -488,13 +514,7 @@ function _buildUserTokenEmbed(result) {
     const keyEmoji = config.emojis?.key || '🔑';
     const userEmoji = config.emojis?.user || '👤';
 
-    let color = THEME_COLORS.NORMAL;
-    if (result.hasBoost) {
-        color = THEME_COLORS.BOOST;
-    } else if (result.hasNitro) {
-        color = THEME_COLORS.NITRO;
-    }
-
+    const color = _resolveTokenThemeColor(result);
     const nameDisplay = result.globalName
         ? `${result.username} (${result.globalName})`
         : result.username;
@@ -503,27 +523,12 @@ function _buildUserTokenEmbed(result) {
         ? `${formatDateBangkok(result.createdAt)} (${getAccountAgeString(result.createdAt)})`
         : '-';
 
-    let nitroDetail = 'ไม่มี Nitro';
-    if (result.hasNitro) {
-        const expireInfo = result.expireDate
-            ? `หมดอายุวันที่ ${formatDateBangkok(result.expireDate)} (เหลืออีก **${result.expireDays}** วัน)`
-            : `เหลืออีก **${result.expireDays}** วัน`;
-        nitroDetail = `**ประเภท:** \`${result.nitroPlan}\`\n**วันหมดอายุ:** ${expireInfo}`;
-    }
-
+    const nitroDetail = _buildNitroDetail(result);
     const boostDetail = result.hasBoost
         ? `${boostEmoji} มีสิทธิ์ Server Boost (พร้อมใช้งาน 2 บูสต์)`
         : `${errorEmoji} ไม่มีสิทธิ์ Server Boost`;
 
-    const emailStatus = result.emailVerified ? `${successEmoji} ยืนยันแล้ว` : `${errorEmoji} ยังไม่ยืนยัน`;
-    const phoneStatus = result.phoneVerified ? `${successEmoji} ผูกแล้ว` : `${errorEmoji} ยังไม่ผูก`;
-    const mfaStatus = result.mfaEnabled ? `${lockEmoji} เปิดใช้งานแล้ว` : `${errorEmoji} ปิดอยู่`;
-
-    const securityLines = [
-        `• ยืนยันอีเมล: ${emailStatus}`,
-        `• ผูกเบอร์โทรศัพท์: ${phoneStatus}`,
-        `• ระบบ 2FA: ${mfaStatus}`
-    ].join('\n');
+    const securityLines = _buildSecurityLines(result, successEmoji, errorEmoji, lockEmoji);
 
     return new MessageEmbed()
         .setColor(color)

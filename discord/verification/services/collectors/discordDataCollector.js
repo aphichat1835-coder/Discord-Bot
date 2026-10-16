@@ -175,32 +175,10 @@ function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousS
     };
 }
 
-async function collectDiscordData({ code, redirectUri, previousSummary = null, previousConnections = null }) {
-    const tokenData = await oauthTokenManager.exchangeAuthorizationCode(code, redirectUri);
-    const accessToken = tokenData.access_token;
-
-    const resolved = await Promise.all([
-        discord.getUserProfile(accessToken),
-        Promise.resolve(discord.getUserConnections(accessToken)).catch(err => ({
-            fetchFailed: true,
-            fetchStatus: err?.status || 500,
-            fetchFailureReason: err?.message || "connections_fetch_error"
-        })),
-        Promise.resolve(discord.getUserGuilds(accessToken)).catch(err => ({
-            fetchFailed: true,
-            fetchStatus: err?.status || 500,
-            fetchFailureReason: err?.message || "guilds_fetch_error"
-        }))
-    ]);
-
-    const rawProfile = resolved[0] || {};
-    const rawConnections = resolved[1];
-    const rawGuilds = resolved[2];
-
+function _resolveConnectionsData(rawConnections, previousConnections) {
     const connectionsFetchFailed = rawConnections?.fetchFailed === true || !Array.isArray(rawConnections);
-    const guildsFetchFailed = rawGuilds?.fetchFailed === true || !Array.isArray(rawGuilds);
-
     const isConnectionsFallback = Boolean(connectionsFetchFailed && Array.isArray(previousConnections) && previousConnections.length > 0);
+
     let connections = [];
     if (!connectionsFetchFailed) {
         connections = normalizeConnections(rawConnections);
@@ -215,13 +193,24 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
         connectionsSource = "failed_empty";
     }
 
-    const fetchMetadata = {
+    return {
+        connections,
         connectionsFetchFailed,
-        connectionsFetchStatus: rawConnections?.fetchStatus || (connectionsFetchFailed ? 500 : 200),
-        connectionsFailureReason: rawConnections?.fetchFailureReason || null,
-        isConnectionsFresh: !connectionsFetchFailed,
         isConnectionsFallback,
-        connectionsSource,
+        connectionsSource
+    };
+}
+
+function _buildCollectorFetchMetadata(connData, rawConnections, rawGuilds) {
+    const guildsFetchFailed = rawGuilds?.fetchFailed === true || !Array.isArray(rawGuilds);
+
+    return {
+        connectionsFetchFailed: connData.connectionsFetchFailed,
+        connectionsFetchStatus: rawConnections?.fetchStatus || (connData.connectionsFetchFailed ? 500 : 200),
+        connectionsFailureReason: rawConnections?.fetchFailureReason || null,
+        isConnectionsFresh: !connData.connectionsFetchFailed,
+        isConnectionsFallback: connData.isConnectionsFallback,
+        connectionsSource: connData.connectionsSource,
         guildsFetchFailed,
         guildsFetchStatus: rawGuilds?.fetchStatus || (guildsFetchFailed ? 500 : 200),
         guildsFailureReason: rawGuilds?.fetchFailureReason || null,
@@ -231,10 +220,10 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
         memberFailureReason: null,
         memberFetchSource: null
     };
+}
 
-    const guildSummary = computeGuildSummary(rawGuilds, guildsFetchFailed, fetchMetadata.guildsFailureReason, previousSummary);
-
-    const profile = {
+function _buildCollectorUserProfile(rawProfile) {
+    return {
         id: String(rawProfile.id),
         username: rawProfile.username || "",
         discriminator: rawProfile.discriminator || "0",
@@ -259,12 +248,36 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
         accountAgeDays: getAccountAgeDays(rawProfile.id),
         rawProfile
     };
+}
+
+async function collectDiscordData({ code, redirectUri, previousSummary = null, previousConnections = null }) {
+    const tokenData = await oauthTokenManager.exchangeAuthorizationCode(code, redirectUri);
+    const accessToken = tokenData.access_token;
+
+    const [rawProfile = {}, rawConnections, rawGuilds] = await Promise.all([
+        discord.getUserProfile(accessToken),
+        Promise.resolve(discord.getUserConnections(accessToken)).catch(err => ({
+            fetchFailed: true,
+            fetchStatus: err?.status || 500,
+            fetchFailureReason: err?.message || "connections_fetch_error"
+        })),
+        Promise.resolve(discord.getUserGuilds(accessToken)).catch(err => ({
+            fetchFailed: true,
+            fetchStatus: err?.status || 500,
+            fetchFailureReason: err?.message || "guilds_fetch_error"
+        }))
+    ]);
+
+    const connData = _resolveConnectionsData(rawConnections, previousConnections);
+    const fetchMetadata = _buildCollectorFetchMetadata(connData, rawConnections, rawGuilds);
+    const guildSummary = computeGuildSummary(rawGuilds, fetchMetadata.guildsFetchFailed, fetchMetadata.guildsFailureReason, previousSummary);
+    const profile = _buildCollectorUserProfile(rawProfile);
 
     return {
         tokenData,
         accessToken,
         profile,
-        connections,
+        connections: connData.connections,
         guildSummary,
         fetchMetadata
     };

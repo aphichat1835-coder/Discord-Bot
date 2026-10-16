@@ -62,8 +62,10 @@ const {
     handleQuestCommand,
     handleQuestButton,
     handleQuestSelect,
+    handleQuestModalSubmit,
     buildQuestPanelRow
 } = require('../commands/quest');
+const { IDS } = require('../commands/customIds');
 const {
     questSummaryTone,
     buildQuestSummaryEmbed,
@@ -644,6 +646,168 @@ test('runnerSchedule zonedParts extracts correct local time components', () => {
     assert.equal(parts.hour, 16);
     assert.equal(parts.minute, 0);
 });
+
+test('buildQuestPanelRow renders conditional buttons based on showDaily flag', () => {
+    const standardRow = buildQuestPanelRow({ showDaily: false });
+    assert.equal(standardRow.components.length, 2);
+
+    const dailyRow = buildQuestPanelRow({ showDaily: true });
+    assert.equal(dailyRow.components.length, 3);
+});
+
+test('handleQuestCommand validates subcommand and permissions correctly', async () => {
+    const ownerId = process.env.OWNER_ID || '661415152146710558';
+
+    // 1. Invalid subcommand
+    let replyPayload = null;
+    await handleQuestCommand({
+        user: { id: ownerId },
+        options: { getSubcommand: () => 'invalid_sub' },
+        reply: async (p) => { replyPayload = p; return p; }
+    });
+    assert.ok(replyPayload);
+    assert.match(replyPayload.content, /คำสั่งย่อยไม่ถูกต้อง/);
+
+    // 2. Non-owner trying to open panel
+    let nonOwnerReply = null;
+    await handleQuestCommand({
+        user: { id: '999999999999999999' },
+        options: { getSubcommand: () => 'panel' },
+        reply: async (p) => { nonOwnerReply = p; return p; }
+    });
+    assert.ok(nonOwnerReply);
+    assert.match(nonOwnerReply.content, /สงวนสิทธิ์เฉพาะ/);
+
+    // 3. Owner opening panel
+    let ownerReply = null;
+    await handleQuestCommand({
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: (name) => name === 'auto_daily'
+        },
+        deferReply: async () => {},
+        editReply: async (p) => { ownerReply = p; return p; },
+        reply: async (p) => { ownerReply = p; return p; },
+        deferred: true
+    });
+    assert.ok(ownerReply);
+    assert.ok(ownerReply.embeds && ownerReply.embeds.length > 0);
+    assert.ok(ownerReply.components && ownerReply.components.length > 0);
+});
+
+test('handleQuestButton and handleQuestSelect handle all actions and fallback', async () => {
+    const ownerId = process.env.OWNER_ID || '661415152146710558';
+
+    // 1. Unknown button
+    let unknownReply = null;
+    await handleQuestButton({
+        customId: 'quest_panel:unknown_action',
+        user: { id: ownerId },
+        reply: async (p) => { unknownReply = p; return p; }
+    });
+    assert.ok(unknownReply);
+    assert.match(unknownReply.content, /ปุ่มควบคุมนี้หมดอายุหรือไม่รองรับแล้ว/);
+
+    // 2. BTN_QUEST_RUN_ONESHOT shows modal
+    let shownModal = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_RUN_ONESHOT,
+        showModal: async (m) => { shownModal = m; return m; }
+    });
+    assert.ok(shownModal);
+    assert.ok(shownModal.data.custom_id.includes('oneshot'));
+
+    // 3. BTN_QUEST_RUN_DAILY shows modal
+    let dailyModal = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_RUN_DAILY,
+        showModal: async (m) => { dailyModal = m; return m; }
+    });
+    assert.ok(dailyModal);
+    assert.ok(dailyModal.data.custom_id.includes('scheduled'));
+
+    // 4. BTN_QUEST_STOP opens stop panel
+    let stopReply = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_STOP,
+        user: { id: ownerId },
+        deferReply: async () => {},
+        editReply: async (p) => { stopReply = p; return p; }
+    });
+    assert.ok(stopReply);
+    assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
+
+    // 5. BTN_QUEST_REFRESH updates stop panel
+    let refreshReply = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_REFRESH,
+        user: { id: ownerId },
+        deferUpdate: async () => {},
+        editReply: async (p) => { refreshReply = p; return p; }
+    });
+    assert.ok(refreshReply);
+    assert.ok(refreshReply.embeds && refreshReply.embeds.length > 0);
+
+    // 6. BTN_QUEST_STOP_ALL stops runners
+    let stopAllReply = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_STOP_ALL,
+        user: { id: ownerId },
+        deferred: true,
+        deferUpdate: async () => {},
+        editReply: async (p) => { stopAllReply = p; return p; }
+    });
+    assert.ok(stopAllReply);
+    assert.ok(stopAllReply.embeds && stopAllReply.embeds.length > 0);
+
+    // 7. handleQuestSelect ignores unrelated customId
+    const ignored = await handleQuestSelect({
+        customId: 'unrelated_select'
+    });
+    assert.equal(ignored, undefined);
+
+    // 8. handleQuestSelect processes SELECT_QUEST_STOP
+    let selectReply = null;
+    await handleQuestSelect({
+        customId: IDS.SELECT_QUEST_STOP,
+        user: { id: ownerId },
+        values: ['mock_schedule_1', 'mock_schedule_2'],
+        deferred: true,
+        deferUpdate: async () => {},
+        editReply: async (p) => { selectReply = p; return p; }
+    });
+    assert.ok(selectReply);
+    assert.ok(selectReply.embeds && selectReply.embeds.length > 0);
+});
+
+test('handleQuestModalSubmit validates empty and excessive tokens', async () => {
+    // 1. Empty tokens
+    let emptyReply = null;
+    await handleQuestModalSubmit({
+        customId: IDS.MODAL_QUEST_RUN,
+        fields: {
+            getTextInputValue: () => '   \n  \n'
+        },
+        reply: async (p) => { emptyReply = p; return p; }
+    });
+    assert.ok(emptyReply);
+    assert.match(emptyReply.content, /ไม่พบ Token/);
+
+    // 2. More than 10 tokens
+    let limitReply = null;
+    const elevenTokens = Array.from({ length: 11 }, (_, i) => `token_${i + 1}`).join('\n');
+    await handleQuestModalSubmit({
+        customId: IDS.MODAL_QUEST_RUN,
+        fields: {
+            getTextInputValue: () => elevenTokens
+        },
+        reply: async (p) => { limitReply = p; return p; }
+    });
+    assert.ok(limitReply);
+    assert.match(limitReply.content, /สามารถส่งได้สูงสุด \*\*10 บัญชี\*\*/);
+});
+
 
 
 

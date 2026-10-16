@@ -170,6 +170,78 @@ async function handleDmPanelCommand(interaction) {
     return safeReply(interaction, payload);
 }
 
+function _handleDmPanelOpenButton(interaction) {
+    if (isBroadcastRunning()) {
+        return safeReply(interaction, {
+            content: `> ${config.emojis?.warning || '⚠️'} มีงานกระจายข้อความ DM กำลังดำเนินการอยู่ในขณะนี้ กรุณารอให้งานปัจจุบันเสร็จสิ้นก่อนเริ่มงานใหม่`,
+            flags: 64
+        });
+    }
+    return showDmPanelModal(interaction);
+}
+
+async function _handleDmConfirmButton(interaction) {
+    const staged = getStagedBroadcast(interaction.user.id);
+    if (!staged) {
+        return interaction.update({
+            content: `> ${config.emojis?.warning || '⚠️'} ข้อมูลการยืนยันหมดอายุหรือถูกยกเลิกแล้ว กรุณากดปุ่มเปิดแบบฟอร์มใหม่อีกครั้ง`,
+            embeds: [],
+            components: []
+        });
+    }
+
+    if (isBroadcastRunning()) {
+        return interaction.update({
+            content: `> ${config.emojis?.warning || '⚠️'} มีงานกระจายข้อความอื่นเริ่มทำงานก่อนหน้านี้แล้ว กรุณารอให้งานปัจจุบันเสร็จสิ้น`,
+            embeds: [],
+            components: []
+        });
+    }
+
+    clearStagedBroadcast(interaction.user.id);
+
+    const startResult = await startBroadcastJob({
+        token: staged.token,
+        guildId: staged.guildId,
+        message: staged.message,
+        imageUrl: staged.imageUrl,
+        webhookUrl: staged.webhookUrl,
+        initiatedBy: interaction.user.id
+    });
+
+    if (!startResult.ok) {
+        return interaction.update({
+            content: `> ${config.emojis?.error || '❌'} ไม่สามารถเริ่มงานได้: ${startResult.error}`,
+            embeds: [],
+            components: []
+        });
+    }
+
+    const successEmbed = new MessageEmbed()
+        .setColor(config.system?.themeColors?.success || '#57F287')
+        .setTitle(`${config.emojis?.activate || '🚀'} เริ่มการกระจายข้อความ DM แล้ว!`)
+        .setDescription(
+            `บอทตัวรอง **${staged.botUser?.tag || 'Helper Bot'}** เริ่มทำการส่งข้อความไปยังสมาชิกจำนวน **${staged.targetCount}** คน ในเซิร์ฟเวอร์ **${staged.guild?.name || staged.guildId}**\n\n` +
+            `• คุณสามารถดูความคืบหน้าแบบ Real-time ได้ในช่อง Webhook ที่ระบุไว้\n` +
+            `• เมื่อส่งครบทุกคน ระบบจะส่งรายงานสรุปยอดรวมและตัดการเชื่อมต่ออัตโนมัติ`
+        )
+        .setTimestamp();
+
+    return interaction.update({
+        embeds: [successEmbed],
+        components: []
+    });
+}
+
+function _handleDmCancelButton(interaction) {
+    clearStagedBroadcast(interaction.user.id);
+    return interaction.update({
+        content: `> ${config.emojis?.stop || config.emojis?.error || '❌'} ยกเลิกการกระจายข้อความเรียบร้อยแล้ว`,
+        embeds: [],
+        components: []
+    });
+}
+
 async function handleDmPanelButton(interaction) {
     if (!isBotOwner(interaction.user.id)) {
         return safeReply(interaction, {
@@ -181,75 +253,13 @@ async function handleDmPanelButton(interaction) {
     const customId = interaction.customId;
 
     if (customId === IDS.BTN_DM_PANEL_OPEN) {
-        if (isBroadcastRunning()) {
-            return safeReply(interaction, {
-                content: `> ${config.emojis?.warning || '⚠️'} มีงานกระจายข้อความ DM กำลังดำเนินการอยู่ในขณะนี้ กรุณารอให้งานปัจจุบันเสร็จสิ้นก่อนเริ่มงานใหม่`,
-                flags: 64
-            });
-        }
-        return showDmPanelModal(interaction);
+        return _handleDmPanelOpenButton(interaction);
     }
-
     if (customId === IDS.BTN_DM_CONFIRM) {
-        const staged = getStagedBroadcast(interaction.user.id);
-        if (!staged) {
-            return interaction.update({
-                content: `> ${config.emojis?.warning || '⚠️'} ข้อมูลการยืนยันหมดอายุหรือถูกยกเลิกแล้ว กรุณากดปุ่มเปิดแบบฟอร์มใหม่อีกครั้ง`,
-                embeds: [],
-                components: []
-            });
-        }
-
-        if (isBroadcastRunning()) {
-            return interaction.update({
-                content: `> ${config.emojis?.warning || '⚠️'} มีงานกระจายข้อความอื่นเริ่มทำงานก่อนหน้านี้แล้ว กรุณารอให้งานปัจจุบันเสร็จสิ้น`,
-                embeds: [],
-                components: []
-            });
-        }
-
-        clearStagedBroadcast(interaction.user.id);
-
-        const startResult = await startBroadcastJob({
-            token: staged.token,
-            guildId: staged.guildId,
-            message: staged.message,
-            imageUrl: staged.imageUrl,
-            webhookUrl: staged.webhookUrl,
-            initiatedBy: interaction.user.id
-        });
-
-        if (!startResult.ok) {
-            return interaction.update({
-                content: `> ${config.emojis?.error || '❌'} ไม่สามารถเริ่มงานได้: ${startResult.error}`,
-                embeds: [],
-                components: []
-            });
-        }
-
-        const successEmbed = new MessageEmbed()
-            .setColor(config.system?.themeColors?.success || '#57F287')
-            .setTitle(`${config.emojis?.activate || '🚀'} เริ่มการกระจายข้อความ DM แล้ว!`)
-            .setDescription(
-                `บอทตัวรอง **${staged.botUser?.tag || 'Helper Bot'}** เริ่มทำการส่งข้อความไปยังสมาชิกจำนวน **${staged.targetCount}** คน ในเซิร์ฟเวอร์ **${staged.guild?.name || staged.guildId}**\n\n` +
-                `• คุณสามารถดูความคืบหน้าแบบ Real-time ได้ในช่อง Webhook ที่ระบุไว้\n` +
-                `• เมื่อส่งครบทุกคน ระบบจะส่งรายงานสรุปยอดรวมและตัดการเชื่อมต่ออัตโนมัติ`
-            )
-            .setTimestamp();
-
-        return interaction.update({
-            embeds: [successEmbed],
-            components: []
-        });
+        return _handleDmConfirmButton(interaction);
     }
-
     if (customId === IDS.BTN_DM_CANCEL) {
-        clearStagedBroadcast(interaction.user.id);
-        return interaction.update({
-            content: `> ${config.emojis?.stop || config.emojis?.error || '❌'} ยกเลิกการกระจายข้อความเรียบร้อยแล้ว`,
-            embeds: [],
-            components: []
-        });
+        return _handleDmCancelButton(interaction);
     }
 
     return safeReply(interaction, {

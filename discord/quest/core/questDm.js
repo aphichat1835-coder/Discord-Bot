@@ -45,40 +45,36 @@ function questSummaryTone({ totalQuests = 0, completedQuests = 0, issues = [] } 
 /**
  * Builds a Phomueangtai-styled DM Embed for quest results.
  */
-function buildQuestSummaryEmbed({
-    mode = 'oneshot',
-    username = 'บัญชีไม่ทราบชื่อ',
-    accountId = 'ไม่ทราบ',
-    totalQuests = 0,
-    completedQuests = 0,
-    issues = [],
-    jobKey = '',
-    profile = null,
-    timestamp = Date.now()
-} = {}) {
-    const isDaily = mode === 'scheduled';
-    const tone = questSummaryTone({ totalQuests, completedQuests, issues });
-
-    let title;
-    let summary;
+function _resolveQuestSummaryContent(tone, isDaily) {
     if (tone === 'success') {
-        title = `${config.emojis?.check_alt || config.emojis?.success || '🎉'} ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว`;
-        summary = isDaily
-            ? 'ระบบ Auto Daily ได้ดำเนินการตรวจสอบและทำ Quest ประจำรอบให้บัญชีของคุณเสร็จสิ้นทั้งหมดแล้ว'
-            : 'ระบบ One-shot ได้เข้าไปทำ Quest ให้บัญชีของคุณสำเร็จเรียบร้อยครบถ้วนแล้ว';
-    } else if (tone === 'warning') {
-        title = `${config.emojis?.warning || '⚠️'} ผลการทำ Quest (สำเร็จบางส่วน)`;
-        summary = 'ระบบได้ดำเนินการทำ Quest บางส่วนสำเร็จ แต่พบข้อผิดพลาดในบางรายการ กรุณาตรวจสอบรายละเอียด';
-    } else if (tone === 'danger') {
-        title = `${config.emojis?.red_card || config.emojis?.error || '❌'} ไม่สามารถทำ Quest ได้สำเร็จ`;
-        summary = 'ระบบไม่สามารถดำเนินการทำ Quest ให้สำเร็จได้ กรุณาตรวจสอบ Token และสิทธิ์ของบัญชี';
-    } else {
-        title = `${config.emojis?.alert || 'ℹ️'} ไม่พบ Quest ที่ต้องดำเนินการ`;
-        summary = isDaily
-            ? 'ระบบ Auto Daily ได้ตรวจสอบบัญชีแล้ว แต่ไม่พบ Quest ใหม่ที่สามารถทำได้ในรอบนี้'
-            : 'ไม่พบ Quest ที่สามารถทำได้ในบัญชีนี้ในขณะนี้';
+        return {
+            title: `${config.emojis?.check_alt || config.emojis?.success || '🎉'} ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว`,
+            summary: isDaily
+                ? 'ระบบ Auto Daily ได้ดำเนินการตรวจสอบและทำ Quest ประจำรอบให้บัญชีของคุณเสร็จสิ้นทั้งหมดแล้ว'
+                : 'ระบบ One-shot ได้เข้าไปทำ Quest ให้บัญชีของคุณสำเร็จเรียบร้อยครบถ้วนแล้ว'
+        };
     }
+    if (tone === 'warning') {
+        return {
+            title: `${config.emojis?.warning || '⚠️'} ผลการทำ Quest (สำเร็จบางส่วน)`,
+            summary: 'ระบบได้ดำเนินการทำ Quest บางส่วนสำเร็จ แต่พบข้อผิดพลาดในบางรายการ กรุณาตรวจสอบรายละเอียด'
+        };
+    }
+    if (tone === 'danger') {
+        return {
+            title: `${config.emojis?.red_card || config.emojis?.error || '❌'} ไม่สามารถทำ Quest ได้สำเร็จ`,
+            summary: 'ระบบไม่สามารถดำเนินการทำ Quest ให้สำเร็จได้ กรุณาตรวจสอบ Token และสิทธิ์ของบัญชี'
+        };
+    }
+    return {
+        title: `${config.emojis?.alert || 'ℹ️'} ไม่พบ Quest ที่ต้องดำเนินการ`,
+        summary: isDaily
+            ? 'ระบบ Auto Daily ได้ตรวจสอบบัญชีแล้ว แต่ไม่พบ Quest ใหม่ที่สามารถทำได้ในรอบนี้'
+            : 'ไม่พบ Quest ที่สามารถทำได้ในบัญชีนี้ในขณะนี้'
+    };
+}
 
+function _buildQuestSummaryFields({ username, accountId, isDaily, totalQuests, completedQuests, issues }) {
     const fields = [
         {
             name: '🎮 บัญชี Discord',
@@ -104,6 +100,25 @@ function buildQuestSummaryEmbed({
             value: safeText(issueLines, 'มีข้อผิดพลาดบางรายการ', 1024)
         });
     }
+
+    return fields;
+}
+
+function buildQuestSummaryEmbed({
+    mode = 'oneshot',
+    username = 'บัญชีไม่ทราบชื่อ',
+    accountId = 'ไม่ทราบ',
+    totalQuests = 0,
+    completedQuests = 0,
+    issues = [],
+    jobKey = '',
+    profile = null,
+    timestamp = Date.now()
+} = {}) {
+    const isDaily = mode === 'scheduled';
+    const tone = questSummaryTone({ totalQuests, completedQuests, issues });
+    const { title, summary } = _resolveQuestSummaryContent(tone, isDaily);
+    const fields = _buildQuestSummaryFields({ username, accountId, isDaily, totalQuests, completedQuests, issues });
 
     const nextAction = isDaily
         ? 'ระบบจะตรวจสอบและทำเควสต์ใหม่ให้อัตโนมัติตามรอบเวลา 00:00 / 08:00 / 16:00 น. หรือสั่งหยุดได้ด้วยปุ่ม STOP'

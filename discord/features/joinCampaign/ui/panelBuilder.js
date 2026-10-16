@@ -35,21 +35,41 @@ function getJoinPanelBannerPath() {
     }
 }
 
-function buildPanelPayload({
-    mode,
-    panelState = {},
-    readyCount = null,
-    liveJob = null,
-    sourceGuildName = null,
-    targetGuildName = null,
-    includeFiles = false
-}) {
-    const isRunning = Boolean(liveJob?.status === "RUNNING");
-    const primaryOwnerId = getPrimaryOwnerId(process.env, config) || config.system?.ownerId || "661415152146710558";
-    const bannerPath = getJoinPanelBannerPath();
-    const hasAttachment = Boolean(bannerPath);
+function _applyPanelImage(embed, hasAttachment) {
+    if (hasAttachment) {
+        embed.setImage(`attachment://${JOIN_PANEL_BANNER_ATTACHMENT_NAME}`);
+    } else if (config.system?.joinCampaignBannerUrl) {
+        embed.setImage(config.system.joinCampaignBannerUrl);
+    } else if (config.system?.bannerUrl) {
+        embed.setImage(config.system.bannerUrl);
+    }
+}
 
-    // 1. Embed Build
+function _buildStatusField({ isRunning, liveJob, panelState }) {
+    if (isRunning && liveJob) {
+        const joined = liveJob.joinedCount ?? liveJob.joined_count ?? 0;
+        const targetQuota = liveJob.requestedAmount ?? liveJob.requested_amount ?? (liveJob.selectedAmount ?? liveJob.selected_amount ?? 0);
+        return {
+            name: `${emoji.loading} สถานะงานปัจจุบัน`,
+            value: `กำลังดึงสมาชิกเข้าเซิร์ฟเวอร์: **${Number(joined).toLocaleString("th-TH")}** / **${Number(targetQuota).toLocaleString("th-TH")}** คน`,
+            inline: false
+        };
+    }
+    if (panelState.lastStatusSummary) {
+        return {
+            name: `${emoji.success} สถานะล่าสุด`,
+            value: panelState.lastStatusSummary,
+            inline: false
+        };
+    }
+    return {
+        name: `${emoji.online} สถานะความพร้อม`,
+        value: panelState.targetGuildId ? "พร้อมเริ่มดึงสมาชิกแล้ว" : "กรุณาเลือกรูปแบบด้านล่างเพื่อตั้งค่าเซิร์ฟเวอร์",
+        inline: false
+    };
+}
+
+function _buildPanelEmbed({ mode, panelState, readyCount, liveJob, sourceGuildName, targetGuildName, isRunning, primaryOwnerId, hasAttachment }) {
     const embed = new EmbedBuilder()
         .setTitle(`${emoji.universe || emoji.sparkle} : Phomueangtai จัดการดึงสมาชิกเข้าเซิร์ฟเวอร์`)
         .setDescription(
@@ -61,15 +81,8 @@ function buildPanelPayload({
         .setColor(isRunning ? 0xFEE75C : 0x57F287)
         .setTimestamp();
 
-    if (hasAttachment) {
-        embed.setImage(`attachment://${JOIN_PANEL_BANNER_ATTACHMENT_NAME}`);
-    } else if (config.system?.joinCampaignBannerUrl) {
-        embed.setImage(config.system.joinCampaignBannerUrl);
-    } else if (config.system?.bannerUrl) {
-        embed.setImage(config.system.bannerUrl);
-    }
+    _applyPanelImage(embed, hasAttachment);
 
-    // Add fields specific to the mode
     const modeFields = mode.formatPanelFields({
         panelState,
         readyCount,
@@ -78,31 +91,12 @@ function buildPanelPayload({
         targetGuildName
     });
     embed.addFields(modeFields);
+    embed.addFields(_buildStatusField({ isRunning, liveJob, panelState }));
 
-    // Status Field
-    if (isRunning && liveJob) {
-        const joined = liveJob.joinedCount ?? liveJob.joined_count ?? 0;
-        const targetQuota = liveJob.requestedAmount ?? liveJob.requested_amount ?? (liveJob.selectedAmount ?? liveJob.selected_amount ?? 0);
-        embed.addFields({
-            name: `${emoji.loading} สถานะงานปัจจุบัน`,
-            value: `กำลังดึงสมาชิกเข้าเซิร์ฟเวอร์: **${Number(joined).toLocaleString("th-TH")}** / **${Number(targetQuota).toLocaleString("th-TH")}** คน`,
-            inline: false
-        });
-    } else if (panelState.lastStatusSummary) {
-        embed.addFields({
-            name: `${emoji.success} สถานะล่าสุด`,
-            value: panelState.lastStatusSummary,
-            inline: false
-        });
-    } else {
-        embed.addFields({
-            name: `${emoji.online} สถานะความพร้อม`,
-            value: panelState.targetGuildId ? "พร้อมเริ่มดึงสมาชิกแล้ว" : "กรุณาเลือกรูปแบบด้านล่างเพื่อตั้งค่าเซิร์ฟเวอร์",
-            inline: false
-        });
-    }
+    return embed;
+}
 
-    // 2. Select Menu Row (Modes)
+function _buildModeSelectRow(mode, isRunning) {
     const selectOptions = listModes().map(m => ({
         label: m.label,
         description: m.description.slice(0, 100),
@@ -117,9 +111,10 @@ function buildPanelPayload({
         .setDisabled(isRunning)
         .addOptions(selectOptions);
 
-    const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+    return new ActionRowBuilder().addComponents(selectMenu);
+}
 
-    // 3. Action Button Row
+function _buildActionRow(isRunning) {
     const actionRow = new ActionRowBuilder();
     if (isRunning) {
         const btnRunning = new ButtonBuilder()
@@ -127,15 +122,43 @@ function buildPanelPayload({
             .setLabel("กำลังดึงสมาชิก...")
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(true);
-        actionRow.addComponents(btnRunning);
-    } else {
-        const btnStart = new ButtonBuilder()
-            .setCustomId(IDS.BTN_START)
-            .setLabel("เริ่มดึงสมาชิก")
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(false);
-        actionRow.addComponents(btnStart);
+        return actionRow.addComponents(btnRunning);
     }
+    const btnStart = new ButtonBuilder()
+        .setCustomId(IDS.BTN_START)
+        .setLabel("เริ่มดึงสมาชิก")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(false);
+    return actionRow.addComponents(btnStart);
+}
+
+function buildPanelPayload({
+    mode,
+    panelState = {},
+    readyCount = null,
+    liveJob = null,
+    sourceGuildName = null,
+    targetGuildName = null,
+    includeFiles = false
+}) {
+    const isRunning = Boolean(liveJob?.status === "RUNNING");
+    const primaryOwnerId = getPrimaryOwnerId(process.env, config) || config.system?.ownerId || "661415152146710558";
+    const bannerPath = getJoinPanelBannerPath();
+    const hasAttachment = Boolean(bannerPath);
+
+    const embed = _buildPanelEmbed({
+        mode,
+        panelState,
+        readyCount,
+        liveJob,
+        sourceGuildName,
+        targetGuildName,
+        isRunning,
+        primaryOwnerId,
+        hasAttachment
+    });
+    const selectRow = _buildModeSelectRow(mode, isRunning);
+    const actionRow = _buildActionRow(isRunning);
 
     const payload = {
         embeds: [embed],

@@ -10,7 +10,7 @@ const {
     buildVerifyLogParts
 } = require("../utils/verificationSnapshots");
 
-function tokenStatus(token = {}) {
+function _resolveTokenLifetime(token) {
     const issuedAt = Number(token.issuedAt || token.rawTokenMeta?.receivedAt || 0) || null;
     const expiresAt = Number(token.expiresAt || 0) || null;
     let lifetimeMs = null;
@@ -19,13 +19,26 @@ function tokenStatus(token = {}) {
     } else if (issuedAt && expiresAt) {
         lifetimeMs = Math.max(0, expiresAt - issuedAt);
     }
+    return { issuedAt, expiresAt, lifetimeMs };
+}
+
+function _resolveTokenFlags(token) {
+    const hasAccessToken = typeof token.hasAccessToken === "boolean"
+        ? token.hasAccessToken
+        : Boolean(token.hasToken || token.accessToken);
+    const hasRefreshToken = typeof token.hasRefreshToken === "boolean"
+        ? token.hasRefreshToken
+        : Boolean(token.hasRefreshToken || token.refreshToken);
+    return { hasAccessToken, hasRefreshToken };
+}
+
+function tokenStatus(token = {}) {
+    const { issuedAt, expiresAt, lifetimeMs } = _resolveTokenLifetime(token);
+    const { hasAccessToken, hasRefreshToken } = _resolveTokenFlags(token);
+
     return {
-        hasAccessToken: typeof token.hasAccessToken === "boolean"
-            ? token.hasAccessToken
-            : Boolean(token.hasToken || token.accessToken),
-        hasRefreshToken: typeof token.hasRefreshToken === "boolean"
-            ? token.hasRefreshToken
-            : Boolean(token.hasRefreshToken || token.refreshToken),
+        hasAccessToken,
+        hasRefreshToken,
         scope: token.scope || "",
         tokenType: token.tokenType || "",
         issuedAt,

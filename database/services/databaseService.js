@@ -191,6 +191,60 @@ async function measureMongoOverview(mongoInstance) {
     return { mongoStatus, mongoPingMs, mongoHealthLabel };
 }
 
+function _readDatabaseMetaMap(db) {
+    const metaMap = {};
+    try {
+        const metaRows = db.prepare("SELECT key, value FROM database_meta").all();
+        for (const r of metaRows) metaMap[r.key] = r.value;
+    } catch {
+        // Table database_meta unreadable
+    }
+    return metaMap;
+}
+
+function _buildSqliteOverviewSection({ dbPath, quota, storage, degradedReason, sqliteHealth, sqliteStatusLabel, records, metaMap, lastBackupInfo, managedStorage }) {
+    return {
+        status: sqliteHealth,
+        statusLabel: sqliteStatusLabel,
+        path: dbPath,
+        footprintMb: quota.footprint.totalMb,
+        hardLimitMb: quota.limits.hardMb,
+        usedPercent: Number.parseFloat(((quota.footprint.totalMb / quota.limits.hardMb) * 100).toFixed(1)),
+        degradedReason,
+        storage: {
+            freeSpaceMb: storage.freeSpace?.availableMb ?? null,
+            percentFree: storage.freeSpace?.percentFree ?? null,
+            filesystemCritical: storage.filesystemCritical,
+            filesystemWarning: storage.filesystemWarning,
+            isPersistent: storage.isPersistent,
+            configuredPersistentPath: storage.configuredPersistentPath,
+            persistentMountVerified: storage.persistentMountVerified,
+            allowInSource: storage.allowInSource,
+            persistentLabel: resolvePersistentLabel(storage),
+            managedStorage
+        },
+        records,
+        lastMaintenance: {
+            lastCleanup: metaMap.last_cleanup || null,
+            lastBackup: lastBackupInfo?.createdAt || metaMap.last_backup || null,
+            lastIntegrityCheck: metaMap.last_integrity_check || null,
+            lastCheckpoint: metaMap.last_checkpoint || null
+        }
+    };
+}
+
+function _buildMongoOverviewSection(mongoStatus, mongoHealthLabel, mongoPingMs) {
+    return {
+        status: mongoStatus.connected ? "ok" : "error",
+        statusLabel: mongoHealthLabel,
+        connected: mongoStatus.connected,
+        pingMs: mongoPingMs,
+        name: mongoStatus.name,
+        modelsCount: mongoStatus.models,
+        pool: mongoStatus.pool
+    };
+}
+
 async function getDatabaseOverview(customDb = null) {
     const startTime = Date.now();
     const db = customDb || (module.exports && typeof module.exports.getSqliteDb === "function" ? module.exports.getSqliteDb() : getDatabase());
@@ -206,13 +260,7 @@ async function getDatabaseOverview(customDb = null) {
     const records = summarizeTableRecordCounts(db);
 
     // 3. Maintenance metadata
-    const metaMap = {};
-    try {
-        const metaRows = db.prepare("SELECT key, value FROM database_meta").all();
-        for (const r of metaRows) metaMap[r.key] = r.value;
-    } catch {
-        // Table database_meta unreadable
-    }
+    const metaMap = _readDatabaseMetaMap(db);
 
     // 4. Backups list & managed storage breakdown
     const backups = listBackups();
@@ -226,43 +274,20 @@ async function getDatabaseOverview(customDb = null) {
         timestamp: Date.now(),
         durationMs: Date.now() - startTime,
         databases: {
-            sqlite: {
-                status: sqliteHealth,
-                statusLabel: sqliteStatusLabel,
-                path: dbPath,
-                footprintMb: quota.footprint.totalMb,
-                hardLimitMb: quota.limits.hardMb,
-                usedPercent: Number.parseFloat(((quota.footprint.totalMb / quota.limits.hardMb) * 100).toFixed(1)),
+            sqlite: _buildSqliteOverviewSection({
+                dbPath,
+                quota,
+                storage,
+                emergency,
                 degradedReason,
-                storage: {
-                    freeSpaceMb: storage.freeSpace?.availableMb ?? null,
-                    percentFree: storage.freeSpace?.percentFree ?? null,
-                    filesystemCritical: storage.filesystemCritical,
-                    filesystemWarning: storage.filesystemWarning,
-                    isPersistent: storage.isPersistent,
-                    configuredPersistentPath: storage.configuredPersistentPath,
-                    persistentMountVerified: storage.persistentMountVerified,
-                    allowInSource: storage.allowInSource,
-                    persistentLabel: resolvePersistentLabel(storage),
-                    managedStorage
-                },
+                sqliteHealth,
+                sqliteStatusLabel,
                 records,
-                lastMaintenance: {
-                    lastCleanup: metaMap.last_cleanup || null,
-                    lastBackup: lastBackupInfo?.createdAt || metaMap.last_backup || null,
-                    lastIntegrityCheck: metaMap.last_integrity_check || null,
-                    lastCheckpoint: metaMap.last_checkpoint || null
-                }
-            },
-            mongodb: {
-                status: mongoStatus.connected ? "ok" : "error",
-                statusLabel: mongoHealthLabel,
-                connected: mongoStatus.connected,
-                pingMs: mongoPingMs,
-                name: mongoStatus.name,
-                modelsCount: mongoStatus.models,
-                pool: mongoStatus.pool
-            }
+                metaMap,
+                lastBackupInfo,
+                managedStorage
+            }),
+            mongodb: _buildMongoOverviewSection(mongoStatus, mongoHealthLabel, mongoPingMs)
         }
     };
 }
@@ -1075,47 +1100,37 @@ async function executeDatabaseConsole(commandString, invoker = "owner") {
 //  🍃 5. MONGODB MONITORING & SAFE DATA EXPLORER
 // ════════════════════════════════════════════════════════════════════════════
 
-async function getMongoDetailedStatus() {
-    const mongoStatus = mongo.getMongoStatus();
-    if (!mongoStatus.connected || !mongo.mongoose.connection.db) {
-        return {
-            connected: false,
-            statusLabel: "🔴 ขาดการเชื่อมต่อ",
-            collections: []
-        };
-    }
-
-    // Ping
+async function _measureMongoDetailedPing(connDb) {
     let pingMs = 0;
     try {
         const pStart = Date.now();
-        await mongo.mongoose.connection.db.command({ ping: 1 });
+        await connDb.command({ ping: 1 });
         pingMs = Date.now() - pStart;
     } catch {
         // ignore ping failure when measuring detailed latency
     }
+    return pingMs;
+}
 
-    // Host & Connection safe info
-    const safeHost = mongo.mongoose.connection.host || "cluster.mongodb.net";
-    const maskedHost = safeHost.replace(/(:\/\/)([^@]+)@/, "$1***:***@");
+async function _resolveCollectionDocCount(Model) {
+    try {
+        return await Model.estimatedDocumentCount();
+    } catch {
+        try {
+            return await Model.countDocuments();
+        } catch {
+            return 0;
+        }
+    }
+}
 
-    // Collections stats
+async function _fetchMongoCollectionsStats() {
     const collectionResults = await Promise.all(
         ALLOWED_MONGO_COLLECTIONS.map(async modelName => {
             const Model = mongo.models[modelName];
             if (!Model) return null;
 
-            let docCount = 0;
-            try {
-                docCount = await Model.estimatedDocumentCount();
-            } catch (_estErr) {
-                try {
-                    docCount = await Model.countDocuments();
-                } catch (_countErr) {
-                    // Fallback: collection document count unreadable
-                }
-            }
-
+            const docCount = await _resolveCollectionDocCount(Model);
             return {
                 name: modelName,
                 collectionName: Model.collection?.collectionName || modelName.toLowerCase(),
@@ -1124,13 +1139,13 @@ async function getMongoDetailedStatus() {
             };
         })
     );
-    const collections = collectionResults.filter(Boolean);
+    return collectionResults.filter(Boolean);
+}
 
-    // Database Stats (storageSize, dataSize, indexSize, objects)
-    let stats = null;
+async function _fetchMongoDatabaseStats(connDb) {
     try {
-        const rawStats = await mongo.mongoose.connection.db.stats();
-        stats = {
+        const rawStats = await connDb.stats();
+        return {
             collections: rawStats.collections || 0,
             objects: rawStats.objects || 0,
             avgObjSize: rawStats.avgObjSize || 0,
@@ -1142,10 +1157,28 @@ async function getMongoDetailedStatus() {
             storageSizeMb: Number.parseFloat(((rawStats.storageSize || 0) / (1024 * 1024)).toFixed(2)),
             indexSizeMb: Number.parseFloat(((rawStats.indexSize || 0) / (1024 * 1024)).toFixed(2))
         };
-    } catch (_) {
-        // Ignore stats fetch failure if db.stats command is not permitted
+    } catch {
+        return null;
+    }
+}
+
+async function getMongoDetailedStatus() {
+    const mongoStatus = mongo.getMongoStatus();
+    const connDb = mongo.mongoose.connection.db;
+    if (!mongoStatus.connected || !connDb) {
+        return {
+            connected: false,
+            statusLabel: "🔴 ขาดการเชื่อมต่อ",
+            collections: []
+        };
     }
 
+    const pingMs = await _measureMongoDetailedPing(connDb);
+    const safeHost = mongo.mongoose.connection.host || "cluster.mongodb.net";
+    const maskedHost = safeHost.replace(/(:\/\/)([^@]+)@/, "$1***:***@");
+
+    const collections = await _fetchMongoCollectionsStats();
+    const stats = await _fetchMongoDatabaseStats(connDb);
     const topCollections = [...collections].sort((a, b) => b.count - a.count).slice(0, 5);
 
     return {

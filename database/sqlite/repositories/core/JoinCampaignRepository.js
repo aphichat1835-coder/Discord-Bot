@@ -35,6 +35,35 @@ function _appendStringCols(updates, setClauses, params) {
     }
 }
 
+function _mapJobInsertParams(data, targetStatus, now) {
+    return [
+        String(data.id),
+        String(data.mode || "ALL_TO_TARGET"),
+        data.sourceGuildId ? String(data.sourceGuildId) : null,
+        data.sourceGuildName ? String(data.sourceGuildName) : null,
+        String(data.targetGuildId),
+        data.targetGuildName ? String(data.targetGuildName) : null,
+        targetStatus,
+        Number(data.requestedAmount) || 0,
+        Number(data.selectedAmount) || 0,
+        Number(data.joinedCount) || 0,
+        Number(data.alreadyCount) || 0,
+        Number(data.failedCount) || 0,
+        Number(data.processedCount) || 0,
+        Number(data.retryCount) || 0,
+        Number(data.currentConcurrency) || 8,
+        Number(data.currentThroughput) || 0.0,
+        Number(data.recoveryCount) || 0,
+        data.candidateCursor ? String(data.candidateCursor) : null,
+        data.lastError ? String(data.lastError) : null,
+        data.startedByUserId ? String(data.startedByUserId) : null,
+        data.startedByChannelId ? String(data.startedByChannelId) : null,
+        Number(data.createdAt) || now,
+        Number(data.updatedAt) || now,
+        data.completedAt ? Number(data.completedAt) : null
+    ];
+}
+
 class JoinCampaignRepository {
     constructor(db = null) {
         this._db = db;
@@ -69,32 +98,7 @@ class JoinCampaignRepository {
                 }
             }
 
-            stmt.run(
-                String(data.id),
-                String(data.mode || "ALL_TO_TARGET"),
-                data.sourceGuildId ? String(data.sourceGuildId) : null,
-                data.sourceGuildName ? String(data.sourceGuildName) : null,
-                String(data.targetGuildId),
-                data.targetGuildName ? String(data.targetGuildName) : null,
-                targetStatus,
-                Number(data.requestedAmount) || 0,
-                Number(data.selectedAmount) || 0,
-                Number(data.joinedCount) || 0,
-                Number(data.alreadyCount) || 0,
-                Number(data.failedCount) || 0,
-                Number(data.processedCount) || 0,
-                Number(data.retryCount) || 0,
-                Number(data.currentConcurrency) || 8,
-                Number(data.currentThroughput) || 0.0,
-                Number(data.recoveryCount) || 0,
-                data.candidateCursor ? String(data.candidateCursor) : null,
-                data.lastError ? String(data.lastError) : null,
-                data.startedByUserId ? String(data.startedByUserId) : null,
-                data.startedByChannelId ? String(data.startedByChannelId) : null,
-                Number(data.createdAt) || now,
-                Number(data.updatedAt) || now,
-                data.completedAt ? Number(data.completedAt) : null
-            );
+            stmt.run(..._mapJobInsertParams(data, targetStatus, now));
         });
 
         runCreate();

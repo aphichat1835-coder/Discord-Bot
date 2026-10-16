@@ -639,3 +639,96 @@ test('sendDmWithRetry handles robust 429 retry loop and recognizes closed DMs', 
     assert.equal(res3.success, true);
     assert.equal(attempts, 3);
 });
+
+test('handleDmPanelButton and validateDmModalFields comprehensive branch coverage', async () => {
+    const ownerId = process.env.OWNER_ID || config.system?.ownerId || '661415152146710558';
+
+    // 1. validateDmModalFields invalid webhook
+    const errBadWebhook = validateDmModalFields({
+        message: 'Hello',
+        webhookUrl: 'https://evil.com/webhook',
+        imageUrl: null
+    });
+    assert.match(errBadWebhook, /ลิงก์ Webhook ไม่ถูกต้อง/);
+
+    // 2. validateDmModalFields invalid image url
+    const errBadImage = validateDmModalFields({
+        message: 'Hello',
+        webhookUrl: 'https://discord.com/api/webhooks/123456789012345678/abc',
+        imageUrl: 'ftp://bad-url'
+    });
+    assert.match(errBadImage, /ลิงก์รูปภาพไม่ถูกต้อง/);
+
+    // 3. validateDmModalFields valid inputs
+    const validResult = validateDmModalFields({
+        message: 'Hello',
+        webhookUrl: 'https://discord.com/api/webhooks/123456789012345678/abc',
+        imageUrl: 'https://images.com/pic.png'
+    });
+    assert.equal(validResult, null);
+
+    // 4. handleDmPanelButton with unknown customId returns warning
+    let replyData = null;
+    await handleDmPanelButton({
+        user: { id: ownerId },
+        customId: 'dm_panel:unknown_id',
+        reply: async (data) => { replyData = data; return data; },
+        isRepliable: () => true,
+        deferred: false,
+        replied: false
+    });
+    assert.ok(replyData);
+    assert.match(replyData.content, /ปุ่มควบคุมนี้ไม่รองรับหรือไม่ถูกต้อง/);
+
+    // 5. handleDmPanelButton with BTN_DM_CANCEL
+    stageBroadcast(ownerId, { token: 'tok', guildId: '123', message: 'test' });
+    assert.ok(getStagedBroadcast(ownerId));
+    let updateData = null;
+    await handleDmPanelButton({
+        user: { id: ownerId },
+        customId: IDS.BTN_DM_CANCEL,
+        update: async (data) => { updateData = data; return data; }
+    });
+    assert.equal(getStagedBroadcast(ownerId), null);
+    assert.ok(updateData);
+    assert.match(updateData.content, /ยกเลิกการกระจายข้อความเรียบร้อยแล้ว/);
+
+    // 6. handleDmPanelButton with BTN_DM_CONFIRM when no staged data exists
+    let expiredUpdate = null;
+    await handleDmPanelButton({
+        user: { id: ownerId },
+        customId: IDS.BTN_DM_CONFIRM,
+        update: async (data) => { expiredUpdate = data; return data; }
+    });
+    assert.ok(expiredUpdate);
+    assert.match(expiredUpdate.content, /ข้อมูลการยืนยันหมดอายุหรือถูกยกเลิกแล้ว/);
+
+    // 7. handleDmPanelButton with BTN_DM_CONFIRM when broadcast is already running
+    _test.setActiveJob({ guildId: '999', isRunning: true });
+    stageBroadcast(ownerId, { token: 'tok', guildId: '123', message: 'test' });
+    let busyUpdate = null;
+    await handleDmPanelButton({
+        user: { id: ownerId },
+        customId: IDS.BTN_DM_CONFIRM,
+        update: async (data) => { busyUpdate = data; return data; }
+    });
+    assert.ok(busyUpdate);
+    assert.match(busyUpdate.content, /มีงานกระจายข้อความอื่นเริ่มทำงานก่อนหน้านี้แล้ว/);
+
+    // 8. handleDmPanelButton with BTN_DM_PANEL_OPEN when broadcast is already running
+    let busyOpen = null;
+    await handleDmPanelButton({
+        user: { id: ownerId },
+        customId: IDS.BTN_DM_PANEL_OPEN,
+        reply: async (data) => { busyOpen = data; return data; },
+        isRepliable: () => true,
+        deferred: false,
+        replied: false
+    });
+    assert.ok(busyOpen);
+    assert.match(busyOpen.content, /มีงานกระจายข้อความ DM กำลังดำเนินการอยู่ในขณะนี้/);
+
+    // Clean up
+    _test.resetActiveJob();
+    clearStagedBroadcast(ownerId);
+});
