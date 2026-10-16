@@ -35,31 +35,39 @@ function _appendStringCols(updates, setClauses, params) {
     }
 }
 
+function _toNullableString(val) {
+    return val ? String(val) : null;
+}
+
+function _toNumberOrDefault(val, def = 0) {
+    return Number(val) || def;
+}
+
 function _mapJobInsertParams(data, targetStatus, now) {
     return [
         String(data.id),
         String(data.mode || "ALL_TO_TARGET"),
-        data.sourceGuildId ? String(data.sourceGuildId) : null,
-        data.sourceGuildName ? String(data.sourceGuildName) : null,
+        _toNullableString(data.sourceGuildId),
+        _toNullableString(data.sourceGuildName),
         String(data.targetGuildId),
-        data.targetGuildName ? String(data.targetGuildName) : null,
+        _toNullableString(data.targetGuildName),
         targetStatus,
-        Number(data.requestedAmount) || 0,
-        Number(data.selectedAmount) || 0,
-        Number(data.joinedCount) || 0,
-        Number(data.alreadyCount) || 0,
-        Number(data.failedCount) || 0,
-        Number(data.processedCount) || 0,
-        Number(data.retryCount) || 0,
-        Number(data.currentConcurrency) || 8,
-        Number(data.currentThroughput) || 0.0,
-        Number(data.recoveryCount) || 0,
-        data.candidateCursor ? String(data.candidateCursor) : null,
-        data.lastError ? String(data.lastError) : null,
-        data.startedByUserId ? String(data.startedByUserId) : null,
-        data.startedByChannelId ? String(data.startedByChannelId) : null,
-        Number(data.createdAt) || now,
-        Number(data.updatedAt) || now,
+        _toNumberOrDefault(data.requestedAmount, 0),
+        _toNumberOrDefault(data.selectedAmount, 0),
+        _toNumberOrDefault(data.joinedCount, 0),
+        _toNumberOrDefault(data.alreadyCount, 0),
+        _toNumberOrDefault(data.failedCount, 0),
+        _toNumberOrDefault(data.processedCount, 0),
+        _toNumberOrDefault(data.retryCount, 0),
+        _toNumberOrDefault(data.currentConcurrency, 8),
+        _toNumberOrDefault(data.currentThroughput, 0.0),
+        _toNumberOrDefault(data.recoveryCount, 0),
+        _toNullableString(data.candidateCursor),
+        _toNullableString(data.lastError),
+        _toNullableString(data.startedByUserId),
+        _toNullableString(data.startedByChannelId),
+        _toNumberOrDefault(data.createdAt, now),
+        _toNumberOrDefault(data.updatedAt, now),
         data.completedAt ? Number(data.completedAt) : null
     ];
 }

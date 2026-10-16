@@ -810,20 +810,10 @@ class CampaignWorker {
         return this._runWorkerLoop(params);
     }
 
-    async _executeLoop({
-        job,
-        client,
-        repository,
-        tokenManager,
-        discord,
-        targetMemberIds: passedTargetMemberIds = null,
-        config
-    }) {
+    _initExecutionContext({ job, repository, config }) {
         const startTime = job.createdAt || Date.now();
         const mode = getMode(job.mode);
         const targetGuildId = String(job.targetGuildId);
-        const targetGuild = await this._resolveTargetGuild(client, job, repository);
-        const targetGuildName = targetGuild.name || job.targetGuildName || targetGuildId;
         const requestedQuota = Number(job.requestedAmount) || 0;
 
         const processedUserIds = repository.getProcessedUserIds
@@ -850,60 +840,121 @@ class CampaignWorker {
             statusReason: null
         };
 
+        return {
+            startTime,
+            mode,
+            targetGuildId,
+            requestedQuota,
+            processedUserIds,
+            minConcurrency,
+            maxConcurrency,
+            ctx
+        };
+    }
+
+    _applyItemStatus({ status, ctx, targetMemberIds, repository, jobId, userId, batchBuffer, error, retryDelayMs }) {
+        if (status === "joined") {
+            ctx.joinedCount++;
+            targetMemberIds.add(userId);
+            repository.updateItemStatus(jobId, userId, "joined");
+            batchBuffer.push({ userId, status: "joined" });
+        } else if (status === "already_member") {
+            ctx.alreadyCount++;
+            targetMemberIds.add(userId);
+            repository.updateItemStatus(jobId, userId, "already_member");
+            batchBuffer.push({ userId, status: "already_member" });
+        } else if (status === "failed" || status === "guild_full") {
+            ctx.failedCount++;
+            repository.updateItemStatus(jobId, userId, "failed", error || status);
+            batchBuffer.push({ userId, status: status === "guild_full" ? "guild_full" : "failed" });
+        } else if (status === "retry") {
+            ctx.retryCount++;
+            repository.incrementItemAttempt(jobId, userId, error, retryDelayMs);
+        } else if (status === "requeue_pending") {
+            repository.updateItemStatus(jobId, userId, "pending");
+        }
+    }
+
+    async _updateLivePanel({ client, repository, job, ctx, mode, targetGuildName, requestedQuota }) {
+        let panel = null;
+        if (job.startedByChannelId) {
+            panel = repository.findPanelByChannelId?.(job.startedByChannelId);
+        }
+        if (!panel) {
+            panel = repository.findPanelByActiveJobId?.(job.id);
+        }
+        if (!panel?.messageId) return;
+
+        const channel = await client.channels.fetch(panel.channelId).catch(() => null);
+        if (!channel) return;
+        const message = await channel.messages.fetch(panel.messageId).catch(() => null);
+        if (!message) return;
+
+        const liveJobPayload = {
+            status: "RUNNING",
+            joinedCount: ctx.joinedCount,
+            requestedAmount: requestedQuota,
+            currentConcurrency: ctx.currentConcurrency
+        };
+
+        const panelPayload = buildPanelPayload({
+            mode,
+            panelState: panel,
+            readyCount: panel.lastReadyCount,
+            liveJob: liveJobPayload,
+            targetGuildName
+        });
+
+        await message.edit(panelPayload);
+    }
+
+    async _flushFinalBatch({ batchBuffer, job, mode, targetGuildName, batchIndex }) {
+        if (batchBuffer.length === 0) return;
+        const bJoined = batchBuffer.filter(i => i.status === "joined").length;
+        const bAlready = batchBuffer.filter(i => i.status === "already_member").length;
+        const bFailed = batchBuffer.filter(i => i.status === "failed" || i.status === "guild_full").length;
+
+        await sendBatchLog({
+            webhookUrl: job.webhookUrl,
+            mode,
+            batchNumber: batchIndex,
+            items: batchBuffer,
+            joinedCount: bJoined,
+            alreadyCount: bAlready,
+            failedCount: bFailed,
+            targetGuildName
+        });
+    }
+
+    async _executeLoop({
+        job,
+        client,
+        repository,
+        tokenManager,
+        discord,
+        targetMemberIds: passedTargetMemberIds = null,
+        config
+    }) {
+        const exec = this._initExecutionContext({ job, repository, config });
+        const { startTime, mode, targetGuildId, requestedQuota, processedUserIds, minConcurrency, maxConcurrency, ctx } = exec;
+
+        const targetGuild = await this._resolveTargetGuild(client, job, repository);
+        const targetGuildName = targetGuild.name || job.targetGuildName || targetGuildId;
+        const targetMemberIds = await this._resolveTargetMemberIds(targetGuild, job, passedTargetMemberIds, repository);
+        const completedUserIds = repository.getCompletedUserIds ? repository.getCompletedUserIds(job.id) : new Set();
+        const seenUsers = new Set(completedUserIds);
+
         const rateLimitRetries = new Map();
         const networkRetries = new Map();
         const batchBuffer = [];
         let batchIndex = 1;
         let lastPanelUpdateAt = Date.now();
 
-        const targetMemberIds = await this._resolveTargetMemberIds(targetGuild, job, passedTargetMemberIds, repository);
-        const completedUserIds = repository.getCompletedUserIds ? repository.getCompletedUserIds(job.id) : new Set();
-        const seenUsers = new Set(completedUserIds);
-
-        const getTargetPanel = () => {
-            let p = null;
-            if (job.startedByChannelId) {
-                p = repository.findPanelByChannelId?.(job.startedByChannelId);
-            }
-            if (!p) {
-                p = repository.findPanelByActiveJobId?.(job.id);
-            }
-            return p;
-        };
-
         const updatePanelDebounced = async (force = false) => {
             const now = Date.now();
             if (!force && now - lastPanelUpdateAt < 2500) return;
             lastPanelUpdateAt = now;
-
-            try {
-                const panel = getTargetPanel();
-                if (!panel?.messageId) return;
-
-                const channel = await client.channels.fetch(panel.channelId).catch(() => null);
-                if (!channel) return;
-                const message = await channel.messages.fetch(panel.messageId).catch(() => null);
-                if (!message) return;
-
-                const liveJobPayload = {
-                    status: "RUNNING",
-                    joinedCount: ctx.joinedCount,
-                    requestedAmount: requestedQuota,
-                    currentConcurrency: ctx.currentConcurrency
-                };
-
-                const panelPayload = buildPanelPayload({
-                    mode,
-                    panelState: panel,
-                    readyCount: panel.lastReadyCount,
-                    liveJob: liveJobPayload,
-                    targetGuildName
-                });
-
-                await message.edit(panelPayload);
-            } catch (_err) {
-                // Best-effort: Discord message edit failure should not interrupt background campaign processing
-            }
+            await this._updateLivePanel({ client, repository, job, ctx, mode, targetGuildName, requestedQuota }).catch(() => null);
         };
 
         const candidateStream = streamCandidates({
@@ -921,7 +972,6 @@ class CampaignWorker {
         const checkpointJobCounters = () => {
             const elapsedSeconds = Math.max(1, (Date.now() - startTime) / 1000);
             const currentThroughput = Number((ctx.joinedCount / elapsedSeconds).toFixed(2));
-
             try {
                 repository.updateJob(job.id, {
                     joinedCount: ctx.joinedCount,
@@ -944,7 +994,6 @@ class CampaignWorker {
                 const bJoined = batchItems.filter(i => i.status === "joined").length;
                 const bAlready = batchItems.filter(i => i.status === "already_member").length;
                 const bFailed = batchItems.filter(i => i.status === "failed" || i.status === "guild_full").length;
-
                 await sendBatchLog({
                     webhookUrl: job.webhookUrl,
                     mode,
@@ -959,31 +1008,10 @@ class CampaignWorker {
         };
 
         const recordItemOutcome = async ({ userId, status, error = null, retryDelayMs = 0 }) => {
-            if (status === "joined") {
-                ctx.joinedCount++;
-                targetMemberIds.add(userId);
-                repository.updateItemStatus(job.id, userId, "joined");
-                batchBuffer.push({ userId, status: "joined" });
-            } else if (status === "already_member") {
-                ctx.alreadyCount++;
-                targetMemberIds.add(userId);
-                repository.updateItemStatus(job.id, userId, "already_member");
-                batchBuffer.push({ userId, status: "already_member" });
-            } else if (status === "failed" || status === "guild_full") {
-                ctx.failedCount++;
-                repository.updateItemStatus(job.id, userId, "failed", error || status);
-                batchBuffer.push({ userId, status: status === "guild_full" ? "guild_full" : "failed" });
-            } else if (status === "retry") {
-                ctx.retryCount++;
-                repository.incrementItemAttempt(job.id, userId, error, retryDelayMs);
-            } else if (status === "requeue_pending") {
-                repository.updateItemStatus(job.id, userId, "pending");
-            }
-
+            this._applyItemStatus({ status, ctx, targetMemberIds, repository, jobId: job.id, userId, batchBuffer, error, retryDelayMs });
             if (status !== "requeue_pending" && status !== "retry") {
                 await flushBatchBuffer();
             }
-
             checkpointJobCounters();
             await updatePanelDebounced(false);
         };
@@ -1027,22 +1055,7 @@ class CampaignWorker {
                 await Promise.allSettled(Array.from(activeTasks));
             }
 
-            if (batchBuffer.length > 0) {
-                const bJoined = batchBuffer.filter(i => i.status === "joined").length;
-                const bAlready = batchBuffer.filter(i => i.status === "already_member").length;
-                const bFailed = batchBuffer.filter(i => i.status === "failed" || i.status === "guild_full").length;
-
-                await sendBatchLog({
-                    webhookUrl: job.webhookUrl,
-                    mode,
-                    batchNumber: batchIndex++,
-                    items: batchBuffer,
-                    joinedCount: bJoined,
-                    alreadyCount: bAlready,
-                    failedCount: bFailed,
-                    targetGuildName
-                });
-            }
+            await this._flushFinalBatch({ batchBuffer, job, mode, targetGuildName, batchIndex });
 
             const statusOutcome = determineFinalStatus({
                 isStopping: this._isStopping,
