@@ -4,7 +4,7 @@ const {
     ModalBuilder,
     TextInputBuilder,
     TextInputStyle,
-    ActionRowBuilder
+    LabelBuilder
 } = require("discord.js");
 
 const CUSTOM_IDS = Object.freeze({
@@ -23,13 +23,12 @@ function buildBaseSetupModal({ mode, currentState = {} }) {
         .setTitle(`ตั้งค่าเซิร์ฟเวอร์ (${mode.label})`.slice(0, 45));
 
     const fields = mode.getBaseModalFields(currentState);
-    const rows = [];
+    const labels = [];
 
     for (const field of fields) {
         const inputId = field.id === "source_guild_id" ? CUSTOM_IDS.FIELD_SOURCE : CUSTOM_IDS.FIELD_TARGET;
         const textInput = new TextInputBuilder()
             .setCustomId(inputId)
-            .setLabel(field.label)
             .setPlaceholder(field.placeholder || "")
             .setStyle(TextInputStyle.Short)
             .setRequired(Boolean(field.required))
@@ -40,10 +39,14 @@ function buildBaseSetupModal({ mode, currentState = {} }) {
             textInput.setValue(String(field.value));
         }
 
-        rows.push(new ActionRowBuilder().addComponents(textInput));
+        const label = new LabelBuilder()
+            .setLabel(field.label)
+            .setTextInputComponent(textInput);
+
+        labels.push(label);
     }
 
-    modal.addComponents(rows);
+    modal.addLabelComponents(labels);
     return modal;
 }
 
@@ -54,21 +57,27 @@ function buildStartOptionsModal() {
 
     const amountInput = new TextInputBuilder()
         .setCustomId(CUSTOM_IDS.FIELD_AMOUNT)
-        .setLabel("จำนวนสมาชิกที่ต้องการดึง (เว้นว่าง = ทั้งหมด)")
         .setPlaceholder("เช่น 50, 100, 500 (ปล่อยว่างเพื่อดึงทั้งหมดที่พร้อม)")
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
 
+    const amountLabel = new LabelBuilder()
+        .setLabel("จำนวนสมาชิกที่ต้องการดึง (เว้นว่าง = ทั้งหมด)")
+        .setTextInputComponent(amountInput);
+
     const webhookInput = new TextInputBuilder()
         .setCustomId(CUSTOM_IDS.FIELD_WEBHOOK)
-        .setLabel("ลิงก์ Webhook รายงานผล (ไม่บังคับ)")
         .setPlaceholder("https://discord.com/api/webhooks/...")
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
 
-    modal.addComponents([
-        new ActionRowBuilder().addComponents(amountInput),
-        new ActionRowBuilder().addComponents(webhookInput)
+    const webhookLabel = new LabelBuilder()
+        .setLabel("ลิงก์ Webhook รายงานผล (ไม่บังคับ)")
+        .setTextInputComponent(webhookInput);
+
+    modal.addLabelComponents([
+        amountLabel,
+        webhookLabel
     ]);
 
     return modal;

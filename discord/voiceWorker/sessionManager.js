@@ -523,7 +523,7 @@ function countActiveSessionsByTokenHash(tokenHash) {
 
 // ════════════════════════════════════════════════════════════════════════════
 //  💾 REGION 7: SESSION LOAD / SAVE
-// ═══��════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 const LOAD_RECOVERABLE_STOP_CLEANUP_MS = 24 * 60 * 60 * 1000;
 const STALE_STOPPED_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 

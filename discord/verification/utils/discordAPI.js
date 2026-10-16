@@ -192,9 +192,10 @@ function normalizeDiscordApiPath(input) {
 
 function normalizeRequestBody(body) {
     if (body == null) return null;
-    if (typeof body === "string" || Buffer.isBuffer(body)) return body;
-    if (body instanceof URLSearchParams) return body.toString();
-    return String(body);
+    if (Buffer.isBuffer(body)) return body;
+    if (typeof body === "string") return Buffer.from(body, "utf8");
+    if (body instanceof URLSearchParams) return Buffer.from(body.toString(), "utf8");
+    return Buffer.from(String(body), "utf8");
 }
 
 function validateRequestBodySize(body) {
@@ -1562,5 +1563,12 @@ module.exports = {
     sendDM,
     verificationDmCopy,
     buildVerificationDmEmbed,
-    sendVerificationDM
+    sendVerificationDM,
+
+    _test: {
+        normalizeRequestBody,
+        validateRequestBodySize,
+        prepareDiscordRequestHeaders,
+        DISCORD_API_BODY_MAX_BYTES
+    }
 };

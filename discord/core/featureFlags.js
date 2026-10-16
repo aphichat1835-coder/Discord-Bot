@@ -14,7 +14,7 @@ function envNameFor(flag) {
 function isFeatureEnabled(flag, fallback = true) {
     const key = envNameFor(flag);
     const raw = process.env[key];
-    if (raw === undefined || raw === null || raw === "") {
+    if (raw === undefined || raw === "") {
         return Boolean(Object.hasOwn(DEFAULT_FLAGS, flag) ? DEFAULT_FLAGS[flag] : fallback);
     }
 

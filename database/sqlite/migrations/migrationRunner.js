@@ -19,6 +19,8 @@ const APP_VERSION = (() => {
     }
 })();
 
+const MIGRATION_FILE_PATTERN = /^(\d+)_(.+)\.sql$/;
+
 function calculateChecksum(content) {
     return crypto.createHash("sha256").update(content.trim()).digest("hex");
 }
@@ -51,12 +53,12 @@ function loadMigrationFiles(migrationsDir) {
     }
     const files = fs.readdirSync(migrationsDir)
         .filter(f => f.endsWith(".sql"))
-        .sort();
+        .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
 
     return files.map(file => {
         const filePath = path.join(migrationsDir, file);
         const content = fs.readFileSync(filePath, "utf8");
-        const match = file.match(/^(\d+)_(.+)\.sql$/);
+        const match = MIGRATION_FILE_PATTERN.exec(file);
         const version = match ? Number.parseInt(match[1], 10) : 0;
         return {
             migrationId: file,
@@ -353,5 +355,6 @@ module.exports = {
     createPreMigrationBackup,
     rotatePreMigrationBackups,
     resolvePreMigrationRetention,
-    reconcileUserVersion
+    reconcileUserVersion,
+    MIGRATION_FILE_PATTERN
 };

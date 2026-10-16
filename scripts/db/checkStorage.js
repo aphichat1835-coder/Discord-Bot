@@ -45,7 +45,7 @@ function runStorageCli() {
     process.exit(0);
 }
 
-if (require.main === module) {
+if (require.main === module) { // NOSONAR -- Node.js CommonJS entry-point guard; S3403 false positive.
     runStorageCli();
 }
 

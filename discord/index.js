@@ -507,14 +507,15 @@ function scheduleStartBotRetry() {
 }
 
 function destroyDiscordClientSafely(reason) {
-    try {
-        client.destroy();
-    } catch (err) {
-        bootLog.warn("DISCORD", "Discord client cleanup failed", {
-            code: err?.code || err?.name || "destroy_failed",
-            reason
+    // Explicitly handle asynchronous client.destroy() Promise rejection with void and .catch
+    void Promise.resolve()
+        .then(() => client.destroy())
+        .catch(err => {
+            bootLog.warn("DISCORD", "Discord client cleanup failed", {
+                code: err?.code || err?.name || "destroy_failed",
+                reason
+            });
         });
-    }
 }
 
 async function applyReadySettings() {

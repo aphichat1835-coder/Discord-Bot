@@ -305,7 +305,7 @@ async function main() {
     }
 }
 
-if (require.main === module) {
+if (require.main === module) { // NOSONAR -- Node.js CommonJS entry-point guard; S3403 false positive.
     main().catch(err => {
         console.error("[RESTORE-SQLITE] Unhandled rejection:", err);
         process.exit(1);

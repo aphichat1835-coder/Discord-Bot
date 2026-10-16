@@ -114,7 +114,7 @@ jobs:
         run: npm run test:coverage:verification
 
       - name: Database tests
-        run: npm run test:database
+        run: npm run test:coverage:database
 
       - name: Verify LCOV reports and thresholds
         run: npm run check:coverage

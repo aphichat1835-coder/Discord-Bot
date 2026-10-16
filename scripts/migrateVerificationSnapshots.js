@@ -332,7 +332,7 @@ async function run() {
     console.log("[VERIFICATION-MIGRATION]", JSON.stringify(summary));
 }
 
-if (require.main === module) {
+if (require.main === module) { // NOSONAR -- Node.js CommonJS entry-point guard; S3403 false positive.
     run()
         .catch(err => {
             console.error("[VERIFICATION-MIGRATION] failed:", err?.message || "unknown error");
