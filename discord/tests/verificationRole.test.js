@@ -238,3 +238,80 @@ test("direct role mode validates hierarchy without invoking OAuth or Webhook pip
     assert.equal(typeof _test.validateDirectRoleAssignment, "function");
 });
 
+test("handleVerifyButton rejects legacy verify_oauth_ buttons", async () => {
+    const { handleVerifyButton } = require("../commands/verification");
+    let replyPayload = null;
+    const interaction = {
+        customId: "verify_oauth_123456",
+        reply: async (payload) => { replyPayload = payload; return payload; }
+    };
+    await handleVerifyButton(interaction);
+    assert.ok(replyPayload);
+    assert.equal(replyPayload.ephemeral, true);
+    assert.match(replyPayload.content, /แผงเก่าแล้ว/);
+});
+
+test("handleVerifyButton rejects missing role in guild", async () => {
+    const { handleVerifyButton } = require("../commands/verification");
+    let replyPayload = null;
+    const interaction = {
+        customId: "verify_role_999999",
+        guild: {
+            roles: {
+                cache: new Map()
+            }
+        },
+        reply: async (payload) => { replyPayload = payload; return payload; }
+    };
+    await handleVerifyButton(interaction);
+    assert.ok(replyPayload);
+    assert.match(replyPayload.content, /ไม่พบยศนี้แล้ว/);
+});
+
+test("buildVerificationPanelComponents creates proper embed and button components", () => {
+    const role = { id: "role_abc", name: "Member" };
+    const panelOptions = {
+        title: "Test Panel",
+        description: "Welcome",
+        colorHex: "#5865F2",
+        buttonParts: {
+            label: "Verify Now",
+            emojiInput: null,
+            emojiDisplay: ""
+        }
+    };
+    const res = _test.buildVerificationPanelComponents({
+        interaction: { guild: { id: "guild_123" }, client: {} },
+        verifyType: false,
+        role,
+        panelRevision: "rev_1",
+        panelOptions
+    });
+    assert.equal(res.ok, true);
+    assert.ok(res.embed);
+    assert.ok(res.row);
+});
+
+test("buildVerificationSetupResultEmbed formats confirmation embed properly", () => {
+    const channel = { id: "ch_123" };
+    const role = { id: "role_123" };
+    const panelOptions = {
+        colorHex: "#5865F2",
+        showTs: true,
+        buttonParts: {
+            label: "Verify",
+            emojiDisplay: "✅"
+        }
+    };
+    const embed = _test.buildVerificationSetupResultEmbed({
+        interaction: {},
+        channel,
+        role,
+        verifyType: true,
+        panelOptions
+    });
+    assert.ok(embed);
+    assert.match(embed.data.title, /ติดตั้งแผงยืนยันเรียบร้อย/);
+});
+
+
