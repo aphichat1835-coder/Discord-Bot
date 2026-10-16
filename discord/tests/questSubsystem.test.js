@@ -808,6 +808,36 @@ test('handleQuestModalSubmit validates empty and excessive tokens', async () => 
     assert.match(limitReply.content, /สามารถส่งได้สูงสุด \*\*10 บัญชี\*\*/);
 });
 
+test('runnerManager job query and lifecycle management functions', async () => {
+    const {
+        getJob,
+        listJobs,
+        getUserJobs,
+        findUserJobByAccount,
+        findAnyJobByAccount,
+        stopJob,
+        stopScheduledJob,
+        stopScheduledJobAsAdmin,
+        stopRunner,
+        shutdownRunners
+    } = require('../quest/core/runnerManager');
+
+    // 1. Initial state
+    assert.equal(getJob('non_existent'), null);
+    assert.equal(findUserJobByAccount('user1', 'acc1'), null);
+    assert.equal(findAnyJobByAccount('acc1'), null);
+    assert.deepEqual(getUserJobs('user1'), []);
+    assert.equal(stopJob('user1', 'non_existent'), false);
+    assert.equal(stopScheduledJob('user1', 'sched1'), false);
+    assert.equal(stopScheduledJobAsAdmin('sched1'), false);
+    assert.equal(stopRunner('user1'), false);
+
+    // 2. shutdownRunners with empty jobs
+    const stopped = await shutdownRunners(100);
+    assert.equal(typeof stopped, 'number');
+});
+
+
 
 
 
