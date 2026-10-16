@@ -54,7 +54,7 @@ function loadMigrationFiles(migrationsDir) {
         const filePath = path.join(migrationsDir, file);
         const content = fs.readFileSync(filePath, "utf8");
         const match = file.match(/^(\d+)_(.+)\.sql$/);
-        const version = match ? parseInt(match[1], 10) : 0;
+        const version = match ? Number.parseInt(match[1], 10) : 0;
         return {
             migrationId: file,
             version,

@@ -347,9 +347,12 @@ function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAs
         statusText = "> ถอดยศได้บางส่วน มีบางรายการไม่สำเร็จ";
     }
 
-    const targetDesc = targetRoleId
-        ? `**ยศเป้าหมายที่ถอด:** <@&${targetRoleId}>`
-        : (exceptRoleIds.length > 0 ? `**ยศที่ได้รับการยกเว้นจากการถอดยศ:**\n${formatExceptRoles(exceptRoleIds)}` : "");
+    let targetDesc = "";
+    if (targetRoleId) {
+        targetDesc = `**ยศเป้าหมายที่ถอด:** <@&${targetRoleId}>`;
+    } else if (exceptRoleIds.length > 0) {
+        targetDesc = `**ยศที่ได้รับการยกเว้นจากการถอดยศ:**\n${formatExceptRoles(exceptRoleIds)}`;
+    }
 
     const descParts = [statusText, targetDesc].filter(Boolean);
     const description = descParts.length > 0 ? descParts.join("\n\n") : "> ถอดยศเสร็จสิ้นเรียบร้อย";

@@ -654,7 +654,7 @@ async function loadMongoDetails() {
                 '<td style="padding:10px 8px;text-align:right;font-weight:700;color:var(--accent3);">' + c.count.toLocaleString() + '</td>' +
                 '<td style="padding:10px 8px;text-align:right;color:var(--text2);">' + c.indexesCount + '</td>' +
                 '<td style="padding:10px 8px;text-align:center;">' +
-                    '<button type="button" class="btn btn-sm btn-secondary" onclick="openSafeExplorer(\'' + c.name + '\')">🔍 ดูตัวอย่างข้อมูล</button>' +
+                    '<button type="button" class="btn btn-sm btn-secondary" data-model="' + c.name + '" onclick="openSafeExplorer(this.dataset.model)">🔍 ดูตัวอย่างข้อมูล</button>' +
                 '</td>' +
                 '</tr>'
             ).join('');

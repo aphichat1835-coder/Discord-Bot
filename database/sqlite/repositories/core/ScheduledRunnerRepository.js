@@ -88,6 +88,7 @@ class ScheduledRunnerRepository {
             params.push(String(filter.guildId));
         }
 
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
         const orderBy = (options.sort === "desc" || options.sort?.created_at === -1 || options.sort?.createdAt === -1)
             ? "ORDER BY created_at DESC"
             : "ORDER BY created_at ASC";

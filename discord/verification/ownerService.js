@@ -336,7 +336,7 @@ async function getOAuthRecoveryCenter(guildId) {
     for (const recipient of recipients) {
         const userId = String(recipient._id || "");
         const recovery = recoveryMap.get(userId);
-        if (!recovery || !recovery.reasons || !recovery.reasons.length) continue;
+        if (!recovery?.reasons?.length) continue;
         const oauthUser = userMap.get(userId);
         members.push({
             userId,

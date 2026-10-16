@@ -56,9 +56,12 @@ async function editRecoveryFailureMessage({ client, panel, updatedPanel, targetG
 async function updatePanelRecoveryFailure({ client, repository, jobId, channelId, errorMsg, targetGuildName }) {
     try {
         if (!repository) return;
-        const panel = (channelId && repository.findPanelByChannelId)
-            ? repository.findPanelByChannelId(channelId)
-            : (jobId && repository.findPanelByActiveJobId ? repository.findPanelByActiveJobId(jobId) : null);
+        let panel = null;
+        if (channelId && repository.findPanelByChannelId) {
+            panel = repository.findPanelByChannelId(channelId);
+        } else if (jobId && repository.findPanelByActiveJobId) {
+            panel = repository.findPanelByActiveJobId(jobId);
+        }
         if (!panel) return;
 
         const sanitizedError = sanitizeUserFacingError(errorMsg);
@@ -101,15 +104,6 @@ async function handleStagedInterruptedJob({ client, repository, interruptedJob }
 }
 
 let activeRecoveryPromise = null;
-
-function runStartupRecovery({ client, repository, tokenManager, discord }) {
-    if (!repository || typeof repository.findActiveRunningJob !== "function") {
-        return Promise.resolve({ recovered: false, reason: "no_repository" });
-    }
-
-    if (activeRecoveryPromise) {
-        return activeRecoveryPromise;
-    }
 
 function claimInterruptedJobExecution({ repository, interruptedJob }) {
     if (interruptedJob.status === "RUNNING") {
@@ -298,6 +292,15 @@ async function resumeInterruptedWorker({ client, repository, interruptedJob, tar
         return { recovered: false, error: failMsg, jobId: interruptedJob.id };
     }
 }
+
+function runStartupRecovery({ client, repository, tokenManager, discord }) {
+    if (!repository || typeof repository.findActiveRunningJob !== "function") {
+        return Promise.resolve({ recovered: false, reason: "no_repository" });
+    }
+
+    if (activeRecoveryPromise) {
+        return activeRecoveryPromise;
+    }
 
     activeRecoveryPromise = (async () => {
         try {

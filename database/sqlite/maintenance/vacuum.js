@@ -7,7 +7,7 @@ function runIncrementalVacuum(db, pages = 100) {
     const autoVacuum = db.pragma("auto_vacuum", { simple: true });
     // auto_vacuum = 2 corresponds to INCREMENTAL
     if (autoVacuum === 2 || autoVacuum === "INCREMENTAL") {
-        const clampedPages = Math.min(10000, Math.max(1, parseInt(pages, 10) || 100));
+        const clampedPages = Math.min(10000, Math.max(1, Number.parseInt(pages, 10) || 100));
         db.pragma(`incremental_vacuum(${clampedPages})`);
         return { ok: true, pagesVacuumed: clampedPages };
     }

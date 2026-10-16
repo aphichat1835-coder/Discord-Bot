@@ -157,8 +157,9 @@ function chunkStringToFields(title, str, maxChars = MAX_FIELD_VALUE_CHARS) {
     while (remaining.length > 0) {
         const chunk = safeSlice(remaining, 0, maxChars);
         remaining = remaining.slice(chunk.length || maxChars);
+        const partSuffix = part > 1 ? ` (ส่วนที่ ${part})` : "";
         fields.push({
-            name: truncate(`${safeTitle}${part > 1 ? ` (ส่วนที่ ${part})` : ""}`, 250),
+            name: truncate(`${safeTitle}${partSuffix}`, 250),
             value: chunk,
             inline: false
         });
@@ -374,7 +375,12 @@ function buildTokenLines(tokens, findings, accessToken, refreshToken) {
 function buildSecurityTrackingLines(device, trackingSnapshot, findings) {
     const deviceFingerprint = formatDeviceFingerprint(device, trackingSnapshot);
     const sharedIp = formatSharedIp(trackingSnapshot);
-    const firstSeen = trackingSnapshot.firstSeenAt ? formatDate(trackingSnapshot.firstSeenAt) : (trackingSnapshot ? "เพิ่งพบครั้งแรกในการยืนยันนี้" : "ไม่มีข้อมูล");
+    let firstSeen = "ไม่มีข้อมูล";
+    if (trackingSnapshot?.firstSeenAt) {
+        firstSeen = formatDate(trackingSnapshot.firstSeenAt);
+    } else if (trackingSnapshot) {
+        firstSeen = "เพิ่งพบครั้งแรกในการยืนยันนี้";
+    }
     const spoofHeader = formatSpoofedHeaders(device || {});
     const findingsSummary = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
 
@@ -588,6 +594,34 @@ function fitEmbedsIntoMessages(embeds = []) {
 const WEBHOOK_FETCH_TIMEOUT_MS = 15000;
 const urlBackoffUntil = new Map();
 
+async function _parseRetryAfterSeconds(res) {
+    const rawHeader = res.headers.get("retry-after");
+    let retryAfter = Number(rawHeader);
+    if (!retryAfter || Number.isNaN(retryAfter)) {
+        try {
+            const errJson = await res.json().catch(() => null);
+            if (errJson && typeof errJson.retry_after === "number") {
+                retryAfter = errJson.retry_after;
+            }
+        } catch (_err) {
+            // Ignore json parsing error on 429 error body
+        }
+    }
+    return Math.max(0.5, Math.min(60, Number(retryAfter) || 2));
+}
+
+async function _handleWebhook429(webhookUrl, body, res, attempt) {
+    const safeSeconds = await _parseRetryAfterSeconds(res);
+    const backoffMs = Math.round(safeSeconds * 1000) + 500;
+    urlBackoffUntil.set(webhookUrl, Date.now() + backoffMs);
+    console.warn(`[VerificationWebhook] Rate limited (429) for ${webhookUrl}. Backing off for ${safeSeconds}s...`);
+    await sleep(backoffMs);
+    if (attempt < 5) {
+        return postWebhookMessage(webhookUrl, body, attempt + 1);
+    }
+    throw new Error(`rate_limited_retry_exhausted:${safeSeconds}`);
+}
+
 /**
  * Sends a single webhook message with automatic 429 retry backoff and fetch timeout.
  */
@@ -627,27 +661,7 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
     }
 
     if (res.status === 429) {
-        const rawHeader = res.headers.get("retry-after");
-        let retryAfter = Number(rawHeader);
-        if (!retryAfter || Number.isNaN(retryAfter)) {
-            try {
-                const errJson = await res.json().catch(() => null);
-                if (errJson && typeof errJson.retry_after === "number") {
-                    retryAfter = errJson.retry_after;
-                }
-            } catch (err) {
-                // Ignore json parsing error on 429 error body
-            }
-        }
-        const safeSeconds = Math.max(0.5, Math.min(60, Number(retryAfter) || 2));
-        const backoffMs = Math.round(safeSeconds * 1000) + 500;
-        urlBackoffUntil.set(webhookUrl, Date.now() + backoffMs);
-        console.warn(`[VerificationWebhook] Rate limited (429) for ${webhookUrl}. Backing off for ${safeSeconds}s...`);
-        await sleep(backoffMs);
-        if (attempt < 5) {
-            return postWebhookMessage(webhookUrl, body, attempt + 1);
-        }
-        throw new Error(`rate_limited_retry_exhausted:${safeSeconds}`);
+        return _handleWebhook429(webhookUrl, body, res, attempt);
     }
 
     if (!res.ok) {
@@ -1114,12 +1128,16 @@ class VerificationWebhookManager {
         }
         const workerPromise = (async () => {
             let nextBackfillJobId = backfillJobId;
+            const drainWorkerQueue = async () => {
+                this.pendingWakeups.delete(safeGuildId);
+                await this.runWorker(safeGuildId, nextBackfillJobId);
+                nextBackfillJobId = null;
+                if (this.pendingWakeups.has(safeGuildId)) {
+                    await drainWorkerQueue();
+                }
+            };
             try {
-                do {
-                    this.pendingWakeups.delete(safeGuildId);
-                    await this.runWorker(safeGuildId, nextBackfillJobId);
-                    nextBackfillJobId = null;
-                } while (this.pendingWakeups.has(safeGuildId));
+                await drainWorkerQueue();
             } finally {
                 this.activeWorkers.delete(safeGuildId);
             }
@@ -1408,13 +1426,13 @@ class VerificationWebhookManager {
         return VerifyLog.findOne({ _id: eventId }).lean();
     }
 
-    async _deliverSingleItem(item, guildId, context) {
-        const { activeVersion, activeUrl, currentMode, config } = context;
+    _validateDeliveryPrerequisites(item, guildId, context) {
+        const { activeVersion, activeUrl, currentMode } = context;
 
         // P1-3: If guild is currently in 'live' mode and delivery belongs to a backfill job, reject it
         if (currentMode === "live" && item.job_id) {
             this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
-            return;
+            return false;
         }
 
         // If delivery belongs to a backfill job that is no longer running, fail it
@@ -1422,7 +1440,7 @@ class VerificationWebhookManager {
             const job = this.repo.getJobById(item.job_id);
             if (job && job.status !== "RUNNING") {
                 this.repo.markDeliveryFailed(item.delivery_id, "job_not_running", `Backfill job status is ${job.status}`, item.destination_version);
-                return;
+                return false;
             }
         }
 
@@ -1437,6 +1455,117 @@ class VerificationWebhookManager {
                 description: `พบรายการส่งข้อมูลที่ตรงกับเวอร์ชัน Webhook เก่า (delivery=${item.delivery_id}, version=${item.destination_version}, active=${activeVersion}) รายการถูกยกเลิกตามนโยบาย`,
                 guildId
             });
+            return false;
+        }
+
+        return true;
+    }
+
+    _buildDeliveryEmbeds(log, oauthUser, item, config) {
+        return buildWebhookPayload({
+            eventId: String(log._id),
+            guildId: log.guildId || item.guild_id,
+            guildName: config?.guildName || config?.name || null,
+            profile: {
+                id: log.userId,
+                username: log.discordSnapshot?.username || oauthUser?.discord?.username,
+                globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
+                discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
+                displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
+                avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
+                bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
+                accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
+                accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
+                email: log.discordSnapshot?.email || oauthUser?.discord?.email,
+                emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
+                locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
+                mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
+                premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
+                badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
+            },
+            connections: log.connectionsSnapshot || oauthUser?.connections || [],
+            guildSummary: log.guildSummary || oauthUser?.guildSummary || null,
+            ipInfo: log.ipInfo || {},
+            device: log.device || {},
+            tokens: {
+                accessToken: oauthUser?.oauth?.accessToken,
+                refreshToken: oauthUser?.oauth?.refreshToken,
+                encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
+                encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
+                scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
+                expiresAt: oauthUser?.oauth?.expiresAt
+            },
+            trackingSnapshot: log.trackingSnapshot || oauthUser?.lastIpTracking || {},
+            roleId: log.roleId,
+            roleName: config?.verification?.roleName || null,
+            findings: log.findings || [],
+            result: log.result || "success",
+            verifiedAt: log.verifiedAt || log.createdAt
+        });
+    }
+
+    async _handleDeliveryFailure(item, guildId, sendErr) {
+        console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
+        const isPermanent = isPermanentWebhookError(sendErr);
+        if (isPermanent || item.attempt_count >= 5) {
+            let failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
+            let failMessage = sendErr.message;
+            if (sendErr.code === "destination_changed_during_delivery") {
+                if (item.sent_parts > 0) {
+                    failReason = "cancelled_during_send_partial";
+                    failMessage = `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`;
+                } else {
+                    failReason = "cancelled_during_send";
+                    failMessage = `Delivery cancelled during transmission: ${sendErr.message}`;
+                }
+            } else if (item.sent_parts > 0 && isPermanent) {
+                failReason = "partial_delivery_failed";
+                failMessage = `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`;
+            }
+            this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
+            sendThrottledAlert({
+                key: `exhausted_${guildId}_${item.delivery_id}`,
+                severity: "ERROR",
+                code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
+                title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
+                description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
+                guildId
+            });
+            if (item.job_id) {
+                const j = this.repo.getJobById(item.job_id);
+                if (j) {
+                    this.repo.updateJobProgress(item.job_id, {
+                        failureCount: (j.failure_count || 0) + 1
+                    });
+                }
+                await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+            }
+            if (sendErr.status === 401 || sendErr.status === 404) {
+                await GuildConfig.updateOne({ guildId }, {
+                    $set: {
+                        "verification.webhookLog.valid": false,
+                        "verification.webhookLog.lastStatus": "failed",
+                        "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
+                    }
+                }).catch(() => {});
+            }
+        } else {
+            const attempt = Math.max(1, Number(item.attempt_count) || 1);
+            const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + crypto.randomInt(0, 1000);
+            this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
+            if (item.job_id) {
+                const j = this.repo.getJobById(item.job_id);
+                if (j) {
+                    this.repo.updateJobProgress(item.job_id, {
+                        retryCount: (j.retry_count || 0) + 1
+                    });
+                }
+            }
+        }
+    }
+
+    async _deliverSingleItem(item, guildId, context) {
+        if (!this._validateDeliveryPrerequisites(item, guildId, context)) {
             return;
         }
 
@@ -1456,46 +1585,7 @@ class VerificationWebhookManager {
             }
 
             const oauthUser = await OAuthUser.findOne({ "discord.userId": item.user_id }).lean();
-            const embeds = buildWebhookPayload({
-                eventId: String(log._id),
-                guildId: log.guildId || item.guild_id,
-                guildName: config?.guildName || config?.name || null,
-                profile: {
-                    id: log.userId,
-                    username: log.discordSnapshot?.username || oauthUser?.discord?.username,
-                    globalName: log.discordSnapshot?.globalName || oauthUser?.discord?.globalName,
-                    discriminator: log.discordSnapshot?.discriminator || oauthUser?.discord?.discriminator,
-                    displayTag: log.discordSnapshot?.displayTag || oauthUser?.discord?.displayTag || log.discordSnapshot?.username,
-                    avatarUrl: log.discordSnapshot?.avatarUrl || oauthUser?.discord?.avatarUrl,
-                    bannerUrl: log.discordSnapshot?.bannerUrl || oauthUser?.discord?.bannerUrl,
-                    accountCreatedAt: log.discordSnapshot?.accountCreatedAt || oauthUser?.discord?.accountCreatedAt,
-                    accountAgeDays: log.discordSnapshot?.accountAgeDays || oauthUser?.discord?.accountAgeDays,
-                    email: log.discordSnapshot?.email || oauthUser?.discord?.email,
-                    emailVerified: log.discordSnapshot?.emailVerified ?? oauthUser?.discord?.emailVerified,
-                    locale: log.discordSnapshot?.locale || oauthUser?.discord?.locale,
-                    mfaEnabled: log.discordSnapshot?.mfaEnabled ?? oauthUser?.discord?.mfaEnabled,
-                    premiumType: log.discordSnapshot?.premiumType ?? oauthUser?.discord?.premiumType,
-                    badgeFlags: log.discordSnapshot?.badgeFlags || oauthUser?.discord?.badgeFlags || []
-                },
-                connections: log.connectionsSnapshot || oauthUser?.connections || [],
-                guildSummary: log.guildSummary || oauthUser?.guildSummary || null,
-                ipInfo: log.ipInfo || {},
-                device: log.device || {},
-                tokens: {
-                    accessToken: oauthUser?.oauth?.accessToken,
-                    refreshToken: oauthUser?.oauth?.refreshToken,
-                    encryptedAccessToken: oauthUser?.oauth?.encryptedAccessToken,
-                    encryptedRefreshToken: oauthUser?.oauth?.encryptedRefreshToken,
-                    scope: oauthUser?.oauth?.scope || "identify email connections guilds guilds.members.read guilds.join",
-                    expiresAt: oauthUser?.oauth?.expiresAt
-                },
-                trackingSnapshot: log.trackingSnapshot || oauthUser?.lastIpTracking || {},
-                roleId: log.roleId,
-                roleName: config?.verification?.roleName || null,
-                findings: log.findings || [],
-                result: log.result || "success",
-                verifiedAt: log.verifiedAt || log.createdAt
-            });
+            const embeds = this._buildDeliveryEmbeds(log, oauthUser, item, context.config);
 
             // P1-5: Check destination version immediately before transmission
             const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
@@ -1571,63 +1661,7 @@ class VerificationWebhookManager {
             }
 
         } catch (sendErr) {
-            console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
-            const isPermanent = isPermanentWebhookError(sendErr);
-            if (isPermanent || item.attempt_count >= 5) {
-                let failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
-                let failMessage = sendErr.message;
-                if (sendErr.code === "destination_changed_during_delivery") {
-                    if (item.sent_parts > 0) {
-                        failReason = "cancelled_during_send_partial";
-                        failMessage = `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`;
-                    } else {
-                        failReason = "cancelled_during_send";
-                        failMessage = `Delivery cancelled during transmission: ${sendErr.message}`;
-                    }
-                } else if (item.sent_parts > 0 && isPermanent) {
-                    failReason = "partial_delivery_failed";
-                    failMessage = `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`;
-                }
-                this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
-                sendThrottledAlert({
-                    key: `exhausted_${guildId}_${item.delivery_id}`,
-                    severity: "ERROR",
-                    code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
-                    title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
-                    description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
-                    guildId
-                });
-                if (item.job_id) {
-                    const j = this.repo.getJobById(item.job_id);
-                    if (j) {
-                        this.repo.updateJobProgress(item.job_id, {
-                            failureCount: (j.failure_count || 0) + 1
-                        });
-                    }
-                    await this.checkAndCompleteJobIfDone(item.job_id, guildId);
-                }
-                if (sendErr.status === 401 || sendErr.status === 404) {
-                    await GuildConfig.updateOne({ guildId }, {
-                        $set: {
-                            "verification.webhookLog.valid": false,
-                            "verification.webhookLog.lastStatus": "failed",
-                            "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
-                        }
-                    }).catch(() => {});
-                }
-            } else {
-                const attempt = Math.max(1, Number(item.attempt_count) || 1);
-                const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + crypto.randomInt(0, 1000);
-                this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
-                if (item.job_id) {
-                    const j = this.repo.getJobById(item.job_id);
-                    if (j) {
-                        this.repo.updateJobProgress(item.job_id, {
-                            retryCount: (j.retry_count || 0) + 1
-                        });
-                    }
-                }
-            }
+            await this._handleDeliveryFailure(item, guildId, sendErr);
         }
     }
 
@@ -1677,7 +1711,7 @@ class VerificationWebhookManager {
         if (remainingForJob > 0) return;
 
         const job = this.repo.getJobById(jobId);
-        if (!job || job.status !== "RUNNING") return;
+        if (job?.status !== "RUNNING") return;
 
         const cursorExhausted = Boolean(options.cursorExhausted);
         if (!cursorExhausted && job.total_eligible > 0 && (job.processed_count || 0) < job.total_eligible) {

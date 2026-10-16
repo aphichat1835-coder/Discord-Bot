@@ -192,7 +192,11 @@ function normalizeVerificationConfig(config = {}) {
 
   if (next.minConnections !== undefined && next.minConnections !== null) {
     const parsed = Number(next.minConnections);
-    next.minConnections = Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : (next.requireConnections ? 1 : 0);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      next.minConnections = Math.floor(parsed);
+    } else {
+      next.minConnections = next.requireConnections ? 1 : 0;
+    }
   } else {
     next.minConnections = next.requireConnections ? 1 : 0;
   }

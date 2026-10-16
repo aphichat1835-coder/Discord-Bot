@@ -102,11 +102,15 @@ async function handleJoinPanelCommand(interaction, client) {
     // 5. Duplicate Panel Clean Up: delete old panel in this channel only after validation passes
     try {
         const oldPanel = repository.findPanelByChannelId(interaction.channelId);
-        if (oldPanel && oldPanel.messageId) {
-            await interaction.channel.messages.delete(oldPanel.messageId).catch(() => {});
+        if (oldPanel?.messageId) {
+            await interaction.channel.messages.delete(oldPanel.messageId).catch(() => {
+                // Best-effort message delete; ignore if already deleted
+            });
             repository.deletePanelByChannelId(interaction.channelId);
         }
-    } catch (_) {}
+    } catch (_cleanupErr) {
+        // Best-effort cleanup of duplicate panel; do not block creating new panel
+    }
 
     // 6. Build Panel Payload
     const payload = buildPanelPayload({

@@ -441,8 +441,7 @@ async function executePrivacyDeletionOperations(models, safeGuildId, safeUserId,
         OAuthMemberSnapshot: OAuthMemberSnapshotModel,
         OAuthMemberRoleSnapshot: OAuthMemberRoleSnapshotModel,
         OAuthObjectChunkSnapshot: OAuthObjectChunkSnapshotModel,
-        OAuthSnapshotRecovery: OAuthSnapshotRecoveryModel,
-        VerificationRecovery: VerificationRecoveryModel
+        OAuthSnapshotRecovery: OAuthSnapshotRecoveryModel
     } = models;
 
     const operations = [
@@ -1146,7 +1145,8 @@ async function recoverPendingPrivacyDeletions({
             status: { $in: ["pending", "running", "failed"] }
         });
         candidateJobs = await (typeof query.lean === "function" ? query.lean() : query);
-    } catch (_) {
+    } catch (_err) {
+        // Return empty array if candidate jobs query fails during recovery scan
         return [];
     }
 

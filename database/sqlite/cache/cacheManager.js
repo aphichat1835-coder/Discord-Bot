@@ -181,7 +181,9 @@ class CacheManager {
                     totalEvicted += this.evictLru(namespace, toEvict);
                 }
             }
-        } catch (_) {}
+        } catch (_err) {
+            // Best-effort LRU eviction across all namespaces; return whatever was evicted before error
+        }
         return totalEvicted;
     }
 

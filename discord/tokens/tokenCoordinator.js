@@ -75,7 +75,13 @@ class TokenCoordinator extends EventEmitter {
         const hash = this.hashToken(token);
         if (!hash) return;
         const state = this._getOrCreateState(hash);
-        state.tokenType = type === 'bot' ? 'bot' : (type === 'user' ? 'user' : 'unknown');
+        let normalizedType = 'unknown';
+        if (type === 'bot') {
+            normalizedType = 'bot';
+        } else if (type === 'user') {
+            normalizedType = 'user';
+        }
+        state.tokenType = normalizedType;
     }
 
     /**
@@ -900,16 +906,17 @@ class TokenCoordinator extends EventEmitter {
     }
 }
 
-function attachTelemetryListeners(coordinator) {
-    function getSessionEventRepo() {
-        try {
-            const db = require("../../database");
-            return db?.repositories?.sessionEvent || null;
-        } catch (_) {
-            return null;
-        }
+function getSessionEventRepo() {
+    try {
+        const db = require("../../database");
+        return db?.repositories?.sessionEvent || null;
+    } catch (_err) {
+        // Fallback gracefully if database module is not initialized or unavailable
+        return null;
     }
+}
 
+function attachTelemetryListeners(coordinator) {
     coordinator.on("token:rate_limited", ({ tokenHash, subsystem, backoffSeconds, waitMs, reason, source }) => {
         try {
             const repo = getSessionEventRepo();

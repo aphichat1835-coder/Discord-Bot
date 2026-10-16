@@ -64,7 +64,9 @@ function spoolP0Event(repositoryName, item) {
                         payloadBytes,
                         maxBytes: MAX_SPOOL_BYTES
                     });
-                } catch (_) {}
+                } catch (_alertErr) {
+                    // Ignored: Alert notification failure should not crash spool fallback
+                }
                 return false;
             }
         } else if (payloadBytes > MAX_SPOOL_BYTES) {
@@ -183,6 +185,7 @@ function drainP0Spool(db, repositories = {}) {
                 insertReceiptStmt.run(entryId, repoKey, Date.now());
                 replayed++;
             } catch (insertErr) {
+                // Preserve failed line to retry on future spool drain cycles
                 failedLines.push(line);
             }
         }
@@ -199,10 +202,18 @@ function drainP0Spool(db, repositories = {}) {
                 fs.renameSync(tmpPath, journalPath);
             } catch (rewriteErr) {
                 console.error(`[P0_JOURNAL] ❌ Failed to rewrite emergency journal atomically: ${rewriteErr.message}`);
-                try { fs.unlinkSync(tmpPath); } catch (_) {}
+                try {
+                    fs.unlinkSync(tmpPath);
+                } catch (_cleanupErr) {
+                    // Best-effort cleanup of temporary rewrite file
+                }
             }
         } else {
-            try { fs.unlinkSync(journalPath); } catch (_) {}
+            try {
+                fs.unlinkSync(journalPath);
+            } catch (_unlinkErr) {
+                // Best-effort cleanup of fully replayed journal file
+            }
         }
 
         if (replayed > 0 || skippedDuplicates > 0) {
@@ -233,7 +244,8 @@ function getP0JournalStats() {
             sizeBytes: stat.size,
             path: journalPath
         };
-    } catch (_) {
+    } catch (_statErr) {
+        // Fallback to empty stats if reading journal fails
         return { exists: false, count: 0, sizeBytes: 0, path: journalPath };
     }
 }

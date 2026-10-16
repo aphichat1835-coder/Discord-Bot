@@ -77,7 +77,7 @@ function listPreMigrationBackups(customDir = null) {
                 filename: f,
                 path: p,
                 sizeBytes: stat.size,
-                sizeMb: parseFloat((stat.size / (1024 * 1024)).toFixed(2)),
+                sizeMb: Number.parseFloat((stat.size / (1024 * 1024)).toFixed(2)),
                 createdAt: new Date(stat.mtimeMs).toISOString(),
                 mtime: stat.mtimeMs
             };
@@ -88,7 +88,11 @@ function listPreMigrationBackups(customDir = null) {
 function cleanupBackupFiles(paths) {
     for (const p of paths) {
         if (p && fs.existsSync(p)) {
-            try { fs.unlinkSync(p); } catch (_) {}
+            try {
+                fs.unlinkSync(p);
+            } catch (_unlinkErr) {
+                // Best-effort cleanup of temporary backup files
+            }
         }
     }
 }

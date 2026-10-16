@@ -37,7 +37,7 @@ class VerificationStateNonceRepository {
             );
             return this.findById(info.lastInsertRowid);
         } catch (err) {
-            if (err.message && err.message.includes("UNIQUE constraint failed")) {
+            if (err.message?.includes("UNIQUE constraint failed")) {
                 const dupErr = new Error(`E11000 duplicate key error collection: verification_state_nonces index: nonceHash_1 dup key: { nonceHash: "${data.nonceHash}" }`);
                 dupErr.code = 11000;
                 dupErr.keyPattern = { nonceHash: 1 };
@@ -83,7 +83,7 @@ class VerificationStateNonceRepository {
             conditions.push("status = ?");
             params.push(String(filter.status));
         }
-        if (filter.expiresAt && filter.expiresAt.$gt) {
+        if (filter.expiresAt?.$gt) {
             const gtVal = filter.expiresAt.$gt instanceof Date
                 ? filter.expiresAt.$gt.getTime()
                 : Number(filter.expiresAt.$gt);

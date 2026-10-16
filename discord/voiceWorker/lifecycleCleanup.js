@@ -53,25 +53,28 @@ function getSelfVoiceStateInfo(client, session) {
 
 async function waitForSelfVoiceExit(clientRef, session, timeoutMs = 1200) {
     const started = Date.now();
-    let lastInfo = getSelfVoiceStateInfo(clientRef, session);
-
-    while (Date.now() - started < timeoutMs) {
-        if (!lastInfo.inTargetChannel) return lastInfo;
+    async function poll() {
+        const lastInfo = getSelfVoiceStateInfo(clientRef, session);
+        if (!lastInfo.inTargetChannel || (Date.now() - started >= timeoutMs)) {
+            return lastInfo;
+        }
         await delay(150);
-        lastInfo = getSelfVoiceStateInfo(clientRef, session);
+        return poll();
     }
-
-    return lastInfo;
+    return poll();
 }
 
 async function waitForTargetVoice(clientRef, session, timeoutMs = 3000, connection = null) {
     const started = Date.now();
-    let info = getSelfVoiceStateInfo(clientRef, session);
-    while (Date.now() - started < timeoutMs) {
-        if (info.inTargetChannel) return info;
+    async function poll() {
+        const info = getSelfVoiceStateInfo(clientRef, session);
+        if (info.inTargetChannel || (Date.now() - started >= timeoutMs)) {
+            return info;
+        }
         await delay(150);
-        info = getSelfVoiceStateInfo(clientRef, session);
+        return poll();
     }
+    const info = await poll();
     const connectionReady = connection?.state?.status === VoiceConnectionStatus.Ready;
     const joinedChannelId = connection?.joinConfig?.channelId || null;
     if (!info.inspectable && connectionReady && String(joinedChannelId) === String(session?.voiceId)) {

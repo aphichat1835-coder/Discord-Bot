@@ -26,9 +26,12 @@ function sendWebhookEventSafe(...args) {
 }
 
 function roleWasApplied(resultOrRoleAssign, maybeRoleAssign) {
-    const roleAssign = (maybeRoleAssign && typeof maybeRoleAssign === "object")
-        ? maybeRoleAssign
-        : (resultOrRoleAssign && typeof resultOrRoleAssign === "object" ? resultOrRoleAssign : null);
+    let roleAssign = null;
+    if (maybeRoleAssign && typeof maybeRoleAssign === "object") {
+        roleAssign = maybeRoleAssign;
+    } else if (resultOrRoleAssign && typeof resultOrRoleAssign === "object") {
+        roleAssign = resultOrRoleAssign;
+    }
 
     return Boolean(
         roleAssign?.ok === true &&

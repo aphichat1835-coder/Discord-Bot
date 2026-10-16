@@ -6,7 +6,7 @@ const { runBoundedCleanup } = require("./cleanup");
 const { evaluateStoragePaths } = require("./storageCheck");
 
 function runStartupCheck(db, options = {}) {
-    if (!db || !db.open) {
+    if (!db?.open) {
         throw new Error("[SQLITE] ❌ Cannot perform startup check: database connection is not open");
     }
 

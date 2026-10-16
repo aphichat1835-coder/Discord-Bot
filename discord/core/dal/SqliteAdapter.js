@@ -29,35 +29,45 @@ function getDeep(target, path) {
     return curr;
 }
 
-function applyDocUpdate(existing, updateData) {
-    const updated = structuredClone(existing);
-    if (updateData.$set && typeof updateData.$set === 'object') {
-        for (const [key, value] of Object.entries(updateData.$set)) {
-            setDeep(updated, key, value);
+function applyDocSet(target, setData) {
+    if (!setData || typeof setData !== 'object') return;
+    for (const [key, value] of Object.entries(setData)) {
+        setDeep(target, key, value);
+    }
+}
+
+function applyDocUnset(target, unsetData) {
+    if (!unsetData || typeof unsetData !== 'object') return;
+    for (const key of Object.keys(unsetData)) {
+        const parts = key.split('.');
+        let curr = target;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (!curr[parts[i]]) break;
+            curr = curr[parts[i]];
+        }
+        if (curr && typeof curr === 'object') {
+            delete curr[parts.at(-1)];
         }
     }
-    if (updateData.$unset && typeof updateData.$unset === 'object') {
-        for (const key of Object.keys(updateData.$unset)) {
-            const parts = key.split('.');
-            let curr = updated;
-            for (let i = 0; i < parts.length - 1; i++) {
-                if (!curr[parts[i]]) break;
-                curr = curr[parts[i]];
-            }
-            if (curr && typeof curr === 'object') {
-                delete curr[parts.at(-1)];
-            }
-        }
-    }
+}
+
+function applyDocFields(target, updateData) {
     for (const [k, v] of Object.entries(updateData)) {
         if (!k.startsWith('$')) {
             if (k.includes('.')) {
-                setDeep(updated, k, v);
+                setDeep(target, k, v);
             } else {
-                updated[k] = v;
+                target[k] = v;
             }
         }
     }
+}
+
+function applyDocUpdate(existing, updateData) {
+    const updated = structuredClone(existing);
+    applyDocSet(updated, updateData.$set);
+    applyDocUnset(updated, updateData.$unset);
+    applyDocFields(updated, updateData);
     return updated;
 }
 

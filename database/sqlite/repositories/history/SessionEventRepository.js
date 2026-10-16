@@ -20,7 +20,8 @@ class SessionEventRepository extends BaseBufferedEventRepository {
             try {
                 const cleaned = sanitizeDetails(event.metadata);
                 metadataJson = JSON.stringify(cleaned).slice(0, 4096);
-            } catch (_) {
+            } catch (err) {
+                // Best-effort serialization of metadata; fallback to null on error
                 metadataJson = null;
             }
         }

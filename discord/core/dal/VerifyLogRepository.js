@@ -25,12 +25,14 @@ class VerifyLogRepository {
         return this.adapter.create(doc);
     }
 
-    async findByGuild(guildId, options = { limit: 50, skip: 0 }) {
+    async findByGuild(guildId, options = {}) {
         if (!guildId) return [];
+        const limit = Number(options?.limit) || 50;
+        const skip = Number(options?.skip) || 0;
         return this.adapter.find({ guildId: String(guildId) }, {
             sort: { verifiedAt: -1, createdAt: -1 },
-            limit: options.limit || 50,
-            skip: options.skip || 0
+            limit,
+            skip
         });
     }
 

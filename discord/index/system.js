@@ -97,7 +97,7 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
         if (isMutedLogLine(line)) return;
 
         // Determine subsystem category from tags in log text (skipping generic BOT/LEVEL tags)
-        const tagMatches = [...line.matchAll(/\[([^\]]+)\]/g)]
+        const tagMatches = [...line.matchAll(/\[([^[\]]{1,64})\]/g)]
             .map(m => m[1].trim().toUpperCase())
             .filter(t => !["BOT", "OK", "INFO", "WARN", "FAIL", "ERROR", "CRITICAL"].includes(t.replace(/[^A-Z]/g, "")));
         const rawTag = tagMatches[0] || "RUNTIME";
@@ -302,6 +302,11 @@ function setFatalShutdownHandler(handler) {
     fatalShutdownHandler = typeof handler === "function" ? handler : null;
 }
 
+const TRANSIENT_GATEWAY_CODES = new Set([
+    "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED",
+    "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_STREAM_PREMATURE_CLOSE"
+]);
+
 function isTransientGatewayError(err) {
     if (!err) return false;
     const msg = String(err?.message || "");
@@ -317,11 +322,7 @@ function isTransientGatewayError(err) {
     }
 
     // 2. Common transient socket/DNS blips on gateway connection
-    const transientCodes = [
-        "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED",
-        "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_STREAM_PREMATURE_CLOSE"
-    ];
-    if (transientCodes.includes(code) || transientCodes.includes(causeCode)) {
+    if (TRANSIENT_GATEWAY_CODES.has(code) || TRANSIENT_GATEWAY_CODES.has(causeCode)) {
         if (/websocket|gateway|discord/i.test(stack) || /websocket|gateway|discord/i.test(msg) || /websocket|gateway|discord/i.test(causeMsg)) {
             return true;
         }

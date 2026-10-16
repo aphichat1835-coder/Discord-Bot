@@ -66,7 +66,8 @@ function sendRawWebhook(webhookUrl, payload) {
 
             req.write(data);
             req.end();
-        } catch (_) {
+        } catch (_reqErr) {
+            // Return false if URL parsing or request creation throws synchronously
             resolve(false);
         }
     });

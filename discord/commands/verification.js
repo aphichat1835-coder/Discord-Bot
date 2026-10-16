@@ -278,11 +278,7 @@ function emojiToDisplay(emoji, fallback = "") {
 }
 
 function resolveButtonEmoji(input, fallback, client) {
-    const primary = parseButtonEmoji(input, null, client);
-
-    if (primary) return primary;
-
-    return parseButtonEmoji(fallback, null, client);
+    return parseButtonEmoji(input, null, client) || parseButtonEmoji(fallback, null, client) || null;
 }
 
 function applyEmoji(button, emojiInput, fallback, client) {

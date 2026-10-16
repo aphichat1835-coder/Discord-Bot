@@ -152,9 +152,11 @@ function checkAccountEligibility({ profile, policySnapshot, connections }) {
         (!policySnapshot?.requireEmailVerified || profile?.verified);
 
     const connectionCount = Array.isArray(connections) ? connections.length : 0;
-    const requiredMinConnections = Number.isFinite(Number(policySnapshot?.minConnections))
-        ? Math.floor(Number(policySnapshot.minConnections))
-        : (policySnapshot?.requireConnections ? 1 : 0);
+    const minConnNum = Number(policySnapshot?.minConnections);
+    let requiredMinConnections = policySnapshot?.requireConnections ? 1 : 0;
+    if (Number.isFinite(minConnNum)) {
+        requiredMinConnections = Math.floor(minConnNum);
+    }
     const connectionOk = !policySnapshot?.requireConnections || (connectionCount >= requiredMinConnections);
 
     return checkAccountEligibilityRequirements({

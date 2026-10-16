@@ -39,12 +39,14 @@ async function getLiveTargetMemberIds(guild) {
                 after = Array.from(batch.keys())[batch.size - 1];
             }
             return memberIds;
-        } catch (err) {
+        } catch (fetchErr) {
+            console.warn(`[JoinCampaign] Target member fetch attempt ${attempts} failed: ${fetchErr.message}`);
             if (attempts >= 2) {
                 const error = new Error("ไม่สามารถดึงรายชื่อสมาชิกปัจจุบันของเซิร์ฟเวอร์ปลายทางได้ กรุณาลองใหม่อีกครั้งนะครับ");
                 error.code = "FETCH_MEMBERS_FAILED";
                 throw error;
             }
+            // Sequential backoff delay before retrying member list fetch
             await new Promise(r => setTimeout(r, 600));
         }
     }

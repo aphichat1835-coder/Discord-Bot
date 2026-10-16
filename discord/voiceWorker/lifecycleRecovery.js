@@ -94,8 +94,14 @@ async function handleHibernateTransition(sessionId, tokenHash, session, currentC
             : () => require("./lifecycle").healthCheck?.();
         try {
             const p = runHealthCheck();
-            if (p?.catch) p.catch(() => {});
-        } catch (_) {}
+            if (p?.catch) {
+                p.catch(err => {
+                    console.warn(`[WORKER] ⚠️ Background health check promise rejection on hibernate resume: ${err?.message}`);
+                });
+            }
+        } catch (err) {
+            console.warn(`[WORKER] ⚠️ Synchronous health check error on hibernate resume: ${err?.message}`);
+        }
     }, pauseMs);
     wakeTimer.unref?.();
     hibernateTimers.set(sessionId, wakeTimer);

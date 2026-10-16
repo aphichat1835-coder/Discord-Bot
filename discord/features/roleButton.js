@@ -109,14 +109,14 @@ async function applySingleRoleChange(member, role, shouldAdd, results) {
         try {
             await member.roles.add(role.id);
             results.added.push(role.name);
-        } catch (err) {
+        } catch (_err) {
             results.failed.push(`${role.name}: บอทไม่มีสิทธิ์จัดการยศนี้`);
         }
     } else if (!shouldAdd && has) {
         try {
             await member.roles.remove(role.id);
             results.removed.push(role.name);
-        } catch (err) {
+        } catch (_err) {
             results.failed.push(`${role.name}: บอทไม่มีสิทธิ์จัดการยศนี้`);
         }
     }

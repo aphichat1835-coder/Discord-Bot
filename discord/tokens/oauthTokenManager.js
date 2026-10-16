@@ -1517,6 +1517,8 @@ async function migrateStoredTokenEncryption({
     let migratedFields = 0;
     let failedFields = 0;
 
+    // Sequential execution is intentional to prevent MongoDB write races,
+    // preserve predictable cursor advancement, and avoid connection pool exhaustion.
     for (const doc of docs) {
         for (const field of targetFields) {
             const outcome = await migrateSingleField(model, doc, field, dryRun);

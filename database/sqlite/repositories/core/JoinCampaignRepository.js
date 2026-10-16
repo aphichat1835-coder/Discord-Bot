@@ -116,53 +116,36 @@ class JoinCampaignRepository {
             setClauses.push("status = ?");
             params.push(String(updates.status));
         }
-        if (updates.joinedCount !== undefined) {
-            setClauses.push("joined_count = ?");
-            params.push(Number(updates.joinedCount));
+
+        const numericCols = [
+            ["joined_count", updates.joinedCount],
+            ["already_count", updates.alreadyCount],
+            ["failed_count", updates.failedCount],
+            ["processed_count", updates.processedCount],
+            ["retry_count", updates.retryCount],
+            ["current_concurrency", updates.currentConcurrency],
+            ["current_throughput", updates.currentThroughput !== undefined ? updates.currentThroughput : updates.current_throughput],
+            ["recovery_count", updates.recoveryCount !== undefined ? updates.recoveryCount : updates.recovery_count]
+        ];
+        for (const [col, val] of numericCols) {
+            if (val !== undefined) {
+                setClauses.push(`${col} = ?`);
+                params.push(Number(val) || 0);
+            }
         }
-        if (updates.alreadyCount !== undefined) {
-            setClauses.push("already_count = ?");
-            params.push(Number(updates.alreadyCount));
+
+        const stringNullableCols = [
+            ["candidate_cursor", updates.candidateCursor],
+            ["last_error", updates.lastError !== undefined ? updates.lastError : updates.last_error],
+            ["started_by_channel_id", updates.startedByChannelId]
+        ];
+        for (const [col, val] of stringNullableCols) {
+            if (val !== undefined) {
+                setClauses.push(`${col} = ?`);
+                params.push(val ? String(val) : null);
+            }
         }
-        if (updates.failedCount !== undefined) {
-            setClauses.push("failed_count = ?");
-            params.push(Number(updates.failedCount));
-        }
-        if (updates.processedCount !== undefined) {
-            setClauses.push("processed_count = ?");
-            params.push(Number(updates.processedCount));
-        }
-        if (updates.retryCount !== undefined) {
-            setClauses.push("retry_count = ?");
-            params.push(Number(updates.retryCount));
-        }
-        if (updates.currentConcurrency !== undefined) {
-            setClauses.push("current_concurrency = ?");
-            params.push(Number(updates.currentConcurrency));
-        }
-        const throughput = updates.currentThroughput !== undefined ? updates.currentThroughput : updates.current_throughput;
-        if (throughput !== undefined) {
-            setClauses.push("current_throughput = ?");
-            params.push(Number(throughput) || 0.0);
-        }
-        const recCount = updates.recoveryCount !== undefined ? updates.recoveryCount : updates.recovery_count;
-        if (recCount !== undefined) {
-            setClauses.push("recovery_count = ?");
-            params.push(Number(recCount));
-        }
-        if (updates.candidateCursor !== undefined) {
-            setClauses.push("candidate_cursor = ?");
-            params.push(updates.candidateCursor ? String(updates.candidateCursor) : null);
-        }
-        const lastErr = updates.lastError !== undefined ? updates.lastError : updates.last_error;
-        if (lastErr !== undefined) {
-            setClauses.push("last_error = ?");
-            params.push(lastErr ? String(lastErr) : null);
-        }
-        if (updates.startedByChannelId !== undefined) {
-            setClauses.push("started_by_channel_id = ?");
-            params.push(updates.startedByChannelId ? String(updates.startedByChannelId) : null);
-        }
+
         if (updates.completedAt !== undefined) {
             setClauses.push("completed_at = ?");
             params.push(updates.completedAt ? Number(updates.completedAt) : null);
@@ -250,9 +233,12 @@ class JoinCampaignRepository {
         const totalAlready = Number(totals?.total_already) || 0;
         const totalProcessed = Number(totals?.total_processed) || 0;
         const totalFailed = Number(totals?.total_failed) || 0;
-        const successRatePercent = totalProcessed > 0
-            ? Math.round((totalJoined / totalProcessed) * 100)
-            : (totalCampaigns > 0 ? 100 : 0);
+        let successRatePercent = 0;
+        if (totalProcessed > 0) {
+            successRatePercent = Math.round((totalJoined / totalProcessed) * 100);
+        } else if (totalCampaigns > 0) {
+            successRatePercent = 100;
+        }
 
         return {
             totalJobs: totalCampaigns,
@@ -320,7 +306,8 @@ class JoinCampaignRepository {
         try {
             const row = updateStmt.get(leaseUntil, now, now, String(campaignId), now, now);
             return row ? this._hydrateItem(row) : null;
-        } catch (_) {
+        } catch (_err) {
+            // Fallback to two-step select-and-update when SQLite runtime rejects RETURNING clause
             const findStmt = this.db.prepare(`
                 SELECT id FROM join_campaign_items
                 WHERE campaign_id = ? AND (
@@ -457,6 +444,13 @@ class JoinCampaignRepository {
                 updated_at = excluded.updated_at
         `);
 
+        let readyCountValue = null;
+        if (data.lastReadyCount !== undefined && data.lastReadyCount !== null) {
+            readyCountValue = Number(data.lastReadyCount);
+        } else if (data.readyCount !== undefined && data.readyCount !== null) {
+            readyCountValue = Number(data.readyCount);
+        }
+
         stmt.run(
             String(data.messageId),
             String(data.channelId),
@@ -466,9 +460,7 @@ class JoinCampaignRepository {
             data.targetGuildId ? String(data.targetGuildId) : null,
             data.activeJobId ? String(data.activeJobId) : null,
             data.requestedAmount !== undefined && data.requestedAmount !== null ? Number(data.requestedAmount) : null,
-            data.lastReadyCount !== undefined && data.lastReadyCount !== null
-                ? Number(data.lastReadyCount)
-                : (data.readyCount !== undefined && data.readyCount !== null ? Number(data.readyCount) : null),
+            readyCountValue,
             data.lastStatusSummary ? String(data.lastStatusSummary) : null,
             now
         );

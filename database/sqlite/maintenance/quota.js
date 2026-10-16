@@ -158,12 +158,18 @@ function evaluateEmergencyThresholds(dbPath, metrics = {}) {
         reasons.push(`Telemetry write-behind buffer queue overflow (${bufferCount} items >= 2000 capacity)`);
     }
 
+    const isOverallEmergency = isStorageEmergency || isBufferEmergency;
+    let severity = "OK";
+    if (isOverallEmergency) {
+        severity = quota.status === "hard" ? "CRITICAL" : "ERROR";
+    }
+
     return {
-        isEmergency: isStorageEmergency || isBufferEmergency,
+        isEmergency: isOverallEmergency,
         isStorageEmergency,
         isBufferEmergency,
         reasons,
-        severity: (isStorageEmergency || isBufferEmergency) ? (quota.status === "hard" ? "CRITICAL" : "ERROR") : "OK",
+        severity,
         quota,
         walMb,
         bufferCount,

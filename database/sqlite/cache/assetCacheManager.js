@@ -240,7 +240,13 @@ class AssetCacheManager {
                 );
             } catch (dbErr) {
                 if (newlyCreatedFile && fs.existsSync(fullPath)) {
-                    try { fs.unlinkSync(fullPath); } catch (_) {}
+                    try {
+                        fs.unlinkSync(fullPath);
+                    } catch (unlinkErr) {
+                        if (unlinkErr.code !== 'ENOENT') {
+                            console.warn(`[ASSET_CACHE] Failed to clean up file ${fullPath}:`, unlinkErr.message);
+                        }
+                    }
                 }
                 throw dbErr;
             }
@@ -274,7 +280,11 @@ class AssetCacheManager {
                 if (fs.existsSync(fullPath)) {
                     try {
                         fs.unlinkSync(fullPath);
-                    } catch (_) {}
+                    } catch (unlinkErr) {
+                        if (unlinkErr.code !== 'ENOENT') {
+                            console.warn(`[ASSET_CACHE] Failed to remove asset file ${fullPath}:`, unlinkErr.message);
+                        }
+                    }
                 }
             }
 
@@ -297,7 +307,7 @@ class AssetCacheManager {
                 )
             `).get();
             return row ? Number(row.total) : 0;
-        } catch (_) {
+        } catch (_err) {
             // Return 0 if asset_cache table is unavailable or closed
             return 0;
         }
@@ -360,7 +370,11 @@ class AssetCacheManager {
                         try {
                             fs.unlinkSync(path.join(this.assetDir, file));
                             stats.orphanFilesRemoved++;
-                        } catch (_) {}
+                        } catch (unlinkErr) {
+                            if (unlinkErr.code !== 'ENOENT') {
+                                console.warn(`[ASSET_CACHE] Failed to remove orphan file ${file}:`, unlinkErr.message);
+                            }
+                        }
                     }
                 }
             }

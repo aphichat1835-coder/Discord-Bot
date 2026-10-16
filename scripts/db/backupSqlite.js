@@ -18,7 +18,7 @@ function parseArgs() {
             customDest = args[i + 1];
             i++;
         } else if (args[i] === "--keep" && args[i + 1]) {
-            maxBackups = parseInt(args[i + 1], 10) || 5;
+            maxBackups = Number.parseInt(args[i + 1], 10) || 5;
             i++;
         }
     }

@@ -95,11 +95,20 @@ function evictWithPriority(buffer, dropTarget = 500, outStats = null) {
 }
 
 const SENSITIVE_KEY_REGEX = /(?:token|password|pin|secret|credential|auth|bearer|cookie|salt|private|api_?key|access_?key|secret_?key|^key$)/i;
-const SENSITIVE_VALUE_REGEX = /(?:(?:token|password|secret|api_?key)\s*[:=]\s*[^\s&,;]+|bearer\s+[\w.-]+|bot\s+[\w.-]+|mfa\.[\w-]{20,}|[\w-]{24,}\.[\w-]{6}\.[\w-]{20,})/gi;
+const SENSITIVE_VALUE_PATTERNS = Object.freeze([
+    /(?:token|password|secret|api_?key)\s*[:=]\s*[^\s&,;]+/gi,
+    /bearer\s+[\w.-]+/gi,
+    /bot\s+[\w.-]+/gi,
+    /mfa\.[\w-]{20,}/gi,
+    /[\w-]{24,}\.[\w-]{6}\.[\w-]{20,}/g
+]);
 
 function sanitizeString(str) {
     if (typeof str !== "string") return str;
-    const result = str.replace(SENSITIVE_VALUE_REGEX, "[REDACTED_CREDENTIAL]");
+    let result = str;
+    for (const pattern of SENSITIVE_VALUE_PATTERNS) {
+        result = result.replace(pattern, "[REDACTED_CREDENTIAL]");
+    }
     return result.length > 500 ? result.slice(0, 500) + "..." : result;
 }
 

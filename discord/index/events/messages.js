@@ -47,6 +47,7 @@ async function deleteRaidEvidenceSafely(message, maxMessages = 5) {
 
         const targets = ownedMessages.length > 0 ? ownedMessages : [message];
 
+        // Sequential message deletion is intentional to prevent triggering Discord channel rate limits
         for (const target of targets) {
             if (await deleteMessageWithLog(target, "anti-raid")) deletedCount++;
         }

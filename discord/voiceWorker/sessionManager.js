@@ -677,7 +677,7 @@ async function loadDatabase() {
                 const activeRuntimes = voiceRepo.listActiveSessionRuntimes() || [];
                 let orphanPurged = 0;
                 for (const rt of activeRuntimes) {
-                    if (rt && rt.session_id && !sessions.has(rt.session_id)) {
+                    if (rt?.session_id && !sessions.has(rt.session_id)) {
                         voiceRepo.deleteSessionRuntime(rt.session_id);
                         orphanPurged++;
                     }
@@ -1277,7 +1277,7 @@ async function deleteSession(sessionId, options = {}) {
         const repo = getVoiceRuntimeRepository();
         if (repo) repo.deleteSessionRuntime(sessionId);
     } catch (err) {
-        // Voice runtime repository cleanup failure is non-fatal during session delete
+        console.warn(`[SESSION] ⚠️ Failed to delete session runtime for ${sessionId}: ${err.message}`);
     }
 
     try {
@@ -1288,7 +1288,7 @@ async function deleteSession(sessionId, options = {}) {
             metadata: { stoppedReason: session?.stoppedReason || "manual_or_error" }
         });
     } catch (err) {
-        // Best-effort telemetry recording should not crash session removal
+        console.warn(`[SESSION] ⚠️ Failed to record session delete event for ${sessionId}: ${err.message}`);
     }
 
     console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);

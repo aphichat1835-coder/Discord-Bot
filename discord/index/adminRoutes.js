@@ -51,18 +51,18 @@ async function stopGuildVoiceSessions(sessionManager, voiceWorker, guildId) {
     const guildSessions = Array.from(sessionManager.getAllSessions().values())
         .filter(session => session.serverId === guildId);
 
-    let failedStops = 0;
+    const stopResults = await Promise.all(
+        guildSessions.map(session =>
+            voiceWorker.stopSession(session.sessionId, {
+                stoppedBy: "dashboard"
+            }).catch(() => {
+                console.warn("[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed");
+                return false;
+            })
+        )
+    );
 
-    for (const session of guildSessions) {
-        const stopped = await voiceWorker.stopSession(session.sessionId, {
-            stoppedBy: "dashboard"
-        }).catch(() => {
-            console.warn("[DASHBOARD] ⚠️ Best-effort guild kick voice stop failed");
-            return false;
-        });
-
-        if (!stopped) failedStops++;
-    }
+    const failedStops = stopResults.filter(stopped => !stopped).length;
 
     if (failedStops > 0) {
         console.warn(`[DASHBOARD] ⚠️ Continuing guild leave after ${failedStops} voice session stop failure(s)`);

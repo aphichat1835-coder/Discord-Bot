@@ -90,7 +90,7 @@ async function handleModalSubmit(interaction, client) {
                     }
                 }
             } catch (editErr) {
-                // Best-effort: Discord message edit failure should not interrupt modal interaction acknowledgment
+                console.warn("[JoinCampaign] Failed to update panel message on modal submit:", editErr.message);
             }
         }
 

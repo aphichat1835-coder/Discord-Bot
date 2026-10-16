@@ -96,8 +96,6 @@ async function updatePanelFailureState({ client, repository, channelId, jobId, e
 }
 
 class JoinCampaignService {
-    constructor() {}
-
     get isRunning() {
         return campaignWorker.isRunning;
     }
@@ -171,6 +169,41 @@ class JoinCampaignService {
         };
     }
 
+    _createCampaignJobRecord(repository, { jobId, mode, preflight, freshReadyCount, session }) {
+        try {
+            return repository.createJob({
+                id: jobId,
+                mode: mode.id,
+                sourceGuildId: preflight.sourceGuildId,
+                sourceGuildName: preflight.sourceGuildName,
+                targetGuildId: preflight.targetGuildId,
+                targetGuildName: preflight.targetGuildName,
+                status: "RUNNING",
+                requestedAmount: preflight.requestedQuota,
+                selectedAmount: freshReadyCount,
+                joinedCount: 0,
+                alreadyCount: 0,
+                failedCount: 0,
+                processedCount: 0,
+                retryCount: 0,
+                currentConcurrency: 8,
+                currentThroughput: 0.0,
+                recoveryCount: 0,
+                candidateCursor: null,
+                lastError: null,
+                startedByUserId: session.startedByUserId,
+                startedByChannelId: session.channelId,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            });
+        } catch (err) {
+            if (err?.code === "ACTIVE_CAMPAIGN_EXISTS" || String(err?.message || "").includes("UNIQUE constraint failed")) {
+                return null;
+            }
+            throw err;
+        }
+    }
+
     async confirmAndStartCampaign({ stageId, client, repository, tokenManager = oauthTokenManager, discord = null }) {
         const session = stagedSessions.get(stageId);
         if (!session) {
@@ -217,41 +250,12 @@ class JoinCampaignService {
         }
 
         // Persist initial job in SQLite (Notice: webhookUrl is NOT stored in SQLite)
-        let job;
-        try {
-            job = repository.createJob({
-                id: jobId,
-                mode: mode.id,
-                sourceGuildId: preflight.sourceGuildId,
-                sourceGuildName: preflight.sourceGuildName,
-                targetGuildId: preflight.targetGuildId,
-                targetGuildName: preflight.targetGuildName,
-                status: "RUNNING",
-                requestedAmount: preflight.requestedQuota,
-                selectedAmount: freshReadyCount,
-                joinedCount: 0,
-                alreadyCount: 0,
-                failedCount: 0,
-                processedCount: 0,
-                retryCount: 0,
-                currentConcurrency: 8,
-                currentThroughput: 0.0,
-                recoveryCount: 0,
-                candidateCursor: null,
-                lastError: null,
-                startedByUserId: session.startedByUserId,
-                startedByChannelId: session.channelId,
-                createdAt: Date.now(),
-                updatedAt: Date.now()
-            });
-        } catch (err) {
-            if (err?.code === "ACTIVE_CAMPAIGN_EXISTS" || String(err?.message || "").includes("UNIQUE constraint failed")) {
-                return {
-                    ok: false,
-                    error: "ตอนนี้มีงานดึงสมาชิกกำลังทำงานอยู่ กรุณารอให้งานเดิมเสร็จก่อนนะครับ"
-                };
-            }
-            throw err;
+        const job = this._createCampaignJobRecord(repository, { jobId, mode, preflight, freshReadyCount, session });
+        if (!job) {
+            return {
+                ok: false,
+                error: "ตอนนี้มีงานดึงสมาชิกกำลังทำงานอยู่ กรุณารอให้งานเดิมเสร็จก่อนนะครับ"
+            };
         }
 
         // Associate panel with active job and requested quota in SQLite
@@ -265,7 +269,10 @@ class JoinCampaignService {
                     lastReadyCount: freshReadyCount
                 });
             }
-        } catch (_) {}
+        } catch (err) {
+            // Best-effort panel association; log warning and continue
+            console.warn(`[JoinCampaign] ⚠️ Best-effort panel association skipped for channel ${session.channelId}: ${err?.message}`);
+        }
 
         // Start bounded adaptive worker pool in background
         try {
@@ -403,15 +410,16 @@ class JoinCampaignService {
             };
         };
 
+        const completedCandidate = lastJob?.status !== "RUNNING" ? lastJob : null;
         const activeFormatted = formatForDashboard(activeJob);
-        const lastFormatted = formatForDashboard(lastJob && lastJob.status !== "RUNNING" ? lastJob : null);
+        const lastFormatted = formatForDashboard(completedCandidate);
 
         return {
             isRunning: this.isRunning || Boolean(activeJob),
             active: activeFormatted,
             last: lastFormatted,
             activeJob,
-            lastCompletedJob: lastJob && lastJob.status !== "RUNNING" ? lastJob : null
+            lastCompletedJob: completedCandidate
         };
     }
 

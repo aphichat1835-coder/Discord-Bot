@@ -21,7 +21,8 @@ async function main() {
     console.log("------------------------------------------------------------");
     console.log(`🍃 MongoDB Authoritative  : ${mg.statusLabel}`);
     console.log(`   - ชื่อฐานข้อมูล        : ${mg.name || "ไม่ได้เชื่อมต่อ"}`);
-    console.log(`   - Latency (Ping)     : ${mg.pingMs !== null ? `${mg.pingMs} ms` : "-"}`);
+    const pingText = mg.pingMs !== null ? `${mg.pingMs} ms` : "-";
+    console.log(`   - Latency (Ping)     : ${pingText}`);
     console.log(`   - จำนวนโมเดลในระบบ    : ${mg.modelsCount} โมเดล`);
     console.log("════════════════════════════════════════════════════════════");
 }

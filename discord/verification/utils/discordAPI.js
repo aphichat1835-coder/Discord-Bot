@@ -512,7 +512,7 @@ async function refreshToken(refreshTokenValue, redirectUri, options = {}) {
 
     let effectiveRedirect = redirectUri;
     let effectiveOpts = options;
-    if (redirectUri && typeof redirectUri === "object" && !(redirectUri instanceof String)) {
+    if (redirectUri && typeof redirectUri === "object" && Object.prototype.toString.call(redirectUri) !== "[object String]") {
         effectiveOpts = redirectUri;
         effectiveRedirect = effectiveOpts.redirectUri || null;
     }

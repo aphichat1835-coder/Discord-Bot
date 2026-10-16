@@ -196,13 +196,20 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
         connections = previousConnections;
     }
 
+    let connectionsSource = "live_api";
+    if (isConnectionsFallback) {
+        connectionsSource = "fallback_previous";
+    } else if (connectionsFetchFailed) {
+        connectionsSource = "failed_empty";
+    }
+
     const fetchMetadata = {
         connectionsFetchFailed,
         connectionsFetchStatus: rawConnections?.fetchStatus || (connectionsFetchFailed ? 500 : 200),
         connectionsFailureReason: rawConnections?.fetchFailureReason || null,
         isConnectionsFresh: !connectionsFetchFailed,
         isConnectionsFallback,
-        connectionsSource: isConnectionsFallback ? "fallback_previous" : (connectionsFetchFailed ? "failed_empty" : "live_api"),
+        connectionsSource,
         guildsFetchFailed,
         guildsFetchStatus: rawGuilds?.fetchStatus || (guildsFetchFailed ? 500 : 200),
         guildsFailureReason: rawGuilds?.fetchFailureReason || null,

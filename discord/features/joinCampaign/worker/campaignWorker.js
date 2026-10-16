@@ -29,7 +29,10 @@ function dispatchSystemicAlert({ code, title, description, error, details = {} }
                 }))
             });
         }
-    } catch (_) {}
+    } catch (err) {
+        // Best-effort alert notification; log warning and swallow errors to prevent cascading failures
+        console.warn(`[JoinCampaign] ⚠️ Failed to dispatch systemic alert (${code}): ${err?.message}`);
+    }
 }
 
 function randomJitter(minMs = 100, maxMs = 500) {
@@ -103,8 +106,9 @@ async function resolveTargetGuildFreshReadyCount({ client, job, mode, tokenManag
             tokenManager,
             targetMemberIds: liveMemberIds
         });
-    } catch (_err) {
+    } catch (err) {
         // Ignored: If member check failed, retain previous count to avoid presenting inflated numbers
+        console.warn(`[JoinCampaign] ⚠️ Failed to resolve fresh ready count for guild ${job.targetGuildId}: ${err?.message}`);
         return fallbackCount;
     }
 }
@@ -117,11 +121,7 @@ class CampaignWorker {
     _abortController = null;
 
     constructor() {
-        this._activeWorkerPromise = null;
-        this._currentJobId = null;
-        this._isStopping = false;
-        this._wakeUpResolvers = new Set();
-        this._abortController = null;
+        // Class fields initialize instance properties
     }
 
     get isRunning() {
@@ -135,10 +135,10 @@ class CampaignWorker {
     stopCurrentWorker() {
         this._isStopping = true;
         if (this._abortController) {
-            try { this._abortController.abort(); } catch (_) {}
+            try { this._abortController.abort(); } catch (_err) { /* ignore controller abort error */ }
         }
         for (const wakeUp of this._wakeUpResolvers) {
-            try { wakeUp(); } catch (_) {}
+            try { wakeUp(); } catch (_err) { /* ignore wakeup callback error */ }
         }
         this._wakeUpResolvers.clear();
     }
@@ -159,7 +159,7 @@ class CampaignWorker {
 
     async waitForCompletion() {
         if (this._activeWorkerPromise) {
-            await this._activeWorkerPromise;
+            await Promise.resolve(this._activeWorkerPromise);
         }
     }
 
@@ -301,6 +301,42 @@ class CampaignWorker {
         }
     }
 
+    async _handleRateLimitResponse({ res, userId, ctx, config, minConcurrency, rateLimitRetries, recordItemOutcome }) {
+        ctx.consecutiveSuccesses = 0;
+        ctx.currentConcurrency = Math.max(minConcurrency, Math.floor(ctx.currentConcurrency / 2));
+
+        const maxRateLimitRetries = Number(config.maxRateLimitRetries || 3);
+        const currentRlRetries = (rateLimitRetries.get(userId) || 0) + 1;
+        rateLimitRetries.set(userId, currentRlRetries);
+
+        if (currentRlRetries <= maxRateLimitRetries) {
+            const explicitRetry = Number(res?.retryAfter);
+            const retryAfterMs = Number.isFinite(explicitRetry) && explicitRetry > 0
+                ? explicitRetry
+                : 2500;
+            const backoffDelay = retryAfterMs + randomJitter(50, 150);
+            ctx.backoffUntil = Date.now() + backoffDelay;
+            await recordItemOutcome({ userId, status: "retry", error: "rate_limited", retryDelayMs: backoffDelay });
+        } else {
+            await recordItemOutcome({ userId, status: "failed", error: "rate_limit_retries_exceeded" });
+        }
+    }
+
+    async _handleServerErrorResponse({ userId, ctx, minConcurrency, networkRetries, recordItemOutcome }) {
+        ctx.consecutiveSuccesses = 0;
+        ctx.currentConcurrency = Math.max(minConcurrency, ctx.currentConcurrency - 1);
+
+        const currentNetRetries = (networkRetries.get(userId) || 0) + 1;
+        networkRetries.set(userId, currentNetRetries);
+
+        if (currentNetRetries <= 2) {
+            const delay = Math.min(1000 * Math.pow(2, currentNetRetries), 12000) + randomJitter(50, 200);
+            await recordItemOutcome({ userId, status: "retry", error: "network_error", retryDelayMs: delay });
+        } else {
+            await recordItemOutcome({ userId, status: "failed", error: "network_retries_exceeded" });
+        }
+    }
+
     async _handleMemberAddResponse({
         res,
         userId,
@@ -331,40 +367,12 @@ class CampaignWorker {
         }
 
         if (status === 429) {
-            ctx.consecutiveSuccesses = 0;
-            ctx.currentConcurrency = Math.max(minConcurrency, Math.floor(ctx.currentConcurrency / 2));
-
-            const maxRateLimitRetries = Number(config.maxRateLimitRetries || 3);
-            const currentRlRetries = (rateLimitRetries.get(userId) || 0) + 1;
-            rateLimitRetries.set(userId, currentRlRetries);
-
-            if (currentRlRetries <= maxRateLimitRetries) {
-                const explicitRetry = Number(res?.retryAfter);
-                const retryAfterMs = Number.isFinite(explicitRetry) && explicitRetry > 0
-                    ? explicitRetry
-                    : 2500;
-                const backoffDelay = retryAfterMs + randomJitter(50, 150);
-                ctx.backoffUntil = Date.now() + backoffDelay;
-                await recordItemOutcome({ userId, status: "retry", error: "rate_limited", retryDelayMs: backoffDelay });
-            } else {
-                await recordItemOutcome({ userId, status: "failed", error: "rate_limit_retries_exceeded" });
-            }
+            await this._handleRateLimitResponse({ res, userId, ctx, config, minConcurrency, rateLimitRetries, recordItemOutcome });
             return;
         }
 
         if (status >= 500 || status === 0) {
-            ctx.consecutiveSuccesses = 0;
-            ctx.currentConcurrency = Math.max(minConcurrency, ctx.currentConcurrency - 1);
-
-            const currentNetRetries = (networkRetries.get(userId) || 0) + 1;
-            networkRetries.set(userId, currentNetRetries);
-
-            if (currentNetRetries <= 2) {
-                const delay = Math.min(1000 * Math.pow(2, currentNetRetries), 12000) + randomJitter(50, 200);
-                await recordItemOutcome({ userId, status: "retry", error: "network_error", retryDelayMs: delay });
-            } else {
-                await recordItemOutcome({ userId, status: "failed", error: "network_retries_exceeded" });
-            }
+            await this._handleServerErrorResponse({ userId, ctx, minConcurrency, networkRetries, recordItemOutcome });
             return;
         }
 
@@ -504,13 +512,28 @@ class CampaignWorker {
             console.error(`[JoinCampaign] Task execution error for user ${item.userId}:`, taskErr?.message);
             try {
                 await recordItemOutcome({ userId: item.userId, status: "failed", error: taskErr?.message || "task_error" });
-            } catch (_) {}
+            } catch (_err) {
+                // Best-effort outcome recording on unexpected failure
+            }
         } finally {
             if (heartbeatTimer) clearInterval(heartbeatTimer);
             currentlyProcessingUsers.delete(item.userId);
             ctx.inFlightJoins--;
             checkpointJobCounters();
         }
+    }
+
+    _spawnCandidateTask(params) {
+        const { item, ctx, currentlyProcessingUsers, activeTasks } = params;
+        ctx.inFlightJoins++;
+        currentlyProcessingUsers.add(item.userId);
+
+        const taskPromise = this._processCandidateItem(params);
+        activeTasks.add(taskPromise);
+        taskPromise.then(
+            () => activeTasks.delete(taskPromise),
+            () => activeTasks.delete(taskPromise)
+        );
     }
 
     async _executeLoop({
@@ -566,11 +589,11 @@ class CampaignWorker {
 
         const getTargetPanel = () => {
             let p = null;
-            if (job.startedByChannelId && repository.findPanelByChannelId) {
-                p = repository.findPanelByChannelId(job.startedByChannelId);
+            if (job.startedByChannelId) {
+                p = repository.findPanelByChannelId?.(job.startedByChannelId);
             }
-            if (!p && repository.findPanelByActiveJobId) {
-                p = repository.findPanelByActiveJobId(job.id);
+            if (!p) {
+                p = repository.findPanelByActiveJobId?.(job.id);
             }
             return p;
         };
@@ -582,7 +605,7 @@ class CampaignWorker {
 
             try {
                 const panel = getTargetPanel();
-                if (!panel || !panel.messageId) return;
+                if (!panel?.messageId) return;
 
                 const channel = await client.channels.fetch(panel.channelId).catch(() => null);
                 if (!channel) return;
@@ -604,7 +627,7 @@ class CampaignWorker {
                     targetGuildName
                 });
 
-                await message.edit(panelPayload).catch(() => {});
+                await message.edit(panelPayload);
             } catch (_err) {
                 // Best-effort: Discord message edit failure should not interrupt background campaign processing
             }
@@ -704,14 +727,37 @@ class CampaignWorker {
             const activeTasks = new Set();
             const currentlyProcessingUsers = new Set();
 
-            const runWorkerLoop = async () => {
+            const shouldStopWorker = () => {
                 if (this._isStopping || ctx.joinedCount >= requestedQuota) {
-                    return;
+                    return true;
                 }
-
                 if (ctx.isGuildFull) {
                     ctx.finalStatus = "SERVER_FULL";
                     ctx.statusReason = "เซิร์ฟเวอร์ปลายทางมีสมาชิกเต็มแล้ว";
+                    return true;
+                }
+                return false;
+            };
+
+            const handleNoClaimableItem = async () => {
+                if (activeTasks.size > 0) {
+                    await Promise.race(activeTasks);
+                    return runWorkerLoop();
+                }
+                const hasPendingItems = repository.countPendingItems ? repository.countPendingItems(job.id, "all") > 0 : false;
+                if (ctx.streamExhausted && !hasPendingItems) {
+                    ctx.finalStatus = ctx.joinedCount > 0 ? "PARTIAL" : "FAILED";
+                    if (ctx.joinedCount === 0 && !ctx.statusReason) {
+                        ctx.statusReason = "ไม่สามารถดึงสมาชิกเข้าเซิร์ฟเวอร์ได้ตามเป้าหมาย (ไม่มีสมาชิกที่พร้อมดึงหรือเกิดข้อผิดพลาด)";
+                    }
+                    return;
+                }
+                await this._interruptibleSleep(200);
+                return runWorkerLoop();
+            };
+
+            const runWorkerLoop = async () => {
+                if (shouldStopWorker()) {
                     return;
                 }
 
@@ -737,19 +783,7 @@ class CampaignWorker {
 
                 const item = repository.claimNextPendingItem(job.id, 120000);
                 if (!item) {
-                    if (activeTasks.size > 0) {
-                        await Promise.race(activeTasks);
-                        return runWorkerLoop();
-                    }
-                    if (ctx.streamExhausted && (repository.countPendingItems ? repository.countPendingItems(job.id, "all") === 0 : true)) {
-                        ctx.finalStatus = ctx.joinedCount > 0 ? "PARTIAL" : "FAILED";
-                        if (ctx.joinedCount === 0 && !ctx.statusReason) {
-                            ctx.statusReason = "ไม่สามารถดึงสมาชิกเข้าเซิร์ฟเวอร์ได้ตามเป้าหมาย (ไม่มีสมาชิกที่พร้อมดึงหรือเกิดข้อผิดพลาด)";
-                        }
-                        return;
-                    }
-                    await this._interruptibleSleep(200);
-                    return runWorkerLoop();
+                    return handleNoClaimableItem();
                 }
 
                 if (currentlyProcessingUsers.has(item.userId)) {
@@ -759,10 +793,7 @@ class CampaignWorker {
                     return runWorkerLoop();
                 }
 
-                ctx.inFlightJoins++;
-                currentlyProcessingUsers.add(item.userId);
-
-                const taskPromise = this._processCandidateItem({
+                this._spawnCandidateTask({
                     item,
                     job,
                     repository,
@@ -780,14 +811,9 @@ class CampaignWorker {
                     rateLimitRetries,
                     networkRetries,
                     recordItemOutcome,
-                    checkpointJobCounters
+                    checkpointJobCounters,
+                    activeTasks
                 });
-
-                activeTasks.add(taskPromise);
-                taskPromise.then(
-                    () => activeTasks.delete(taskPromise),
-                    () => activeTasks.delete(taskPromise)
-                );
 
                 await new Promise(resolve => setImmediate(resolve));
                 return runWorkerLoop();
@@ -895,7 +921,9 @@ class CampaignWorker {
                     finalStatus: ctx.finalStatus,
                     statusReason: ctx.statusReason
                 });
-            } catch (_) {}
+            } catch (_err) {
+                // Best-effort summary embed delivery
+            }
 
             try {
                 await this._finishPanelUpdate({
@@ -910,7 +938,9 @@ class CampaignWorker {
                     targetGuildName,
                     tokenManager
                 });
-            } catch (_) {}
+            } catch (_err) {
+                // Best-effort final panel update
+            }
         }
     }
 

@@ -395,13 +395,13 @@ function buildWebhookEventTitle(event, presentation, category, target = "LOG") {
     }
     title = title.replace(/^(?:SHADOW REPORT:\s*|COMMAND LOG:\s*|ACTION:\s*|REPORT:\s*)/i, "");
     title = title.replace(/^(?:[🔵🟢🟠🔴🚨]|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}])+\s*/u, "");
-    title = title.replace(new RegExp(`^${category}\\s*[·•]\\s*`, "i"), "");
+    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    title = title.replace(new RegExp(String.raw`^${escapedCat}\s*[·•]\s*`, "i"), "");
     title = title.replace(/^[A-Z_]{3,15}\s*[·•]\s*/, "");
     title = title.trim();
 
     // If title redundantly begins with the category name (e.g. "GATEWAY SHARD ERROR" in category "GATEWAY"),
     // strip the redundant category prefix to yield e.g. "SHARD ERROR".
-    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const redundantCategoryRegex = new RegExp(String.raw`^${escapedCat}\s+(?=\S)`, "i");
     if (redundantCategoryRegex.test(title)) {
         title = title.replace(redundantCategoryRegex, "").trim();

@@ -8,8 +8,9 @@ function isPidAlive(pid) {
     try {
         process.kill(pid, 0);
         return true;
-    } catch (_) {
-        return false;
+    } catch (err) {
+        // EPERM indicates process is alive under another user; ESRCH indicates dead process
+        return err.code === "EPERM";
     }
 }
 
@@ -36,10 +37,22 @@ function isProcessLockActive(dbPath) {
             };
         }
         // Stale lock: PID is no longer alive
-        try { fs.unlinkSync(lockPath); } catch (_) {}
+        try {
+            fs.unlinkSync(lockPath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale lock during active check: ${unlinkErr.message}`);
+            }
+        }
         return { active: false, stale: true, oldPid: data.pid };
-    } catch (_) {
-        try { fs.unlinkSync(lockPath); } catch (_) {}
+    } catch (_readErr) {
+        try {
+            fs.unlinkSync(lockPath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock during active check: ${unlinkErr.message}`);
+            }
+        }
         return { active: false };
     }
 }
@@ -62,8 +75,8 @@ process.on("exit", () => {
             const raw = fs.readFileSync(lockPath, "utf8");
             const data = JSON.parse(raw);
             if (data.pid === process.pid) fs.unlinkSync(lockPath);
-        } catch (_) {
-            // Ignore lock removal failure on process exit
+        } catch (_err) {
+            // Process is exiting synchronously; best-effort unlinking of lock files
         }
     }
     for (const restorePath of activeRestoreLocks) {
@@ -71,11 +84,51 @@ process.on("exit", () => {
             const raw = fs.readFileSync(restorePath, "utf8");
             const data = JSON.parse(raw);
             if (data.pid === process.pid) fs.unlinkSync(restorePath);
-        } catch (_) {
-            // Ignore restore lock removal failure on process exit
+        } catch (_err) {
+            // Process is exiting synchronously; best-effort unlinking of restore lock files
         }
     }
 });
+
+function inspectAndReclaimProcessLock(lockPath) {
+    try {
+        const raw = fs.readFileSync(lockPath, "utf8");
+        const data = JSON.parse(raw);
+        if (data.pid === process.pid) {
+            activeLocks.add(lockPath);
+            return { acquired: true, pid: process.pid };
+        }
+        if (data.pid && isPidAlive(data.pid)) {
+            return {
+                acquired: false,
+                pid: data.pid,
+                createdAt: data.createdAt || null,
+                reason: "active_process"
+            };
+        }
+        // Stale lock: PID is dead or invalid
+        try {
+            fs.unlinkSync(lockPath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale lock file: ${unlinkErr.message}`);
+            }
+        }
+    } catch (readErr) {
+        // Corrupt or unreadable lock file; log diagnostic and remove it to allow reclamation
+        if (readErr.code !== "ENOENT") {
+            console.warn(`[PROCESS_LOCK] ⚠️ Lock file unreadable (${readErr.message}), attempting reclamation`);
+        }
+        try {
+            fs.unlinkSync(lockPath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock file: ${unlinkErr.message}`);
+            }
+        }
+    }
+    return null;
+}
 
 function acquireProcessLock(dbPath) {
     const lockPath = getLockFilePath(dbPath);
@@ -97,43 +150,8 @@ function acquireProcessLock(dbPath) {
     }
 
     if (writeRes.code === "EEXIST") {
-        // File exists, check if lock is active or stale
-        try {
-            const raw = fs.readFileSync(lockPath, "utf8");
-            const data = JSON.parse(raw);
-            if (data.pid === process.pid) {
-                activeLocks.add(lockPath);
-                return { acquired: true, pid: process.pid };
-            }
-            if (data.pid && isPidAlive(data.pid)) {
-                return {
-                    acquired: false,
-                    pid: data.pid,
-                    createdAt: data.createdAt || null,
-                    reason: "active_process"
-                };
-            }
-            // Stale lock: PID is dead or invalid
-            try {
-                fs.unlinkSync(lockPath);
-            } catch (unlinkErr) {
-                if (unlinkErr.code !== "ENOENT") {
-                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale lock file: ${unlinkErr.message}`);
-                }
-            }
-        } catch (readErr) {
-            // Corrupt or unreadable lock file; log diagnostic and remove it to allow reclamation
-            if (readErr.code !== "ENOENT") {
-                console.warn(`[PROCESS_LOCK] ⚠️ Lock file unreadable (${readErr.message}), attempting reclamation`);
-            }
-            try {
-                fs.unlinkSync(lockPath);
-            } catch (unlinkErr) {
-                if (unlinkErr.code !== "ENOENT") {
-                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock file: ${unlinkErr.message}`);
-                }
-            }
-        }
+        const reclaimResult = inspectAndReclaimProcessLock(lockPath);
+        if (reclaimResult) return reclaimResult;
 
         // Retry atomic exclusive create once after clearing stale lock
         writeRes = tryWriteLockFile(lockPath, payload);
@@ -158,7 +176,12 @@ function releaseProcessLock(dbPath) {
         if (data.pid === process.pid) {
             fs.unlinkSync(lockPath);
         }
-    } catch (_) {}
+    } catch (err) {
+        // Best effort release: lock file may have been removed concurrently or unreadable
+        if (err.code !== "ENOENT") {
+            console.warn(`[PROCESS_LOCK] ⚠️ Could not verify lock ownership on release: ${err.message}`);
+        }
+    }
 }
 
 function isRestoreLockActive(dbPath) {
@@ -175,13 +198,64 @@ function isRestoreLockActive(dbPath) {
                 createdAt: data.createdAt || null
             };
         }
-        try { fs.unlinkSync(restorePath); } catch { /* ignore lock file unlink error */ }
+        try {
+            fs.unlinkSync(restorePath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove inactive restore lock: ${unlinkErr.message}`);
+            }
+        }
         return { active: false, stale: true };
     } catch {
         // Corrupted or unreadable lock file; clean up and treat lock as inactive
-        try { fs.unlinkSync(restorePath); } catch { /* ignore lock file unlink error */ }
+        try {
+            fs.unlinkSync(restorePath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock: ${unlinkErr.message}`);
+            }
+        }
         return { active: false };
     }
+}
+
+function inspectAndReclaimRestoreLock(restorePath) {
+    try {
+        const raw = fs.readFileSync(restorePath, "utf8");
+        const data = JSON.parse(raw);
+        if (data.pid === process.pid) {
+            activeRestoreLocks.add(restorePath);
+            return { acquired: true, pid: process.pid };
+        }
+        if (data.pid && isPidAlive(data.pid)) {
+            return {
+                acquired: false,
+                pid: data.pid,
+                createdAt: data.createdAt || null,
+                reason: "active_restore"
+            };
+        }
+        try {
+            fs.unlinkSync(restorePath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale restore lock file: ${unlinkErr.message}`);
+            }
+        }
+    } catch (readErr) {
+        // Corrupt or unreadable restore lock file; log diagnostic and remove it to allow reclamation
+        if (readErr.code !== "ENOENT") {
+            console.warn(`[PROCESS_LOCK] ⚠️ Restore lock file unreadable (${readErr.message}), attempting reclamation`);
+        }
+        try {
+            fs.unlinkSync(restorePath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock file: ${unlinkErr.message}`);
+            }
+        }
+    }
+    return null;
 }
 
 function acquireRestoreLock(dbPath) {
@@ -204,41 +278,8 @@ function acquireRestoreLock(dbPath) {
     }
 
     if (writeRes.code === "EEXIST") {
-        try {
-            const raw = fs.readFileSync(restorePath, "utf8");
-            const data = JSON.parse(raw);
-            if (data.pid === process.pid) {
-                activeRestoreLocks.add(restorePath);
-                return { acquired: true, pid: process.pid };
-            }
-            if (data.pid && isPidAlive(data.pid)) {
-                return {
-                    acquired: false,
-                    pid: data.pid,
-                    createdAt: data.createdAt || null,
-                    reason: "active_restore"
-                };
-            }
-            try {
-                fs.unlinkSync(restorePath);
-            } catch (unlinkErr) {
-                if (unlinkErr.code !== "ENOENT") {
-                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale restore lock file: ${unlinkErr.message}`);
-                }
-            }
-        } catch (readErr) {
-            // Corrupt or unreadable restore lock file; log diagnostic and remove it to allow reclamation
-            if (readErr.code !== "ENOENT") {
-                console.warn(`[PROCESS_LOCK] ⚠️ Restore lock file unreadable (${readErr.message}), attempting reclamation`);
-            }
-            try {
-                fs.unlinkSync(restorePath);
-            } catch (unlinkErr) {
-                if (unlinkErr.code !== "ENOENT") {
-                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock file: ${unlinkErr.message}`);
-                }
-            }
-        }
+        const reclaimResult = inspectAndReclaimRestoreLock(restorePath);
+        if (reclaimResult) return reclaimResult;
 
         writeRes = tryWriteLockFile(restorePath, payload);
         if (writeRes.success) {
@@ -262,7 +303,12 @@ function releaseRestoreLock(dbPath) {
         if (data.pid === process.pid) {
             fs.unlinkSync(restorePath);
         }
-    } catch (_) {}
+    } catch (err) {
+        // Best effort release: lock file may have been removed concurrently or unreadable
+        if (err.code !== "ENOENT") {
+            console.warn(`[PROCESS_LOCK] ⚠️ Could not verify restore lock ownership on release: ${err.message}`);
+        }
+    }
 }
 
 module.exports = {

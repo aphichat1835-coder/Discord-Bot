@@ -435,12 +435,14 @@ function notifyIntegrityCorrupted(intRows, fkRows, dbPath = null) {
             description: "ระบบตรวจพบความเสียหายของโครงสร้าง B-Tree หรือ Foreign Key ในไฟล์ SQLite Database ระหว่างการตรวจสอบ Integrity Check",
             context: {
                 "Integrity Status": Array.isArray(intRows) ? JSON.stringify(intRows).slice(0, 500) : String(intRows),
-                "Foreign Key Errors": fkRows && fkRows.length > 0 ? JSON.stringify(fkRows).slice(0, 500) : "None",
+                "Foreign Key Errors": fkRows?.length > 0 ? JSON.stringify(fkRows).slice(0, 500) : "None",
                 "ไฟล์ฐานข้อมูล": dbPath || getCurrentDbPath() || resolveDbPath(),
                 "เวลาที่เกิด": new Date().toISOString()
             }
         }).catch(() => {});
-    } catch (_) {}
+    } catch (_err) {
+        // Best-effort webhook notification failure
+    }
 }
 
 function recordMaintenanceAudit(db, {
@@ -458,13 +460,19 @@ function recordMaintenanceAudit(db, {
 } = {}) {
     const resolvedActor = actor || invoker || "owner";
     const duration = durationMs !== null ? durationMs : (finishedAt - startTime);
+    let resolvedError = null;
+    if (error) {
+        resolvedError = error.message || String(error);
+    } else if (details?.error) {
+        resolvedError = details.error;
+    }
     const auditPayload = {
         actor: resolvedActor,
         action,
         target: target || "sqlite",
         status,
         durationMs: duration,
-        error: error ? (error.message || String(error)) : (details?.error || null),
+        error: resolvedError,
         metadata: metadata || details || {}
     };
 
@@ -1001,10 +1009,11 @@ async function executeDatabaseConsole(commandString, invoker = "owner") {
     const cmd = lower;
 
     if (!CONSOLE_COMMANDS.includes(cmd)) {
+        const allowedList = CONSOLE_COMMANDS.map(c => `  - ${c}`).join("\n");
         return {
             ok: false,
             command: raw,
-            output: `❌ ไม่รู้จักคำสั่ง '${raw}'\nคำสั่งที่อนุญาตให้ใช้งานได้:\n${CONSOLE_COMMANDS.map(c => `  - ${c}`).join("\n")}`,
+            output: `❌ ไม่รู้จักคำสั่ง '${raw}'\nคำสั่งที่อนุญาตให้ใช้งานได้:\n${allowedList}`,
             durationMs: Date.now() - startTime
         };
     }
