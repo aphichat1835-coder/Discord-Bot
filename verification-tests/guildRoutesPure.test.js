@@ -85,3 +85,62 @@ test("panel sync GET is read-only and never creates guild configuration", () => 
   expect(route).not.toContain("ensureGuildConfig(");
   expect(route).not.toMatch(/updateOne|findOneAndUpdate|save\(/);
 });
+
+test("guildRoute panel comparison and rollback helpers work correctly", () => {
+  const {
+    safeRollbackEmbed,
+    panelRollbackPayload,
+    panelConfigFromDiscordMessage,
+    comparablePanel,
+    panelDifferences,
+    clonePlainValue,
+    tokenRevealErrorStatus
+  } = guildRoute._test;
+
+  // safeRollbackEmbed
+  const rawEmbed = { title: "Title", extra: "Ignore", color: 0x5865f2 };
+  const safe = safeRollbackEmbed(rawEmbed);
+  expect(safe.title).toBe("Title");
+  expect(safe.color).toBe(0x5865f2);
+  expect(safe.extra).toBeUndefined();
+
+  // panelRollbackPayload
+  const payload = panelRollbackPayload({
+    content: "Notice",
+    embeds: [rawEmbed],
+    components: []
+  });
+  expect(payload.content).toBe("Notice");
+  expect(payload.embeds).toHaveLength(1);
+  expect(payload.embeds[0].title).toBe("Title");
+
+  // comparablePanel & panelDifferences
+  const panelA = { title: "A", description: "Desc", color: "#5865F2" };
+  const panelB = { title: "B", description: "Desc", color: "#5865F2" };
+  const compA = comparablePanel(panelA);
+  const compB = comparablePanel(panelB);
+  const diffs = panelDifferences(compA, compB);
+  expect(diffs).toContain("title");
+  expect(diffs).not.toContain("description");
+
+  // panelConfigFromDiscordMessage
+  const discordMsg = {
+    content: "Hello",
+    embeds: [{ title: "Embed Title", description: "Embed Desc", color: 0x5865f2 }],
+    components: [{ type: 1, components: [{ type: 2, label: "Click", url: "https://example.com" }] }]
+  };
+  const parsed = panelConfigFromDiscordMessage(discordMsg);
+  expect(parsed.title).toBe("Embed Title");
+  expect(parsed.description).toBe("Embed Desc");
+  expect(parsed.buttonText).toBe("Click");
+  expect(parsed.verifyType).toBe("oauth");
+
+  // clonePlainValue
+  expect(clonePlainValue({ a: 1 })).toEqual({ a: 1 });
+  expect(clonePlainValue(null)).toEqual({});
+
+  // tokenRevealErrorStatus
+  expect(tokenRevealErrorStatus("member_not_found")).toBe(404);
+  expect(tokenRevealErrorStatus("OTHER")).toBe(500);
+});
+
