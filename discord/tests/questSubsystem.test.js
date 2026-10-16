@@ -837,6 +837,115 @@ test('runnerManager job query and lifecycle management functions', async () => {
     assert.equal(typeof stopped, 'number');
 });
 
+test('runnerManager active runner execution, stopping, and shutdown', async () => {
+    const {
+        startRunner,
+        getJob,
+        getUserJobs,
+        findUserJobByAccount,
+        stopJob,
+        shutdownRunners
+    } = require('../quest/core/runnerManager');
+
+    const origFetch = globalThis.fetch;
+    let finishFetchQuests;
+    const fetchQuestsPromise = new Promise(resolve => {
+        finishFetchQuests = resolve;
+    });
+
+    globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/users/@me')) {
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({ id: 'acc_active_1', username: 'active_user' })
+            };
+        }
+        if (urlStr.includes('/quests/@me') || urlStr.includes('/users/@me/quests')) {
+            await fetchQuestsPromise;
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => []
+            };
+        }
+        return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: async () => ({})
+        };
+    };
+
+    try {
+        // 1. Invalid mode rejects
+        await assert.rejects(
+            startRunner({ jobKey: 'job_invalid', ownerId: 'u1', userToken: 'tok1', mode: 'invalid' }),
+            /Unknown runner mode/
+        );
+
+        // 2. Start active runner
+        await startRunner({
+            jobKey: 'job_active_1',
+            ownerId: 'owner_a',
+            userToken: 'tok_active_1',
+            mode: 'oneshot',
+            accountId: 'acc_active_1',
+            username: 'active_user'
+        });
+
+        // 3. Duplicate job key rejected
+        await assert.rejects(
+            startRunner({
+                jobKey: 'job_active_1',
+                ownerId: 'owner_a',
+                userToken: 'tok_active_1',
+                mode: 'oneshot'
+            }),
+            /กำลังทำงานอยู่/
+        );
+
+        // 4. Query active runner state
+        const job = getJob('job_active_1');
+        assert.ok(job);
+        assert.equal(job.ownerId, 'owner_a');
+        assert.equal(job.mode, 'oneshot');
+
+        const userJobs = getUserJobs('owner_a');
+        assert.equal(userJobs.length, 1);
+        assert.equal(userJobs[0].key, 'job_active_1');
+
+        const foundJob = findUserJobByAccount('owner_a', 'acc_active_1');
+        assert.ok(foundJob);
+        assert.equal(foundJob.key, 'job_active_1');
+
+        // 5. Unauthorized stop fails
+        assert.equal(stopJob('unauthorized_owner', 'job_active_1'), false);
+
+        // 6. Authorized stop marks lifecycle stopping and aborts controller
+        assert.equal(stopJob('owner_a', 'job_active_1'), true);
+        assert.equal(job.lifecycle, 'stopping');
+        assert.equal(job.controller.signal.aborted, true);
+
+        // 7. Start a second runner to test shutdownRunners
+        await startRunner({
+            jobKey: 'job_active_2',
+            ownerId: 'owner_b',
+            userToken: 'tok_active_2',
+            mode: 'oneshot'
+        });
+
+        const stoppedCount = await shutdownRunners(200);
+        assert.ok(stoppedCount >= 1);
+    } finally {
+        if (finishFetchQuests) finishFetchQuests();
+        globalThis.fetch = origFetch;
+    }
+});
+
 
 
 

@@ -513,3 +513,35 @@ test("privacy deletion operation keys isolate guild and member scope", () => {
     assert.notEqual(first, deletionOperationKey("guild-a", "user-b"));
     assert.equal(first, deletionOperationKey("guild-a", "user-a"));
 });
+
+test("privacy deletion closes MongoDB session when withTransaction fails on standalone server", async () => {
+    let sessionEnded = false;
+    const standaloneError = new Error("Transaction numbers are only allowed on a replica set member or mongos");
+    const mockSession = {
+        async withTransaction() {
+            throw standaloneError;
+        },
+        async endSession() {
+            sessionEnded = true;
+        }
+    };
+    const mockMongoose = {
+        async startSession() {
+            return mockSession;
+        }
+    };
+
+    const models = createModels();
+    const result = await runMemberPrivacyDeletion({
+        guildId: "guild-a",
+        userId: "111111111111111111",
+        requestedBy: "owner",
+        now: 10_000,
+        models,
+        mongooseInstance: mockMongoose
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(sessionEnded, true);
+});
+

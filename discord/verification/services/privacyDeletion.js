@@ -640,6 +640,7 @@ async function _runMongoDeletionPhase({
         });
     } catch (txError) {
         if (/replica set|standalone|Transaction numbers/i.test(txError?.message || "")) {
+            await cleanupDeletionSession(dbSession, txError, manifest, jobId, models?.PrivacyDeletionJob);
             dbSession = null;
             txResult = await executePrivacyDeletionTransaction({
                 models,
@@ -654,6 +655,7 @@ async function _runMongoDeletionPhase({
                 dbSession: null
             });
         } else {
+            await cleanupDeletionSession(dbSession, txError, manifest, jobId, models?.PrivacyDeletionJob);
             throw txError;
         }
     }

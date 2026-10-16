@@ -57,9 +57,10 @@ async function updatePanelRecoveryFailure({ client, repository, jobId, channelId
     try {
         if (!repository) return;
         let panel = null;
-        if (channelId && repository.findPanelByChannelId) {
+        if (channelId && typeof repository.findPanelByChannelId === "function") {
             panel = repository.findPanelByChannelId(channelId);
-        } else if (jobId && repository.findPanelByActiveJobId) {
+        }
+        if (!panel && jobId && typeof repository.findPanelByActiveJobId === "function") {
             panel = repository.findPanelByActiveJobId(jobId);
         }
         if (!panel) return;
@@ -303,8 +304,9 @@ function runStartupRecovery({ client, repository, tokenManager, discord }) {
     }
 
     activeRecoveryPromise = (async () => {
+        let interruptedJob = null;
         try {
-            const interruptedJob = repository.findActiveRunningJob();
+            interruptedJob = repository.findActiveRunningJob();
             if (!interruptedJob) {
                 return { recovered: false, reason: "no_interrupted_jobs" };
             }
@@ -363,12 +365,32 @@ function runStartupRecovery({ client, repository, tokenManager, discord }) {
         } catch (err) {
             console.error(`[JoinCampaign] ❌ เกิดข้อผิดพลาดในการตรวจสอบงานค้าง:`, err.message);
             const userError = sanitizeUserFacingError(err.message);
+            if (interruptedJob?.id && typeof repository?.updateJob === "function") {
+                const failMsg = `เกิดข้อผิดพลาดร้ายแรงขณะกู้คืน: ${userError}`;
+                try {
+                    repository.updateJob(interruptedJob.id, {
+                        status: "FAILED",
+                        lastError: failMsg,
+                        completedAt: Date.now()
+                    });
+                    await updatePanelRecoveryFailure({
+                        client,
+                        repository,
+                        jobId: interruptedJob.id,
+                        channelId: interruptedJob.startedByChannelId,
+                        errorMsg: failMsg,
+                        targetGuildName: interruptedJob.targetGuildName
+                    });
+                } catch {
+                    // Ignore secondary failure when updating failed job state
+                }
+            }
             dispatchRecoveryAlert({
                 code: "join_campaign.recovery_error",
                 title: "Join Campaign: เกิดข้อผิดพลาดร้ายแรงขณะกู้คืน",
                 description: err.message
             });
-            return { recovered: false, error: userError };
+            return { recovered: false, error: userError, jobId: interruptedJob?.id };
         }
     })().finally(() => {
         activeRecoveryPromise = null;

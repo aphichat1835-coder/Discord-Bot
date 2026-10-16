@@ -223,30 +223,31 @@ function _buildCollectorFetchMetadata(connData, rawConnections, rawGuilds) {
 }
 
 function _buildCollectorUserProfile(rawProfile) {
+    const safeProfile = rawProfile || {};
     return {
-        id: String(rawProfile.id),
-        username: rawProfile.username || "",
-        discriminator: rawProfile.discriminator || "0",
-        globalName: rawProfile.global_name ?? rawProfile.globalName ?? null,
-        displayTag: displayTag(rawProfile),
-        avatar: rawProfile.avatar || null,
-        avatarHash: rawProfile.avatar || null,
-        avatarUrl: getAvatarUrl(rawProfile),
-        banner: rawProfile.banner || null,
-        bannerHash: rawProfile.banner || null,
-        bannerUrl: getBannerUrl(rawProfile),
-        accentColor: Number.isFinite(Number(rawProfile.accent_color)) ? Number(rawProfile.accent_color) : null,
-        email: rawProfile.email || null,
-        emailVerified: rawProfile.verified === true,
-        locale: rawProfile.locale || null,
-        mfaEnabled: rawProfile.mfa_enabled === true,
-        premiumType: Number.isFinite(Number(rawProfile.premium_type)) ? Number(rawProfile.premium_type) : 0,
-        flags: Number(rawProfile.flags) || 0,
-        publicFlags: Number(rawProfile.public_flags) || 0,
-        badgeFlags: decodeUserBadgeFlags(rawProfile),
-        accountCreatedAt: getAccountCreatedAt(rawProfile.id),
-        accountAgeDays: getAccountAgeDays(rawProfile.id),
-        rawProfile
+        id: String(safeProfile.id || ""),
+        username: safeProfile.username || "",
+        discriminator: safeProfile.discriminator || "0",
+        globalName: safeProfile.global_name ?? safeProfile.globalName ?? null,
+        displayTag: displayTag(safeProfile),
+        avatar: safeProfile.avatar || null,
+        avatarHash: safeProfile.avatar || null,
+        avatarUrl: getAvatarUrl(safeProfile),
+        banner: safeProfile.banner || null,
+        bannerHash: safeProfile.banner || null,
+        bannerUrl: getBannerUrl(safeProfile),
+        accentColor: Number.isFinite(Number(safeProfile.accent_color)) ? Number(safeProfile.accent_color) : null,
+        email: safeProfile.email || null,
+        emailVerified: safeProfile.verified === true,
+        locale: safeProfile.locale || null,
+        mfaEnabled: safeProfile.mfa_enabled === true,
+        premiumType: Number.isFinite(Number(safeProfile.premium_type)) ? Number(safeProfile.premium_type) : 0,
+        flags: Number(safeProfile.flags) || 0,
+        publicFlags: Number(safeProfile.public_flags) || 0,
+        badgeFlags: decodeUserBadgeFlags(safeProfile),
+        accountCreatedAt: getAccountCreatedAt(safeProfile.id),
+        accountAgeDays: getAccountAgeDays(safeProfile.id),
+        rawProfile: safeProfile
     };
 }
 
@@ -271,7 +272,7 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
     const connData = _resolveConnectionsData(rawConnections, previousConnections);
     const fetchMetadata = _buildCollectorFetchMetadata(connData, rawConnections, rawGuilds);
     const guildSummary = computeGuildSummary(rawGuilds, fetchMetadata.guildsFetchFailed, fetchMetadata.guildsFailureReason, previousSummary);
-    const profile = _buildCollectorUserProfile(rawProfile);
+    const profile = _buildCollectorUserProfile(rawProfile || {});
 
     return {
         tokenData,

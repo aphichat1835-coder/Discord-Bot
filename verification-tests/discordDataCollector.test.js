@@ -249,4 +249,36 @@ describe('collectDiscordData integration', () => {
             discord.getUserGuilds = origGetGuilds;
         }
     });
+
+    test('handles null rawProfile when getUserProfile returns null', async () => {
+        const origExchange = oauthTokenManager.exchangeAuthorizationCode;
+        const origGetProfile = discord.getUserProfile;
+        const origGetConnections = discord.getUserConnections;
+        const origGetGuilds = discord.getUserGuilds;
+
+        oauthTokenManager.exchangeAuthorizationCode = async () => ({
+            access_token: 'fake_access_token'
+        });
+
+        discord.getUserProfile = async () => null;
+        discord.getUserConnections = async () => [];
+        discord.getUserGuilds = async () => [];
+
+        try {
+            const data = await collectDiscordData({
+                code: 'auth_code_null_profile',
+                redirectUri: 'https://example.com/callback'
+            });
+
+            expect(data.profile.id).toBe('');
+            expect(data.profile.username).toBe('');
+            expect(data.profile.rawProfile).toEqual({});
+        } finally {
+            oauthTokenManager.exchangeAuthorizationCode = origExchange;
+            discord.getUserProfile = origGetProfile;
+            discord.getUserConnections = origGetConnections;
+            discord.getUserGuilds = origGetGuilds;
+        }
+    });
 });
+
