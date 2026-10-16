@@ -85,6 +85,42 @@ describe("Production Hardening Round 2 Audit Fixes Suite", () => {
             assert.equal(checkAfter.active, false);
         });
 
+        test("isProcessLockActive handles corrupt JSON and fails closed on filesystem errors", () => {
+            const dbPath = path.join(tempDir, "lock_edge_test.sqlite");
+            const lockFile = `${dbPath}.lock`;
+
+            // 1. Missing lock file
+            assert.equal(isProcessLockActive(dbPath).active, false);
+
+            // 2. Corrupt JSON
+            fs.writeFileSync(lockFile, "NOT_JSON{{{");
+            const corruptRes = isProcessLockActive(dbPath);
+            assert.equal(corruptRes.active, false);
+            assert.equal(corruptRes.corrupt, true);
+            assert.equal(fs.existsSync(lockFile), false);
+
+            // 3. Filesystem error (EACCES/EIO) -> fail closed!
+            fs.writeFileSync(lockFile, JSON.stringify({ pid: 12345 }));
+            const origRead = fs.readFileSync;
+            try {
+                fs.readFileSync = (p, ...args) => {
+                    if (String(p).endsWith(".lock")) {
+                        const err = new Error("Permission denied");
+                        err.code = "EACCES";
+                        throw err;
+                    }
+                    return origRead.call(fs, p, ...args);
+                };
+                const fsErrRes = isProcessLockActive(dbPath);
+                assert.equal(fsErrRes.active, true);
+                assert.equal(fsErrRes.indeterminate, true);
+                assert.equal(fsErrRes.code, "EACCES");
+            } finally {
+                fs.readFileSync = origRead;
+                try { fs.unlinkSync(lockFile); } catch (_) {}
+            }
+        });
+
         test("restoreDatabase rejects restore if active bot process holds lock without --force", async () => {
             const targetPath = path.join(tempDir, "active_target.sqlite");
             const backupPath = path.join(tempDir, "valid_backup.sqlite");

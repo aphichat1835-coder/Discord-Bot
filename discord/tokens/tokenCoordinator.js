@@ -509,6 +509,51 @@ class TokenCoordinator extends EventEmitter {
      * @param {{ maxWaitMs?: number, priority?: 'CRITICAL'|'NORMAL'|'BACKGROUND', retryOn429?: boolean }} [options]
      * @returns {Promise<any>}
      */
+    _parse429WaitMs(err) {
+        let waitSec = 2.5;
+        const headerVal = err?.response?.headers?.get?.('retry-after') || err?.headers?.['retry-after'];
+        if (headerVal && !Number.isNaN(Number(headerVal))) {
+            waitSec = Number.parseFloat(headerVal);
+        } else if (typeof err?.retry_after === 'number') {
+            waitSec = err.retry_after > 100 ? err.retry_after / 1000 : err.retry_after;
+        }
+        return Math.ceil(waitSec * 1000) + 100;
+    }
+
+    _is429Error(err) {
+        const status = err?.status || err?.statusCode || err?.response?.status;
+        const msg = String(err?.message || '');
+        return status === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
+    }
+
+    _checkAndQuarantineOnAuthError(hash, subsystem, err) {
+        const status = err?.status || err?.statusCode || err?.response?.status;
+        const msg = String(err?.message || '');
+
+        const is401 = status === 401 ||
+            msg.toLowerCase().includes('unauthorized') ||
+            msg.toLowerCase().includes('invalid token') ||
+            err?.code === 'TOKEN_INVALID';
+
+        if (is401) {
+            this.quarantineToken(hash, `Detected by ${subsystem || 'unknown'}: ${msg || '401 Unauthorized'}`);
+            return;
+        }
+
+        const is403 = status === 403 || msg.includes('403') || msg.toLowerCase().includes('account locked');
+        if (is403 && (msg.toLowerCase().includes('verification') || msg.toLowerCase().includes('locked'))) {
+            this.quarantineToken(hash, `Account Locked / Captcha Required: ${msg}`);
+        }
+    }
+
+    async _executeTokenAttempt(hash, operation, options) {
+        await this._acquireRateLimitSlot(hash, options);
+        const result = await operation();
+        const state = this._getOrCreateState(hash);
+        state.lastActivity = Date.now();
+        return result;
+    }
+
     async executeWithToken(token, subsystem, operation, options = {}) {
         if (typeof operation !== 'function') {
             throw new TypeError('executeWithToken requires operation to be a function');
@@ -526,61 +571,27 @@ class TokenCoordinator extends EventEmitter {
             throw err;
         }
 
-        const maxAttempts = (options.retryOn429 !== false) ? 2 : 1;
-        let attempt = 0;
+        const canRetry = options.retryOn429 !== false;
 
-        while (attempt < maxAttempts) {
-            attempt++;
-            await this._acquireRateLimitSlot(hash, options);
-
-            try {
-                const result = await operation();
-                const state = this._getOrCreateState(hash);
-                state.lastActivity = Date.now();
-                return result;
-            } catch (err) {
-                const status = err?.status || err?.statusCode || err?.response?.status;
-                const msg = String(err?.message || '');
-
-                // Check HTTP 429 Too Many Requests
-                const is429 = status === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
-                if (is429) {
-                    let waitSec = 2.5;
-                    const headerVal = err?.response?.headers?.get?.('retry-after') || err?.headers?.['retry-after'];
-                    if (headerVal && !Number.isNaN(Number(headerVal))) {
-                        waitSec = Number.parseFloat(headerVal);
-                    } else if (typeof err?.retry_after === 'number') {
-                        waitSec = err.retry_after > 100 ? err.retry_after / 1000 : err.retry_after;
-                    }
-                    const waitMs = Math.ceil(waitSec * 1000) + 100;
-                    this.applyTokenBackoff(hash, waitMs, { subsystem, reason: '429_rate_limit', source: 'rest_api' });
-
-                    if (attempt < maxAttempts) {
-                        // Smooth sequential pause and retry without dropping task
-                        await new Promise((r) => setTimeout(r, waitMs));
-                        continue;
-                    }
+        try {
+            return await this._executeTokenAttempt(hash, operation, options);
+        } catch (firstErr) {
+            if (canRetry && this._is429Error(firstErr)) {
+                const waitMs = this._parse429WaitMs(firstErr);
+                this.applyTokenBackoff(hash, waitMs, { subsystem, reason: '429_rate_limit', source: 'rest_api' });
+                await new Promise((r) => setTimeout(r, waitMs));
+                try {
+                    return await this._executeTokenAttempt(hash, operation, options);
+                } catch (retryErr) {
+                    this._checkAndQuarantineOnAuthError(hash, subsystem, retryErr);
+                    this.emit('token:error', { tokenHash: hash, subsystem, error: retryErr });
+                    throw retryErr;
                 }
-
-                // Check HTTP 401 Unauthorized / Invalid Token
-                const is401 = status === 401 ||
-                    msg.toLowerCase().includes('unauthorized') ||
-                    msg.toLowerCase().includes('invalid token') ||
-                    err?.code === 'TOKEN_INVALID';
-
-                if (is401) {
-                    this.quarantineToken(hash, `Detected by ${subsystem || 'unknown'}: ${msg || '401 Unauthorized'}`);
-                }
-
-                // Check HTTP 403 Forbidden / Locked Account
-                const is403 = status === 403 || msg.includes('403') || msg.toLowerCase().includes('account locked');
-                if (is403 && (msg.toLowerCase().includes('verification') || msg.toLowerCase().includes('locked'))) {
-                    this.quarantineToken(hash, `Account Locked / Captcha Required: ${msg}`);
-                }
-
-                this.emit('token:error', { tokenHash: hash, subsystem, error: err });
-                throw err;
             }
+
+            this._checkAndQuarantineOnAuthError(hash, subsystem, firstErr);
+            this.emit('token:error', { tokenHash: hash, subsystem, error: firstErr });
+            throw firstErr;
         }
     }
 
@@ -910,8 +921,11 @@ function getSessionEventRepo() {
     try {
         const db = require("../../database");
         return db?.repositories?.sessionEvent || null;
-    } catch (_err) {
-        // Fallback gracefully if database module is not initialized or unavailable
+    } catch (err) {
+        // Ignored: database repository is optional during isolated token coordinator tests
+        if (process.env.DEBUG_TELEMETRY) {
+            console.debug("[TokenCoordinator] SessionEvent repository unavailable:", err.message);
+        }
         return null;
     }
 }

@@ -16,6 +16,28 @@ function resolveNextCursor(page, candidates) {
     return null;
 }
 
+function _extractCandidates(page) {
+    if (page?.candidates !== undefined) {
+        return page.candidates;
+    }
+    if (Array.isArray(page)) {
+        return page;
+    }
+    return [];
+}
+
+function _dispatchOnPageTelemetry(onPage, page, nextCursor, candidates) {
+    if (typeof onPage !== "function") return;
+    try {
+        const pagePayload = (page && typeof page === "object")
+            ? { ...page, nextCursor, candidates, page }
+            : { nextCursor, candidates, page };
+        onPage(pagePayload);
+    } catch (_err) {
+        // Ignore onPage telemetry callback errors
+    }
+}
+
 async function* streamCandidates({
     mode,
     baseConfig = {},
@@ -44,31 +66,16 @@ async function* streamCandidates({
             seenUsers: tracker
         });
 
-        let candidates = [];
-        if (page?.candidates !== undefined) {
-            candidates = page.candidates;
-        } else if (Array.isArray(page)) {
-            candidates = page;
-        }
+        const candidates = _extractCandidates(page);
         const nextCursor = resolveNextCursor(page, candidates);
 
         // Note: onPage is intended for telemetry/stats only; persistent job cursors must be
         // checkpointed by the consumer after items are safely enqueued, not on page fetch.
-        if (typeof onPage === "function") {
-            try {
-                const pagePayload = (page && typeof page === "object")
-                    ? { ...page, nextCursor, candidates, page }
-                    : { nextCursor, candidates, page };
-                onPage(pagePayload);
-            } catch (err) {
-                // Ignore onPage telemetry callback errors
-            }
-        }
+        _dispatchOnPageTelemetry(onPage, page, nextCursor, candidates);
 
         for (const candidate of candidates) {
-            const cursor = (candidate._id || candidate.recordId || candidate.id)
-                ? String(candidate._id || candidate.recordId || candidate.id)
-                : null;
+            const rawId = candidate._id || candidate.recordId || candidate.id;
+            const cursor = rawId ? String(rawId) : null;
             yield { candidate, cursor };
         }
 

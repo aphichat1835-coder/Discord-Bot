@@ -100,7 +100,7 @@ const SENSITIVE_VALUE_PATTERNS = Object.freeze([
     /bearer\s+[\w.-]+/gi,
     /bot\s+[\w.-]+/gi,
     /mfa\.[\w-]{20,}/gi,
-    /[\w-]{24,}\.[\w-]{6}\.[\w-]{20,}/g
+    /\b[A-Za-z0-9_-]{24,32}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,45}\b/g
 ]);
 
 function sanitizeString(str) {

@@ -66,8 +66,11 @@ function sendRawWebhook(webhookUrl, payload) {
 
             req.write(data);
             req.end();
-        } catch (_reqErr) {
+        } catch (err) {
             // Return false if URL parsing or request creation throws synchronously
+            if (process.env.NODE_ENV !== "test") {
+                console.debug?.("[JoinCampaign:batchLogger] Webhook request dispatch error:", err?.message || err);
+            }
             resolve(false);
         }
     });

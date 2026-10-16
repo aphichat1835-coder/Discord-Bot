@@ -395,7 +395,7 @@ function buildWebhookEventTitle(event, presentation, category, target = "LOG") {
     }
     title = title.replace(/^(?:SHADOW REPORT:\s*|COMMAND LOG:\s*|ACTION:\s*|REPORT:\s*)/i, "");
     title = title.replace(/^(?:[🔵🟢🟠🔴🚨]|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}])+\s*/u, "");
-    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
     title = title.replace(new RegExp(String.raw`^${escapedCat}\s*[·•]\s*`, "i"), "");
     title = title.replace(/^[A-Z_]{3,15}\s*[·•]\s*/, "");
     title = title.trim();
@@ -447,7 +447,7 @@ function deleteMatchingFromContext(context, normalizedTarget) {
 }
 
 function getAndDeleteFromContext(context, normalizedTarget) {
-    let foundValue = undefined;
+    let foundValue;
     for (const key of Object.keys(context)) {
         if (normalizeFieldName(key) === normalizedTarget) {
             if (foundValue === undefined && context[key] !== undefined && context[key] !== null && context[key] !== "") {
@@ -1078,6 +1078,63 @@ function buildDuplicateSummaryPayload(entry, ttlMs, stopping = false) {
     });
 }
 
+function _cleanDedupeEntry(key, entry) {
+    if (routineDedupe.get(key) === entry) {
+        if (entry.timer) clearTimeout(entry.timer);
+        routineDedupe.delete(key);
+    }
+}
+
+async function _handleExistingDedupe(key, existing) {
+    let firstDelivered = false;
+    try {
+        firstDelivered = await existing.pending;
+    } catch {
+        firstDelivered = false;
+    }
+    if (firstDelivered) {
+        existing.duplicates++;
+        return { handled: true, success: true };
+    }
+    // Delivery of the prior in-flight entry failed. Clean it up before retrying.
+    _cleanDedupeEntry(key, existing);
+    return { handled: false };
+}
+
+function _armDedupeTimer(key, entry, ttlMs) {
+    entry.timer = setTimeout(() => {
+        if (routineDedupe.get(key) === entry) {
+            routineDedupe.delete(key);
+        }
+        if (entry.duplicates > 0) {
+            sendWebhook(entry.target, buildDuplicateSummaryPayload(entry, ttlMs), entry.options).catch(() => {});
+        }
+    }, ttlMs);
+    entry.timer.unref?.();
+}
+
+async function _dispatchDedupeEntry(key, entry, target, payload, options, ttlMs) {
+    routineDedupe.set(key, entry);
+    trimRoutineDedupe();
+
+    let sent = false;
+    try {
+        const sendPromise = sendWebhook(target, payload, options);
+        entry.pending = sendPromise;
+        sent = await sendPromise;
+    } catch {
+        sent = false;
+    }
+
+    if (!sent) {
+        _cleanDedupeEntry(key, entry);
+        return false;
+    }
+
+    _armDedupeTimer(key, entry, ttlMs);
+    return true;
+}
+
 async function sendDedupedWebhook(target, payload, options) {
     const baseKey = truncate(options.dedupeKey, 200) || "routine-event";
     const key = `${dedupeDestinationKey(target, options)}:${baseKey}`;
@@ -1087,22 +1144,8 @@ async function sendDedupedWebhook(target, payload, options) {
     while (attempts++ < 3) {
         const existing = routineDedupe.get(key);
         if (existing) {
-            let firstDelivered = false;
-            try {
-                firstDelivered = await existing.pending;
-            } catch {
-                firstDelivered = false;
-            }
-            if (firstDelivered) {
-                existing.duplicates++;
-                return true;
-            }
-            // Delivery of the prior in-flight entry failed. Ensure the failed entry is removed
-            // before trying again to prevent infinite recursion and stale map references.
-            if (routineDedupe.get(key) === existing) {
-                if (existing.timer) clearTimeout(existing.timer);
-                routineDedupe.delete(key);
-            }
+            const result = await _handleExistingDedupe(key, existing);
+            if (result.handled) return result.success;
             continue;
         }
 
@@ -1116,36 +1159,8 @@ async function sendDedupedWebhook(target, payload, options) {
             options,
             pending: null
         };
-        routineDedupe.set(key, entry);
-        trimRoutineDedupe();
 
-        let sent = false;
-        try {
-            const sendPromise = sendWebhook(target, payload, options);
-            entry.pending = sendPromise;
-            sent = await sendPromise;
-        } catch {
-            sent = false;
-        }
-
-        if (!sent) {
-            if (routineDedupe.get(key) === entry) {
-                if (entry.timer) clearTimeout(entry.timer);
-                routineDedupe.delete(key);
-            }
-            return false;
-        }
-
-        entry.timer = setTimeout(() => {
-            if (routineDedupe.get(key) === entry) {
-                routineDedupe.delete(key);
-            }
-            if (entry.duplicates > 0) {
-                sendWebhook(entry.target, buildDuplicateSummaryPayload(entry, ttlMs), entry.options).catch(() => {});
-            }
-        }, ttlMs);
-        entry.timer.unref?.();
-        return true;
+        return await _dispatchDedupeEntry(key, entry, target, payload, options, ttlMs);
     }
 
     return false;

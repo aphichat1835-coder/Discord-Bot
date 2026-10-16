@@ -27,7 +27,7 @@ class QuestLogRepository {
                 String(logData.invokerTag || ""),
                 logData.guildId ? String(logData.guildId) : null,
                 logData.channelId ? String(logData.channelId) : null,
-                parseInt(logData.totalTokens, 10) || 0,
+                Number.parseInt(logData.totalTokens, 10) || 0,
                 String(logData.overallStatus || "in_progress"),
                 logData.dmDelivered ? 1 : 0,
                 logData.dmError ? String(logData.dmError) : null,

@@ -205,4 +205,44 @@ test("DatabaseService Comprehensive Suite", async (t) => {
         assert.equal(masked.count, 42);
         assert.equal(masked.tags[0], "normal");
     });
+
+    await t.test("maskSensitiveValue propagates sensitivity to array items and nested structures", () => {
+        const raw = {
+            accessTokens: ["mySecretTokenStringAlpha", "short"],
+            credentials: {
+                secrets: ["clientSecretStringOne", "clientSecretStringTwo"]
+            },
+            normalArray: ["item1", "192.168.1.100", "test@domain.com"],
+            nullVal: null,
+            undefVal: undefined,
+            boolVal: true,
+            numVal: 123.45
+        };
+
+        const masked = databaseService.maskSensitiveValue("root", raw);
+
+        // Array items under sensitive key MUST be masked
+        assert.equal(masked.accessTokens[0], "mySe...pha [PROTECTED]");
+        assert.equal(masked.accessTokens[1], "[PROTECTED_SECRET]");
+
+        // Nested array under nested sensitive object MUST be masked
+        assert.equal(masked.credentials.secrets[0], "clie...One [PROTECTED]");
+        assert.equal(masked.credentials.secrets[1], "clie...Two [PROTECTED]");
+
+        // Normal array preserves plain strings and masks IP/email
+        assert.equal(masked.normalArray[0], "item1");
+        assert.equal(masked.normalArray[1], "192.168.***.***");
+        assert.equal(masked.normalArray[2], "t***@domain.com");
+
+        // Primitives preserved
+        assert.equal(masked.nullVal, null);
+        assert.equal(masked.undefVal, undefined);
+        assert.equal(masked.boolVal, true);
+        assert.equal(masked.numVal, 123.45);
+
+        // Verify no raw secret leaks in JSON output
+        const json = JSON.stringify(masked);
+        assert.equal(json.includes("mySecretTokenStringAlpha"), false);
+        assert.equal(json.includes("clientSecretStringOne"), false);
+    });
 });

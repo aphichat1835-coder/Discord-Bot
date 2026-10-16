@@ -10,8 +10,11 @@ const APP_VERSION = (() => {
     try {
         const pkg = require("../../../package.json");
         return pkg.version || "5.0.0";
-    } catch (_err) {
-        // Fallback default app version if package.json is unavailable
+    } catch (err) {
+        // Fallback default app version if package.json is unavailable or unreadable
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[migrationRunner] Failed to read package.json version, using fallback 5.0.0:", err?.message || err);
+        }
         return "5.0.0";
     }
 })();
@@ -67,7 +70,7 @@ function loadMigrationFiles(migrationsDir) {
 
 function isDestructiveMigration(content) {
     if (!content || typeof content !== "string") return false;
-    const stripped = content.replace(/--.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const stripped = content.replace(/--.*$/gm, "").replace(/\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, "");
     return /\b(DROP\s+TABLE|DROP\s+COLUMN|TRUNCATE)\b/i.test(stripped);
 }
 

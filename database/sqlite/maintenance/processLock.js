@@ -45,15 +45,32 @@ function isProcessLockActive(dbPath) {
             }
         }
         return { active: false, stale: true, oldPid: data.pid };
-    } catch (_readErr) {
-        try {
-            fs.unlinkSync(lockPath);
-        } catch (unlinkErr) {
-            if (unlinkErr.code !== "ENOENT") {
-                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock during active check: ${unlinkErr.message}`);
-            }
+    } catch (readErr) {
+        if (readErr.code === "ENOENT") {
+            // Lock file was removed concurrently between existsSync and readFileSync
+            return { active: false };
         }
-        return { active: false };
+        if (readErr instanceof SyntaxError) {
+            // Corrupt JSON: log diagnostic and safely attempt cleanup of invalid lock payload
+            console.warn(`[PROCESS_LOCK] ⚠️ Corrupt JSON in process lock file: ${readErr.message}`);
+            try {
+                fs.unlinkSync(lockPath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock during active check: ${unlinkErr.message}`);
+                }
+            }
+            return { active: false, stale: true, corrupt: true };
+        }
+        // EACCES, EPERM, EIO or unexpected filesystem error: Fail closed!
+        // Never assume lock is free and never delete lock file on permission/IO errors.
+        console.error(`[PROCESS_LOCK] 🚨 Failed to inspect process lock due to filesystem error: ${readErr.message}`);
+        return {
+            active: true,
+            indeterminate: true,
+            error: readErr.message,
+            code: readErr.code
+        };
     }
 }
 
@@ -115,17 +132,23 @@ function inspectAndReclaimProcessLock(lockPath) {
             }
         }
     } catch (readErr) {
-        // Corrupt or unreadable lock file; log diagnostic and remove it to allow reclamation
-        if (readErr.code !== "ENOENT") {
-            console.warn(`[PROCESS_LOCK] ⚠️ Lock file unreadable (${readErr.message}), attempting reclamation`);
+        if (readErr.code === "ENOENT") {
+            return null;
         }
-        try {
-            fs.unlinkSync(lockPath);
-        } catch (unlinkErr) {
-            if (unlinkErr.code !== "ENOENT") {
-                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock file: ${unlinkErr.message}`);
+        if (readErr instanceof SyntaxError) {
+            console.warn(`[PROCESS_LOCK] ⚠️ Corrupt JSON in process lock file (${readErr.message}), attempting reclamation`);
+            try {
+                fs.unlinkSync(lockPath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock file: ${unlinkErr.message}`);
+                }
             }
+            return null;
         }
+        // Permission or filesystem error: Fail closed! Do not delete file or reclaim.
+        console.error(`[PROCESS_LOCK] 🚨 Lock file unreadable due to filesystem error (${readErr.message}); refusing to reclaim`);
+        return { acquired: false, reason: "unreadable_lock", error: readErr.message };
     }
     return null;
 }
@@ -206,16 +229,29 @@ function isRestoreLockActive(dbPath) {
             }
         }
         return { active: false, stale: true };
-    } catch {
-        // Corrupted or unreadable lock file; clean up and treat lock as inactive
-        try {
-            fs.unlinkSync(restorePath);
-        } catch (unlinkErr) {
-            if (unlinkErr.code !== "ENOENT") {
-                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock: ${unlinkErr.message}`);
-            }
+    } catch (readErr) {
+        if (readErr.code === "ENOENT") {
+            return { active: false };
         }
-        return { active: false };
+        if (readErr instanceof SyntaxError) {
+            console.warn(`[PROCESS_LOCK] ⚠️ Corrupt JSON in restore lock file: ${readErr.message}`);
+            try {
+                fs.unlinkSync(restorePath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock: ${unlinkErr.message}`);
+                }
+            }
+            return { active: false, stale: true, corrupt: true };
+        }
+        // EACCES, EPERM, EIO or unexpected filesystem error: Fail closed!
+        console.error(`[PROCESS_LOCK] 🚨 Failed to inspect restore lock due to filesystem error: ${readErr.message}`);
+        return {
+            active: true,
+            indeterminate: true,
+            error: readErr.message,
+            code: readErr.code
+        };
     }
 }
 
@@ -243,17 +279,22 @@ function inspectAndReclaimRestoreLock(restorePath) {
             }
         }
     } catch (readErr) {
-        // Corrupt or unreadable restore lock file; log diagnostic and remove it to allow reclamation
-        if (readErr.code !== "ENOENT") {
-            console.warn(`[PROCESS_LOCK] ⚠️ Restore lock file unreadable (${readErr.message}), attempting reclamation`);
+        if (readErr.code === "ENOENT") {
+            return null;
         }
-        try {
-            fs.unlinkSync(restorePath);
-        } catch (unlinkErr) {
-            if (unlinkErr.code !== "ENOENT") {
-                console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock file: ${unlinkErr.message}`);
+        if (readErr instanceof SyntaxError) {
+            console.warn(`[PROCESS_LOCK] ⚠️ Corrupt JSON in restore lock file (${readErr.message}), attempting reclamation`);
+            try {
+                fs.unlinkSync(restorePath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock file: ${unlinkErr.message}`);
+                }
             }
+            return null;
         }
+        console.error(`[PROCESS_LOCK] 🚨 Restore lock file unreadable due to filesystem error (${readErr.message}); refusing to reclaim`);
+        return { acquired: false, reason: "unreadable_restore_lock", error: readErr.message };
     }
     return null;
 }

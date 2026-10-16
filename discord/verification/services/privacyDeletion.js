@@ -985,6 +985,7 @@ async function executePrivacyRecoveryJobPhases({
             manifest.counts.verificationRecovery = resultCount(recoveryResult);
             manifest.phases.sqlite = "completed";
         } catch (sqliteErr) {
+            console.error("[PRIVACY_DELETION] VerificationRecovery deletion phase failed:", sqliteErr.message);
             manifest.phases.sqlite = "failed";
             const errCode = "PRIVACY_DELETION_SQLITE_FAILED";
             await PrivacyDeletionJobModel.updateOne(
@@ -1145,8 +1146,8 @@ async function recoverPendingPrivacyDeletions({
             status: { $in: ["pending", "running", "failed"] }
         });
         candidateJobs = await (typeof query.lean === "function" ? query.lean() : query);
-    } catch (_err) {
-        // Return empty array if candidate jobs query fails during recovery scan
+    } catch (scanErr) {
+        console.warn("[PRIVACY_DELETION] Candidate jobs query failed during recovery scan:", scanErr.message);
         return [];
     }
 

@@ -50,19 +50,27 @@ function notifyP1Dropped(repoName, p1DropCount, totalDropped) {
     } catch (_) {}
 }
 
+function formatAlertDetails(details) {
+    if (details == null) return "";
+    if (details instanceof Error) {
+        return details.stack || details.message;
+    }
+    if (typeof details === "object") {
+        try {
+            return JSON.stringify(details);
+        } catch (_) {
+            return "[Circular/Unserializable]";
+        }
+    }
+    return String(details);
+}
+
 function notifyP0SpoolFailed(repoName, reason, details = {}) {
     const alertKey = `sqlite_p0_spool_failed_${repoName}`;
     if (!canSendAlert(alertKey)) return;
     recordAlertSent(alertKey);
 
-    let formattedDetails = "";
-    if (details instanceof Error) {
-        formattedDetails = details.stack || details.message;
-    } else if (details && typeof details === "object") {
-        formattedDetails = JSON.stringify(details);
-    } else {
-        formattedDetails = String(details ?? "");
-    }
+    const formattedDetails = formatAlertDetails(details);
 
     try {
         webhooks.sendWebhookEvent({

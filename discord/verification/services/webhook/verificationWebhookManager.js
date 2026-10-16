@@ -1504,63 +1504,83 @@ class VerificationWebhookManager {
         });
     }
 
+    _determineFailReasonAndMessage(item, sendErr, isPermanent) {
+        if (sendErr.code === "destination_changed_during_delivery") {
+            if (item.sent_parts > 0) {
+                return {
+                    failReason: "cancelled_during_send_partial",
+                    failMessage: `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`
+                };
+            }
+            return {
+                failReason: "cancelled_during_send",
+                failMessage: `Delivery cancelled during transmission: ${sendErr.message}`
+            };
+        }
+        if (item.sent_parts > 0 && isPermanent) {
+            return {
+                failReason: "partial_delivery_failed",
+                failMessage: `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`
+            };
+        }
+        return {
+            failReason: isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted",
+            failMessage: sendErr.message
+        };
+    }
+
+    async _handleTerminalDeliveryFailure(item, guildId, sendErr, isPermanent) {
+        const { failReason, failMessage } = this._determineFailReasonAndMessage(item, sendErr, isPermanent);
+        this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
+        sendThrottledAlert({
+            key: `exhausted_${guildId}_${item.delivery_id}`,
+            severity: "ERROR",
+            code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
+            title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
+            description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
+            guildId
+        });
+        if (item.job_id) {
+            const j = this.repo.getJobById(item.job_id);
+            if (j) {
+                this.repo.updateJobProgress(item.job_id, {
+                    failureCount: (j.failure_count || 0) + 1
+                });
+            }
+            await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+        }
+        if (sendErr.status === 401 || sendErr.status === 404) {
+            await GuildConfig.updateOne({ guildId }, {
+                $set: {
+                    "verification.webhookLog.valid": false,
+                    "verification.webhookLog.lastStatus": "failed",
+                    "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
+                }
+            }).catch(() => {});
+        }
+    }
+
+    _scheduleDeliveryRetry(item, sendErr) {
+        const attempt = Math.max(1, Number(item.attempt_count) || 1);
+        const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + crypto.randomInt(0, 1000);
+        this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
+        if (item.job_id) {
+            const j = this.repo.getJobById(item.job_id);
+            if (j) {
+                this.repo.updateJobProgress(item.job_id, {
+                    retryCount: (j.retry_count || 0) + 1
+                });
+            }
+        }
+    }
+
     async _handleDeliveryFailure(item, guildId, sendErr) {
         console.error(`[VerificationWebhook] Delivery failed for id=${item.delivery_id}:`, sendErr.message);
         const isPermanent = isPermanentWebhookError(sendErr);
         if (isPermanent || item.attempt_count >= 5) {
-            let failReason = isPermanent ? (sendErr.code || "http_permanent_error") : "exhausted";
-            let failMessage = sendErr.message;
-            if (sendErr.code === "destination_changed_during_delivery") {
-                if (item.sent_parts > 0) {
-                    failReason = "cancelled_during_send_partial";
-                    failMessage = `Delivery cancelled during multipart transmission after sending ${item.sent_parts} parts: ${sendErr.message}`;
-                } else {
-                    failReason = "cancelled_during_send";
-                    failMessage = `Delivery cancelled during transmission: ${sendErr.message}`;
-                }
-            } else if (item.sent_parts > 0 && isPermanent) {
-                failReason = "partial_delivery_failed";
-                failMessage = `Delivery permanently failed after sending ${item.sent_parts} parts: ${sendErr.message}`;
-            }
-            this.repo.markDeliveryFailed(item.delivery_id, failReason, failMessage, item.destination_version);
-            sendThrottledAlert({
-                key: `exhausted_${guildId}_${item.delivery_id}`,
-                severity: "ERROR",
-                code: isPermanent ? "verification.webhook_permanent_failure" : "verification.webhook_retry_exhausted",
-                title: isPermanent ? "WEBHOOK PERMANENT DELIVERY ERROR" : "WEBHOOK RETRY EXHAUSTED",
-                description: `การส่งข้อมูล Log Verify สำหรับ Guild ${guildId} ล้มเหลว (${failReason}): ${sendErr.message}`,
-                guildId
-            });
-            if (item.job_id) {
-                const j = this.repo.getJobById(item.job_id);
-                if (j) {
-                    this.repo.updateJobProgress(item.job_id, {
-                        failureCount: (j.failure_count || 0) + 1
-                    });
-                }
-                await this.checkAndCompleteJobIfDone(item.job_id, guildId);
-            }
-            if (sendErr.status === 401 || sendErr.status === 404) {
-                await GuildConfig.updateOne({ guildId }, {
-                    $set: {
-                        "verification.webhookLog.valid": false,
-                        "verification.webhookLog.lastStatus": "failed",
-                        "verification.webhookLog.lastError": `Webhook endpoint returned HTTP ${sendErr.status}`
-                    }
-                }).catch(() => {});
-            }
+            await this._handleTerminalDeliveryFailure(item, guildId, sendErr, isPermanent);
         } else {
-            const attempt = Math.max(1, Number(item.attempt_count) || 1);
-            const retryDelayMs = Math.min(60000, 2000 * Math.pow(2, attempt - 1)) + crypto.randomInt(0, 1000);
-            this.repo.markDeliveryRetry(item.delivery_id, retryDelayMs, "retry", sendErr.message, item.destination_version);
-            if (item.job_id) {
-                const j = this.repo.getJobById(item.job_id);
-                if (j) {
-                    this.repo.updateJobProgress(item.job_id, {
-                        retryCount: (j.retry_count || 0) + 1
-                    });
-                }
-            }
+            this._scheduleDeliveryRetry(item, sendErr);
         }
     }
 

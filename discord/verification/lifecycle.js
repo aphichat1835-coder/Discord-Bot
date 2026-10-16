@@ -285,6 +285,60 @@ async function runPrivacyDeletionRecoverySafe(options = {}) {
     }
 }
 
+async function _runOAuthTokenRefresh() {
+    try {
+        lastOAuthRefreshSummary = await oauthTokenManager.refreshDueTokens();
+        lastOAuthRefreshAt = Date.now();
+        lastOAuthRefreshError = null;
+    } catch (err) {
+        lastOAuthRefreshError = safeError(err);
+    }
+}
+
+async function _runWebhookMaintenanceRecovery() {
+    if (typeof verificationWebhookManager?.performStartupRecovery === "function" && !verificationWebhookManager?.startupRecoveryCompleted) {
+        try {
+            await verificationWebhookManager.performStartupRecovery();
+        } catch (err) {
+            safeLogger.warn?.("[Lifecycle] Webhook startup recovery encountered error:", err?.message || String(err));
+        }
+    } else if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
+        try {
+            const recovery = verificationWebhookManager.repo.recoverStuckSendingDeliveries(300000);
+            const stuckGuilds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
+            for (const gId of stuckGuilds) {
+                if (typeof verificationWebhookManager.triggerWorker === "function") {
+                    verificationWebhookManager.triggerWorker(gId);
+                }
+            }
+        } catch (err) {
+            safeLogger.warn?.("[Lifecycle] Webhook recoverStuckSendingDeliveries encountered error:", err?.message || String(err));
+        }
+    }
+}
+
+async function _runPostMaintenanceTasks(options, summary) {
+    summary.privacyDeletionRecovery = await runPrivacyDeletionRecoverySafe(options);
+    await _runOAuthTokenRefresh();
+    await _runWebhookMaintenanceRecovery();
+}
+
+async function _runMigrationsAndRetention(dryRun, summary, now) {
+    await runAutomaticMigrationSafe(dryRun, summary);
+    await runEncryptionMigrationSafe(dryRun, summary);
+    await runIpIdentityHistoryMigration(dryRun, summary);
+    await runIpIdentityVerifyLogMigration(dryRun, summary);
+    await runSnapshotCleanup(dryRun, summary);
+    const configs = await loadRetentionConfigs(dryRun, summary);
+    summary.guildsScanned = configs.length;
+    summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
+    summary.maxGuilds = RETENTION_CONFIG_SCAN_MAX;
+
+    for (const config of configs) {
+        await processGuildRetention(config, { now, dryRun, summary });
+    }
+}
+
 async function runVerificationMaintenance(options = {}) {
     if (maintenanceInFlight) {
         return { skipped: true, reason: "maintenance_in_flight" };
@@ -300,48 +354,10 @@ async function runVerificationMaintenance(options = {}) {
     const summary = createSummary(dryRun, now);
 
     try {
-        await runAutomaticMigrationSafe(dryRun, summary);
-        await runEncryptionMigrationSafe(dryRun, summary);
-        await runIpIdentityHistoryMigration(dryRun, summary);
-        await runIpIdentityVerifyLogMigration(dryRun, summary);
-        await runSnapshotCleanup(dryRun, summary);
-        const configs = await loadRetentionConfigs(dryRun, summary);
-        summary.guildsScanned = configs.length;
-        summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
-        summary.maxGuilds = RETENTION_CONFIG_SCAN_MAX;
-
-        for (const config of configs) {
-            await processGuildRetention(config, { now, dryRun, summary });
-        }
+        await _runMigrationsAndRetention(dryRun, summary, now);
 
         if (!dryRun) {
-            summary.privacyDeletionRecovery = await runPrivacyDeletionRecoverySafe(options);
-            try {
-                lastOAuthRefreshSummary = await oauthTokenManager.refreshDueTokens();
-                lastOAuthRefreshAt = Date.now();
-                lastOAuthRefreshError = null;
-            } catch (err) {
-                lastOAuthRefreshError = safeError(err);
-            }
-            if (typeof verificationWebhookManager?.performStartupRecovery === "function" && !verificationWebhookManager?.startupRecoveryCompleted) {
-                try {
-                    await verificationWebhookManager.performStartupRecovery();
-                } catch (err) {
-                    safeLogger.warn?.("[Lifecycle] Webhook startup recovery encountered error:", err?.message || String(err));
-                }
-            } else if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
-                try {
-                    const recovery = verificationWebhookManager.repo.recoverStuckSendingDeliveries(300000);
-                    const stuckGuilds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
-                    for (const gId of stuckGuilds) {
-                        if (typeof verificationWebhookManager.triggerWorker === "function") {
-                            verificationWebhookManager.triggerWorker(gId);
-                        }
-                    }
-                } catch (err) {
-                    safeLogger.warn?.("[Lifecycle] Webhook recoverStuckSendingDeliveries encountered error:", err?.message || String(err));
-                }
-            }
+            await _runPostMaintenanceTasks(options, summary);
         }
 
         summary.finishedAt = Date.now();

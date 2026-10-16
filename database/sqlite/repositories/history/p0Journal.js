@@ -120,29 +120,89 @@ function ensureReceiptsTable(db) {
  * @param {object} repositories - { commandEvent, sessionEvent, voiceEvent }
  * @returns {number} Count of successfully replayed items
  */
-function drainP0Spool(db, repositories = {}) {
-    if (!db || !db.open) return 0;
-    const journalPath = resolveJournalPath();
-    if (!fs.existsSync(journalPath)) return 0;
-
+function _readJournalLines(journalPath) {
+    if (!fs.existsSync(journalPath)) return [];
     let content = "";
     try {
         content = fs.readFileSync(journalPath, "utf8");
     } catch (err) {
         console.warn(`[P0_JOURNAL] ⚠️ Failed to read emergency journal for replay: ${err.message}`);
-        return 0;
+        return [];
     }
 
     if (!content.trim()) {
         try { fs.unlinkSync(journalPath); } catch (_) {}
-        return 0;
+        return [];
     }
 
     const lines = content.split("\n").filter(l => l.trim().length > 0);
     if (lines.length === 0) {
         try { fs.unlinkSync(journalPath); } catch (_) {}
-        return 0;
+        return [];
     }
+    return lines;
+}
+
+function _replaySingleEntry(line, repositories, checkReceiptStmt, insertReceiptStmt) {
+    let entry;
+    try {
+        entry = JSON.parse(line);
+    } catch (parseErr) {
+        console.warn(`[P0_JOURNAL] ⚠️ Corrupt JSON in spooled journal line: ${parseErr.message}`);
+        return { status: "corrupt" };
+    }
+
+    const repoKey = entry.repo;
+    const repo = repositories[repoKey] || repositories[repoKey?.replace(/_events?$/, "Event")];
+    if (!repo || typeof repo._insertSingle !== "function") {
+        return { status: "missing_repo" };
+    }
+
+    const entryId = entry.id || getStableEntryId(repoKey, entry.item);
+    if (checkReceiptStmt.get(entryId)) {
+        return { status: "duplicate" };
+    }
+
+    try {
+        repo._insertSingle(entry.item);
+        insertReceiptStmt.run(entryId, repoKey, Date.now());
+        return { status: "replayed" };
+    } catch (insertErr) {
+        console.warn(`[P0_JOURNAL] ⚠️ Insert failed during spool replay (${insertErr.message}); retaining item`);
+        return { status: "failed" };
+    }
+}
+
+function _rewriteOrRemoveJournal(journalPath, failedLines) {
+    if (failedLines.length > 0) {
+        const tmpPath = `${journalPath}.${process.pid}.${Date.now()}.tmp`;
+        try {
+            fs.writeFileSync(tmpPath, failedLines.join("\n") + "\n", "utf8");
+            fs.renameSync(tmpPath, journalPath);
+        } catch (rewriteErr) {
+            console.error(`[P0_JOURNAL] ❌ Failed to rewrite emergency journal atomically: ${rewriteErr.message}`);
+            try {
+                fs.unlinkSync(tmpPath);
+            } catch (_) {}
+        }
+    } else {
+        try {
+            fs.unlinkSync(journalPath);
+        } catch (_) {}
+    }
+}
+
+/**
+ * Drains and replays spooled P0 events into SQLite with idempotency and atomic rewrite.
+ * @param {object} db - Active better-sqlite3 database
+ * @param {object} repositories - { commandEvent, sessionEvent, voiceEvent }
+ * @returns {number} Count of successfully replayed items
+ */
+function drainP0Spool(db, repositories = {}) {
+    if (!db || !db.open) return 0;
+    const journalPath = resolveJournalPath();
+    const lines = _readJournalLines(journalPath);
+    if (lines.length === 0) return 0;
 
     ensureReceiptsTable(db);
 
@@ -155,37 +215,12 @@ function drainP0Spool(db, repositories = {}) {
         const insertReceiptStmt = db.prepare("INSERT INTO p0_journal_receipts (entry_id, repo, replayed_at) VALUES (?, ?, ?)");
 
         for (const line of lines) {
-            let entry;
-            try {
-                entry = JSON.parse(line);
-            } catch (_) {
-                // Keep corrupt line for diagnostic inspection if needed, or flag for retention
-                failedLines.push(line);
-                continue;
-            }
-
-            const repoKey = entry.repo;
-            const repo = repositories[repoKey] || repositories[repoKey?.replace(/_events?$/, "Event")];
-            if (!repo || typeof repo._insertSingle !== "function") {
-                failedLines.push(line);
-                continue;
-            }
-
-            const entryId = entry.id || getStableEntryId(repoKey, entry.item);
-
-            // Check if already replayed (idempotency receipt)
-            const alreadyProcessed = checkReceiptStmt.get(entryId);
-            if (alreadyProcessed) {
-                skippedDuplicates++;
-                continue;
-            }
-
-            try {
-                repo._insertSingle(entry.item);
-                insertReceiptStmt.run(entryId, repoKey, Date.now());
+            const res = _replaySingleEntry(line, repositories, checkReceiptStmt, insertReceiptStmt);
+            if (res.status === "replayed") {
                 replayed++;
-            } catch (insertErr) {
-                // Preserve failed line to retry on future spool drain cycles
+            } else if (res.status === "duplicate") {
+                skippedDuplicates++;
+            } else {
                 failedLines.push(line);
             }
         }
@@ -193,29 +228,7 @@ function drainP0Spool(db, repositories = {}) {
 
     try {
         replayTx();
-
-        // Atomic rewrite / unlink
-        if (failedLines.length > 0) {
-            const tmpPath = `${journalPath}.${process.pid}.${Date.now()}.tmp`;
-            try {
-                fs.writeFileSync(tmpPath, failedLines.join("\n") + "\n", "utf8");
-                fs.renameSync(tmpPath, journalPath);
-            } catch (rewriteErr) {
-                console.error(`[P0_JOURNAL] ❌ Failed to rewrite emergency journal atomically: ${rewriteErr.message}`);
-                try {
-                    fs.unlinkSync(tmpPath);
-                } catch (_cleanupErr) {
-                    // Best-effort cleanup of temporary rewrite file
-                }
-            }
-        } else {
-            try {
-                fs.unlinkSync(journalPath);
-            } catch (_unlinkErr) {
-                // Best-effort cleanup of fully replayed journal file
-            }
-        }
-
+        _rewriteOrRemoveJournal(journalPath, failedLines);
         if (replayed > 0 || skippedDuplicates > 0) {
             console.log(`[P0_JOURNAL] 🔄 Replayed ${replayed} spooled P0 event(s) (skipped duplicates: ${skippedDuplicates}) to SQLite.`);
         }
@@ -244,8 +257,8 @@ function getP0JournalStats() {
             sizeBytes: stat.size,
             path: journalPath
         };
-    } catch (_statErr) {
-        // Fallback to empty stats if reading journal fails
+    } catch (statErr) {
+        console.debug?.(`[P0_JOURNAL] Failed to read journal stats: ${statErr.message}`);
         return { exists: false, count: 0, sizeBytes: 0, path: journalPath };
     }
 }

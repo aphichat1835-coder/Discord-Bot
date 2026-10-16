@@ -113,16 +113,79 @@ async function resolveTargetGuildFreshReadyCount({ client, job, mode, tokenManag
     }
 }
 
+function _startLeaseHeartbeat(repository, jobId, userId, currentlyProcessingUsers) {
+    if (typeof repository.renewItemLease !== "function") return null;
+    return setInterval(() => {
+        try {
+            if (!currentlyProcessingUsers.has(userId)) {
+                return;
+            }
+            repository.renewItemLease(jobId, userId, 60000);
+        } catch (_) {
+            // Ignore lease renewal heartbeat error on transient lock
+        }
+    }, 15000);
+}
+
+function _checkCandidateEligibility(userId, targetMemberIds, ctx, requestedQuota, processedUserIds) {
+    if (!processedUserIds.has(userId)) {
+        processedUserIds.add(userId);
+        ctx.processedCount = processedUserIds.size;
+    }
+
+    if (targetMemberIds.has(userId)) {
+        return { eligible: false, status: "already_member" };
+    }
+
+    if (ctx.joinedCount >= requestedQuota) {
+        processedUserIds.delete(userId);
+        ctx.processedCount = processedUserIds.size;
+        return { eligible: false, status: "requeue_pending" };
+    }
+
+    return { eligible: true };
+}
+
+async function _resolveCandidateAccessToken(tokenManager, userId, itemTokenField, config, abortSignal, isStoppingFn) {
+    if (itemTokenField !== "oauth") {
+        return { ok: false, error: "invalid_token_field" };
+    }
+    let tokenResult;
+    try {
+        tokenResult = await tokenManager.getAccessToken({
+            userId,
+            tokenField: itemTokenField,
+            marginMs: config.refreshMarginMs,
+            env: process.env,
+            signal: abortSignal
+        });
+    } catch (err) {
+        const isStopping = typeof isStoppingFn === "function" ? isStoppingFn() : isStoppingFn;
+        if (isStopping && (err?.name === "AbortError" || abortSignal?.aborted)) {
+            return { aborted: true };
+        }
+        tokenResult = { ok: false, code: "error", error: err };
+    }
+
+    const isStopping = typeof isStoppingFn === "function" ? isStoppingFn() : isStoppingFn;
+    if (isStopping && (tokenResult?.code === "aborted" || tokenResult?.error?.name === "AbortError" || abortSignal?.aborted)) {
+        return { aborted: true };
+    }
+
+    const accessToken = tokenResult?.accessToken;
+    if (!accessToken) {
+        return { ok: false, error: "token_unavailable" };
+    }
+
+    return { ok: true, accessToken };
+}
+
 class CampaignWorker {
     _activeWorkerPromise = null;
     _currentJobId = null;
     _isStopping = false;
     _wakeUpResolvers = new Set();
     _abortController = null;
-
-    constructor() {
-        // Class fields initialize instance properties
-    }
 
     get isRunning() {
         return Boolean(this._activeWorkerPromise);
@@ -407,69 +470,21 @@ class CampaignWorker {
         recordItemOutcome,
         checkpointJobCounters
     }) {
-        let heartbeatTimer = null;
-        if (typeof repository.renewItemLease === "function") {
-            heartbeatTimer = setInterval(() => {
-                try {
-                    if (!currentlyProcessingUsers.has(item.userId)) {
-                        if (heartbeatTimer) clearInterval(heartbeatTimer);
-                        return;
-                    }
-                    repository.renewItemLease(job.id, item.userId, 60000);
-                } catch (err) {
-                    // Ignore lease renewal heartbeat error on transient lock
-                }
-            }, 15000);
-        }
+        const heartbeatTimer = _startLeaseHeartbeat(repository, job.id, item.userId, currentlyProcessingUsers);
 
         try {
             const userId = item.userId;
-            if (!processedUserIds.has(userId)) {
-                processedUserIds.add(userId);
-                ctx.processedCount = processedUserIds.size;
-            }
-
-            if (targetMemberIds.has(userId)) {
-                await recordItemOutcome({ userId, status: "already_member" });
-                return;
-            }
-
-            if (ctx.joinedCount >= requestedQuota) {
-                processedUserIds.delete(userId);
-                ctx.processedCount = processedUserIds.size;
-                await recordItemOutcome({ userId, status: "requeue_pending" });
+            const eligibility = _checkCandidateEligibility(userId, targetMemberIds, ctx, requestedQuota, processedUserIds);
+            if (!eligibility.eligible) {
+                await recordItemOutcome({ userId, status: eligibility.status });
                 return;
             }
 
             const itemTokenField = String(item.tokenField || "").trim();
-            if (itemTokenField !== "oauth") {
-                await recordItemOutcome({ userId, status: "failed", error: "invalid_token_field" });
-                return;
-            }
-
-            let tokenResult;
-            try {
-                tokenResult = await tokenManager.getAccessToken({
-                    userId,
-                    tokenField: itemTokenField,
-                    marginMs: config.refreshMarginMs,
-                    env: process.env,
-                    signal: this._abortController?.signal
-                });
-            } catch (err) {
-                if (this._isStopping && (err?.name === "AbortError" || this._abortController?.signal?.aborted)) {
-                    return;
-                }
-                tokenResult = { ok: false, code: "error", error: err };
-            }
-
-            if (this._isStopping && (tokenResult?.code === "aborted" || tokenResult?.error?.name === "AbortError" || this._abortController?.signal?.aborted)) {
-                return;
-            }
-
-            const accessToken = tokenResult?.accessToken;
-            if (!accessToken) {
-                await recordItemOutcome({ userId, status: "failed", error: "token_unavailable" });
+            const tokenRes = await _resolveCandidateAccessToken(tokenManager, userId, itemTokenField, config, this._abortController?.signal, () => this._isStopping);
+            if (tokenRes.aborted) return;
+            if (!tokenRes.ok) {
+                await recordItemOutcome({ userId, status: "failed", error: tokenRes.error });
                 return;
             }
 
@@ -482,7 +497,7 @@ class CampaignWorker {
 
             let res;
             try {
-                res = await discord.addMemberToGuild(targetGuildId, userId, accessToken, {
+                res = await discord.addMemberToGuild(targetGuildId, userId, tokenRes.accessToken, {
                     callerManagedRetry: true,
                     signal: this._abortController?.signal
                 });

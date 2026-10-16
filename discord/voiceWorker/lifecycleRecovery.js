@@ -496,18 +496,28 @@ async function cleanupIdleSessions(deps = {}) {
 
     const stop = deps.stopSession;
 
+    const idleEntries = [];
     for (const [id, session] of sessions) {
         const lastSeen = session.lastActivity ?? session.startedAt;
-
         if (now - lastSeen > maxIdle) {
-            console.log(`[CLEANUP] 🧹 Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — shutting down.`);
-            if (stop) {
-                const stopped = await stop(id, { notifyReason: "idle" });
-                if (!stopped) {
-                    console.warn(`[CLEANUP] ⚠️ Idle cleanup could not stop ${id}; session remains visible for review.`);
-                }
-            }
+            idleEntries.push({ id, lastSeen });
         }
+    }
+
+    if (stop && idleEntries.length > 0) {
+        await Promise.allSettled(
+            idleEntries.map(async ({ id, lastSeen }) => {
+                console.log(`[CLEANUP] 🧹 Session ${id} idle for ${Math.round((now - lastSeen) / 3600000)}h — shutting down.`);
+                try {
+                    const stopped = await stop(id, { notifyReason: "idle" });
+                    if (!stopped) {
+                        console.warn(`[CLEANUP] ⚠️ Idle cleanup could not stop ${id}; session remains visible for review.`);
+                    }
+                } catch (err) {
+                    console.warn(`[CLEANUP] ⚠️ Error stopping idle session ${id}: ${err.message}`);
+                }
+            })
+        );
     }
 }
 

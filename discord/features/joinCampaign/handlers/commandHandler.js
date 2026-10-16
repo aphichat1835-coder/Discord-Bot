@@ -17,26 +17,46 @@ function isOwner(interaction) {
         interaction.user.id === appConfig.system?.ownerId;
 }
 
-async function handleJoinPanelCommand(interaction, client) {
+function _validateCommandAccessAndState(interaction, repository) {
     if (!interaction.guild) {
-        return interaction.reply({
-            content: `> ${emoji.alert} กรุณาใช้คำสั่งนี้ในช่องแชทของเซิร์ฟเวอร์ครับ`,
-            ephemeral: true
-        });
+        return { ok: false, error: `> ${emoji.alert} กรุณาใช้คำสั่งนี้ในช่องแชทของเซิร์ฟเวอร์ครับ` };
     }
 
     if (!isOwner(interaction)) {
-        return interaction.reply({
-            content: `> ${emoji.no_entry} คำสั่งนี้ใช้ได้เฉพาะ **เจ้าของบอท** เท่านั้นครับ`,
-            ephemeral: true
-        });
+        return { ok: false, error: `> ${emoji.no_entry} คำสั่งนี้ใช้ได้เฉพาะ **เจ้าของบอท** เท่านั้นครับ` };
     }
 
-    const repository = database.repositories.joinCampaign;
     const activeJob = repository.findActiveRunningJob ? repository.findActiveRunningJob() : null;
     if (activeJob && ["RUNNING", "STAGE", "INTERRUPTED"].includes(activeJob.status)) {
+        return {
+            ok: false,
+            error: `> ${emoji.alert} กำลังมีงานดึงสมาชิกทำงานอยู่ในระบบ (\`${activeJob.id}\` สถานะ ${activeJob.status}) กรุณารอให้งานเดิมเสร็จสิ้นหรือกู้คืนก่อนสร้างแผงควบคุมใหม่ครับ`
+        };
+    }
+
+    return { ok: true };
+}
+
+async function _cleanupOldChannelPanel(repository, channel, channelId) {
+    try {
+        const oldPanel = repository.findPanelByChannelId(channelId);
+        if (oldPanel?.messageId) {
+            await channel.messages.delete(oldPanel.messageId).catch(() => {
+                // Best-effort message delete; ignore if already deleted
+            });
+            repository.deletePanelByChannelId(channelId);
+        }
+    } catch (_cleanupErr) {
+        // Best-effort cleanup of duplicate panel; do not block creating new panel
+    }
+}
+
+async function handleJoinPanelCommand(interaction, client) {
+    const repository = database.repositories.joinCampaign;
+    const accessCheck = _validateCommandAccessAndState(interaction, repository);
+    if (!accessCheck.ok) {
         return interaction.reply({
-            content: `> ${emoji.alert} กำลังมีงานดึงสมาชิกทำงานอยู่ในระบบ (\`${activeJob.id}\` สถานะ ${activeJob.status}) กรุณารอให้งานเดิมเสร็จสิ้นหรือกู้คืนก่อนสร้างแผงควบคุมใหม่ครับ`,
+            content: accessCheck.error,
             ephemeral: true
         });
     }
@@ -100,17 +120,7 @@ async function handleJoinPanelCommand(interaction, client) {
     }
 
     // 5. Duplicate Panel Clean Up: delete old panel in this channel only after validation passes
-    try {
-        const oldPanel = repository.findPanelByChannelId(interaction.channelId);
-        if (oldPanel?.messageId) {
-            await interaction.channel.messages.delete(oldPanel.messageId).catch(() => {
-                // Best-effort message delete; ignore if already deleted
-            });
-            repository.deletePanelByChannelId(interaction.channelId);
-        }
-    } catch (_cleanupErr) {
-        // Best-effort cleanup of duplicate panel; do not block creating new panel
-    }
+    await _cleanupOldChannelPanel(repository, interaction.channel, interaction.channelId);
 
     // 6. Build Panel Payload
     const payload = buildPanelPayload({

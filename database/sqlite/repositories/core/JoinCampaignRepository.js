@@ -2,6 +2,39 @@
 
 const { getDatabase } = require("../../connection");
 
+function _appendNumericCols(updates, setClauses, params) {
+    const numericCols = [
+        ["joined_count", updates.joinedCount],
+        ["already_count", updates.alreadyCount],
+        ["failed_count", updates.failedCount],
+        ["processed_count", updates.processedCount],
+        ["retry_count", updates.retryCount],
+        ["current_concurrency", updates.currentConcurrency],
+        ["current_throughput", updates.currentThroughput ?? updates.current_throughput],
+        ["recovery_count", updates.recoveryCount ?? updates.recovery_count]
+    ];
+    for (const [col, val] of numericCols) {
+        if (val !== undefined) {
+            setClauses.push(`${col} = ?`);
+            params.push(Number(val) || 0);
+        }
+    }
+}
+
+function _appendStringCols(updates, setClauses, params) {
+    const stringNullableCols = [
+        ["candidate_cursor", updates.candidateCursor],
+        ["last_error", updates.lastError ?? updates.last_error],
+        ["started_by_channel_id", updates.startedByChannelId]
+    ];
+    for (const [col, val] of stringNullableCols) {
+        if (val !== undefined) {
+            setClauses.push(`${col} = ?`);
+            params.push(val ? String(val) : null);
+        }
+    }
+}
+
 class JoinCampaignRepository {
     constructor(db = null) {
         this._db = db;
@@ -117,34 +150,8 @@ class JoinCampaignRepository {
             params.push(String(updates.status));
         }
 
-        const numericCols = [
-            ["joined_count", updates.joinedCount],
-            ["already_count", updates.alreadyCount],
-            ["failed_count", updates.failedCount],
-            ["processed_count", updates.processedCount],
-            ["retry_count", updates.retryCount],
-            ["current_concurrency", updates.currentConcurrency],
-            ["current_throughput", updates.currentThroughput !== undefined ? updates.currentThroughput : updates.current_throughput],
-            ["recovery_count", updates.recoveryCount !== undefined ? updates.recoveryCount : updates.recovery_count]
-        ];
-        for (const [col, val] of numericCols) {
-            if (val !== undefined) {
-                setClauses.push(`${col} = ?`);
-                params.push(Number(val) || 0);
-            }
-        }
-
-        const stringNullableCols = [
-            ["candidate_cursor", updates.candidateCursor],
-            ["last_error", updates.lastError !== undefined ? updates.lastError : updates.last_error],
-            ["started_by_channel_id", updates.startedByChannelId]
-        ];
-        for (const [col, val] of stringNullableCols) {
-            if (val !== undefined) {
-                setClauses.push(`${col} = ?`);
-                params.push(val ? String(val) : null);
-            }
-        }
+        _appendNumericCols(updates, setClauses, params);
+        _appendStringCols(updates, setClauses, params);
 
         if (updates.completedAt !== undefined) {
             setClauses.push("completed_at = ?");
@@ -306,8 +313,11 @@ class JoinCampaignRepository {
         try {
             const row = updateStmt.get(leaseUntil, now, now, String(campaignId), now, now);
             return row ? this._hydrateItem(row) : null;
-        } catch (_err) {
+        } catch (err) {
             // Fallback to two-step select-and-update when SQLite runtime rejects RETURNING clause
+            if (process.env.NODE_ENV !== "test") {
+                console.debug?.("[JoinCampaignRepository] RETURNING lease failed, falling back to 2-step lease:", err?.message || err);
+            }
             const findStmt = this.db.prepare(`
                 SELECT id FROM join_campaign_items
                 WHERE campaign_id = ? AND (

@@ -107,47 +107,59 @@ function normalizeConnections(connections = []) {
  * Total count and owned count only.
  * Discards raw guilds array immediately!
  */
-function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousSummary = null) {
-    const now = Date.now();
-    if (fetchFailed || !Array.isArray(guildsResult)) {
-        const totalRaw = previousSummary?.totalCount ?? previousSummary?.totalGuilds;
-        const ownedRaw = previousSummary?.ownedCount ?? previousSummary?.ownerGuildsCount;
-        const adminRaw = previousSummary?.adminCount ?? previousSummary?.adminGuildsCount;
-        const prevTotal = Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : 0;
-        const prevOwned = Number.isFinite(Number(ownedRaw)) ? Number(ownedRaw) : 0;
-        const prevAdmin = Number.isFinite(Number(adminRaw)) ? Number(adminRaw) : 0;
-        return {
-            totalCount: prevTotal,
-            ownedCount: prevOwned,
-            adminCount: prevAdmin,
-            totalGuilds: prevTotal,
-            ownerGuildsCount: prevOwned,
-            adminGuildsCount: prevAdmin,
-            status: "failed",
-            fetchedAt: previousSummary?.fetchedAt || null,
-            attemptedAt: now,
-            failureReason: failureReason || "guilds_fetch_failed"
-        };
-    }
+function _computeFailedGuildSummary(previousSummary, failureReason, now) {
+    const totalRaw = previousSummary?.totalCount ?? previousSummary?.totalGuilds;
+    const ownedRaw = previousSummary?.ownedCount ?? previousSummary?.ownerGuildsCount;
+    const adminRaw = previousSummary?.adminCount ?? previousSummary?.adminGuildsCount;
+    const prevTotal = Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : 0;
+    const prevOwned = Number.isFinite(Number(ownedRaw)) ? Number(ownedRaw) : 0;
+    const prevAdmin = Number.isFinite(Number(adminRaw)) ? Number(adminRaw) : 0;
+    return {
+        totalCount: prevTotal,
+        ownedCount: prevOwned,
+        adminCount: prevAdmin,
+        totalGuilds: prevTotal,
+        ownerGuildsCount: prevOwned,
+        adminGuildsCount: prevAdmin,
+        status: "failed",
+        fetchedAt: previousSummary?.fetchedAt || null,
+        attemptedAt: now,
+        failureReason: failureReason || "guilds_fetch_failed"
+    };
+}
 
-    const totalCount = guildsResult.length;
+function _hasAdminPermission(g) {
+    if (g?.owner === true) return true;
+    try {
+        const perms = BigInt(g?.permissions || 0);
+        return (perms & 8n) === 8n;
+    } catch {
+        return false;
+    }
+}
+
+function _countGuildPrivileges(guildsResult) {
     let ownedCount = 0;
     let adminCount = 0;
     for (const g of guildsResult) {
         if (g?.owner === true) {
             ownedCount++;
         }
-        try {
-            const perms = BigInt(g?.permissions || 0);
-            if (g?.owner === true || (perms & 8n) === 8n) {
-                adminCount++;
-            }
-        } catch {
-            if (g?.owner === true) {
-                adminCount++;
-            }
+        if (_hasAdminPermission(g)) {
+            adminCount++;
         }
     }
+    return { ownedCount, adminCount };
+}
+
+function computeGuildSummary(guildsResult, fetchFailed, failureReason, previousSummary = null) {
+    const now = Date.now();
+    if (fetchFailed || !Array.isArray(guildsResult)) {
+        return _computeFailedGuildSummary(previousSummary, failureReason, now);
+    }
+
+    const totalCount = guildsResult.length;
+    const { ownedCount, adminCount } = _countGuildPrivileges(guildsResult);
 
     return {
         totalCount,

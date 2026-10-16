@@ -244,6 +244,12 @@ async function restoreDatabase({ sourceBackup, targetDb, force = false }) {
 
     const activeLock = isProcessLockActive(targetPath);
     if (activeLock.active && activeLock.pid !== process.pid) {
+        if (activeLock.indeterminate) {
+            throw new Error(
+                `[FATAL] Unable to inspect SQLite lock file safely (${activeLock.code || activeLock.error}). ` +
+                `Refusing to restore while database lock status is indeterminate.`
+            );
+        }
         throw new Error(
             `[FATAL] Active bot process detected holding SQLite lock (PID: ${activeLock.pid}). ` +
             `Refusing to restore while database is actively running in another process. ` +

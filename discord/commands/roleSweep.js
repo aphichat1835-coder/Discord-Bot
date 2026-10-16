@@ -473,7 +473,15 @@ async function deliverSweepResult(target, payload) {
         if (!editPayload.content && editPayload.embeds?.length > 0) {
             editPayload.content = null;
         }
-        return target.editReply(editPayload).catch(() => target?.channel?.send?.(formatted).catch(() => null));
+        try {
+            return await target.editReply(editPayload);
+        } catch {
+            try {
+                return await target?.channel?.send?.(formatted);
+            } catch {
+                return null;
+            }
+        }
     }
     if (typeof target?.reply === "function") {
         const msgPayload = { ...formatted };

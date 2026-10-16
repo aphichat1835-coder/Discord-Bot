@@ -73,7 +73,7 @@ function evaluateProfilePolicy({ profile, policySnapshot, connections, findings,
     }
 }
 
-function evaluateNetworkIntelligence({ ipInfo, securityRules, findings, violations }) {
+function _recordAnonymizerAndHostingFindings(ipInfo, securityRules, findings, violations) {
     const isAnonymizer = Boolean(ipInfo.isVPN || ipInfo.isProxy || ipInfo.isTOR);
     const isHosting = Boolean(ipInfo.hosting);
 
@@ -104,7 +104,9 @@ function evaluateNetworkIntelligence({ ipInfo, securityRules, findings, violatio
             "เครือข่ายนี้ถูกระบุว่าเป็น Hosting หรือ Datacenter กรุณาใช้เครือข่ายอินเทอร์เน็ตทั่วไป"
         ));
     }
+}
 
+function _evaluateSpoofAndLookup(ipInfo, securityRules, findings, violations) {
     if (ipInfo.spoofSuspected) {
         findings.push("spoofed_ip_header");
         const spoofRule = securityRules.spoofedHeader;
@@ -131,6 +133,11 @@ function evaluateNetworkIntelligence({ ipInfo, securityRules, findings, violatio
             ));
         }
     }
+}
+
+function evaluateNetworkIntelligence({ ipInfo, securityRules, findings, violations }) {
+    _recordAnonymizerAndHostingFindings(ipInfo, securityRules, findings, violations);
+    _evaluateSpoofAndLookup(ipInfo, securityRules, findings, violations);
 }
 
 function evaluateIpDuplicates({ existingIpLink, trackedUsers, profile, securityRules, findings, violations }) {

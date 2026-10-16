@@ -322,8 +322,10 @@ function _aggregateBufferCount() {
         const cBuf = getCommandEventRepository()?.getBufferStats()?.bufferedCount || 0;
         const sBuf = getSessionEventRepository()?.getBufferStats()?.bufferedCount || 0;
         return vBuf + cBuf + sBuf;
-    } catch (_err) {
-        // Best-effort: history repository buffer metric inspection failure should not block emergency evaluation
+    } catch (err) {
+        // Best-effort inspection: history repositories might not be initialized yet during early boot.
+        // Return 0 so metric inspection failure does not disrupt the emergency evaluation loop.
+        console.debug?.(`[DB_SCHEDULER] Buffer inspection unavailable: ${err.message}`);
         return 0;
     }
 }

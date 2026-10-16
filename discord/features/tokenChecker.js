@@ -435,7 +435,51 @@ function resolveInvalidTokenErrorMessage(result) {
     return result.errorMessage || 'Token ใช้งานไม่ได้';
 }
 
-function buildSingleTokenEmbed(result) {
+function _buildInvalidTokenEmbed(result) {
+    const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
+    const keyEmoji = config.emojis?.key || '🔑';
+
+    return new MessageEmbed()
+        .setColor(THEME_COLORS.INVALID)
+        .setTitle(`${errorEmoji} ผลการตรวจสอบ Discord Token: ใช้งานไม่ได้`)
+        .setDescription([
+            `**สถานะ:** ${errorEmoji} \`${resolveInvalidTokenErrorMessage(result)}\``,
+            `**${keyEmoji} Token:** \`${result.maskedToken}\``
+        ].join('\n'))
+        .setTimestamp();
+}
+
+function _buildBotTokenEmbed(result) {
+    const successEmoji = config.emojis?.success || '✅';
+    const searchEmoji = config.emojis?.search || '🔍';
+    const keyEmoji = config.emojis?.key || '🔑';
+
+    const nameDisplay = result.globalName
+        ? `${result.username} (${result.globalName})`
+        : result.username;
+    const createdDisplay = result.createdAt
+        ? `${formatDateBangkok(result.createdAt)} (${getAccountAgeString(result.createdAt)})`
+        : '-';
+
+    const embed = new MessageEmbed()
+        .setColor(THEME_COLORS.BOT || '#57F287')
+        .setTitle(`${searchEmoji} ข้อมูลบัญชี Discord (Bot)`)
+        .setDescription([
+            `**สถานะ:** ${successEmoji} \`Token บอทถูกต้อง (Valid Bot Token)\``,
+            `**ชื่อบอท:** \`${nameDisplay}\` \`[BOT]\``,
+            `**ID บอท:** \`${result.id}\``,
+            `**สร้างเมื่อ:** ${createdDisplay}`,
+            `**${keyEmoji} Token:** \`${result.maskedToken}\``
+        ].join('\n'))
+        .setTimestamp();
+
+    if (result.avatarUrl) {
+        embed.setThumbnail(result.avatarUrl);
+    }
+    return embed;
+}
+
+function _buildUserTokenEmbed(result) {
     const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
     const successEmoji = config.emojis?.success || '✅';
     const searchEmoji = config.emojis?.search || '🔍';
@@ -443,43 +487,6 @@ function buildSingleTokenEmbed(result) {
     const lockEmoji = config.emojis?.lock || '🔒';
     const keyEmoji = config.emojis?.key || '🔑';
     const userEmoji = config.emojis?.user || '👤';
-
-    if (!result.valid) {
-        return new MessageEmbed()
-            .setColor(THEME_COLORS.INVALID)
-            .setTitle(`${errorEmoji} ผลการตรวจสอบ Discord Token: ใช้งานไม่ได้`)
-            .setDescription([
-                `**สถานะ:** ${errorEmoji} \`${resolveInvalidTokenErrorMessage(result)}\``,
-                `**${keyEmoji} Token:** \`${result.maskedToken}\``
-            ].join('\n'))
-            .setTimestamp();
-    }
-
-    if (result.isBot || result.category === 'bot') {
-        const nameDisplay = result.globalName
-            ? `${result.username} (${result.globalName})`
-            : result.username;
-        const createdDisplay = result.createdAt
-            ? `${formatDateBangkok(result.createdAt)} (${getAccountAgeString(result.createdAt)})`
-            : '-';
-
-        const embed = new MessageEmbed()
-            .setColor(THEME_COLORS.BOT || '#57F287')
-            .setTitle(`${searchEmoji} ข้อมูลบัญชี Discord (Bot)`)
-            .setDescription([
-                `**สถานะ:** ${successEmoji} \`Token บอทถูกต้อง (Valid Bot Token)\``,
-                `**ชื่อบอท:** \`${nameDisplay}\` \`[BOT]\``,
-                `**ID บอท:** \`${result.id}\``,
-                `**สร้างเมื่อ:** ${createdDisplay}`,
-                `**${keyEmoji} Token:** \`${result.maskedToken}\``
-            ].join('\n'))
-            .setTimestamp();
-
-        if (result.avatarUrl) {
-            embed.setThumbnail(result.avatarUrl);
-        }
-        return embed;
-    }
 
     let color = THEME_COLORS.NORMAL;
     if (result.hasBoost) {
@@ -550,6 +557,18 @@ function buildSingleTokenEmbed(result) {
             }
         )
         .setTimestamp();
+}
+
+function buildSingleTokenEmbed(result) {
+    if (!result.valid) {
+        return _buildInvalidTokenEmbed(result);
+    }
+
+    if (result.isBot || result.category === 'bot') {
+        return _buildBotTokenEmbed(result);
+    }
+
+    return _buildUserTokenEmbed(result);
 }
 
 function resolveBatchItemPlanTag(item) {

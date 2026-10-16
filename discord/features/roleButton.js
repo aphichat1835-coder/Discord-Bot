@@ -103,21 +103,28 @@ function buildRolePanel(options = {}) {
 /**
  * Handle role button / select interaction
  */
+function formatRoleChangeError(err, roleName) {
+    if (err?.code === 50013 || err?.message?.toLowerCase().includes("permission")) {
+        return `${roleName}: บอทไม่มีสิทธิ์จัดการยศนี้`;
+    }
+    return `${roleName}: ${err?.message || "บอทไม่มีสิทธิ์จัดการยศนี้"}`;
+}
+
 async function applySingleRoleChange(member, role, shouldAdd, results) {
     const has = member.roles.cache.has(role.id);
     if (shouldAdd && !has) {
         try {
             await member.roles.add(role.id);
             results.added.push(role.name);
-        } catch (_err) {
-            results.failed.push(`${role.name}: บอทไม่มีสิทธิ์จัดการยศนี้`);
+        } catch (err) {
+            results.failed.push(formatRoleChangeError(err, role.name));
         }
     } else if (!shouldAdd && has) {
         try {
             await member.roles.remove(role.id);
             results.removed.push(role.name);
-        } catch (_err) {
-            results.failed.push(`${role.name}: บอทไม่มีสิทธิ์จัดการยศนี้`);
+        } catch (err) {
+            results.failed.push(formatRoleChangeError(err, role.name));
         }
     }
 }

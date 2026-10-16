@@ -9,6 +9,29 @@ function isValidSnowflake(id) {
     return /^\d{17,22}$/.test(String(id || "").trim());
 }
 
+async function _fetchChunkedMembers(guild) {
+    const memberIds = new Set();
+    let after = "0";
+    while (true) {
+        const batch = await guild.members.list({ limit: 1000, after });
+        if (!batch || batch.size === 0) break;
+        for (const [id] of batch) {
+            memberIds.add(id);
+        }
+        if (batch.size < 1000) break;
+        after = Array.from(batch.keys())[batch.size - 1];
+    }
+    return memberIds;
+}
+
+async function _fetchGuildMemberIds(guild) {
+    if (guild.memberCount && guild.memberCount <= 1000) {
+        const members = await guild.members.fetch();
+        return new Set(members.keys());
+    }
+    return _fetchChunkedMembers(guild);
+}
+
 async function getLiveTargetMemberIds(guild) {
     if (!guild) {
         const err = new Error("ไม่พบข้อมูลเซิร์ฟเวอร์ปลายทางสำหรับตรวจสอบสมาชิก (Guild object is null or undefined)");
@@ -16,44 +39,21 @@ async function getLiveTargetMemberIds(guild) {
         throw err;
     }
 
-    let attempts = 0;
-    while (attempts < 2) {
-        attempts++;
-        try {
-            // Fast path: small guild
-            if (guild.memberCount && guild.memberCount <= 1000) {
-                const members = await guild.members.fetch();
-                return new Set(members.keys());
-            }
-
-            // Chunked fetch for larger guilds
-            const memberIds = new Set();
-            let after = "0";
-            while (true) {
-                const batch = await guild.members.list({ limit: 1000, after });
-                if (!batch || batch.size === 0) break;
-                for (const [id] of batch) {
-                    memberIds.add(id);
-                }
-                if (batch.size < 1000) break;
-                after = Array.from(batch.keys())[batch.size - 1];
-            }
-            return memberIds;
-        } catch (fetchErr) {
-            console.warn(`[JoinCampaign] Target member fetch attempt ${attempts} failed: ${fetchErr.message}`);
-            if (attempts >= 2) {
-                const error = new Error("ไม่สามารถดึงรายชื่อสมาชิกปัจจุบันของเซิร์ฟเวอร์ปลายทางได้ กรุณาลองใหม่อีกครั้งนะครับ");
-                error.code = "FETCH_MEMBERS_FAILED";
-                throw error;
-            }
-            // Sequential backoff delay before retrying member list fetch
-            await new Promise(r => setTimeout(r, 600));
-        }
+    try {
+        return await _fetchGuildMemberIds(guild);
+    } catch (firstErr) {
+        console.warn(`[JoinCampaign] Target member fetch attempt 1 failed: ${firstErr.message}`);
+        await new Promise(r => setTimeout(r, 600));
     }
 
-    const error = new Error("ไม่สามารถดึงรายชื่อสมาชิกปัจจุบันของเซิร์ฟเวอร์ปลายทางได้ครบถ้วน");
-    error.code = "FETCH_MEMBERS_FAILED";
-    throw error;
+    try {
+        return await _fetchGuildMemberIds(guild);
+    } catch (secondErr) {
+        console.warn(`[JoinCampaign] Target member fetch attempt 2 failed: ${secondErr.message}`);
+        const error = new Error("ไม่สามารถดึงรายชื่อสมาชิกปัจจุบันของเซิร์ฟเวอร์ปลายทางได้ กรุณาลองใหม่อีกครั้งนะครับ");
+        error.code = "FETCH_MEMBERS_FAILED";
+        throw error;
+    }
 }
 
 async function resolveAndValidateTargetGuild(client, targetGuildId, config) {

@@ -461,6 +461,124 @@ async function markRefreshFailure(doc, err, { model = OAuthUser, now = Date.now(
     }
 }
 
+function _validateFreshTokenState(fresh, tokenField, lockUserId, effectiveFailMax) {
+    if (!fresh) return { earlyExit: true, result: conflictOutcome(tokenField, lockUserId, "document_missing") };
+    if (fresh.deletedAt) {
+        return { earlyExit: true, result: { ok: false, code: "user_deleted", reason: "User is soft-deleted", userId: lockUserId, tokenField } };
+    }
+
+    const userId = fresh.discord?.userId || lockUserId;
+    const tokenState = fresh[tokenField] || {};
+
+    if (tokenState.revokedAt) {
+        return { earlyExit: true, result: { ok: false, code: "token_revoked", reason: "Token is revoked", userId, tokenField } };
+    }
+
+    if (Number(tokenState.refreshFailCount || 0) >= effectiveFailMax) {
+        return { earlyExit: true, result: { ok: false, code: "oauth_refresh_exhausted", reason: "Token refresh attempts exhausted", userId, tokenField } };
+    }
+
+    const previousRefreshTokenEncrypted = tokenState.encryptedRefreshToken;
+    if (!previousRefreshTokenEncrypted) {
+        return { earlyExit: true, result: { ok: false, code: "oauth_reauth_required", reason: "Missing refresh token", userId, tokenField } };
+    }
+
+    const previousVersion = Number(tokenState.version || 0);
+    return {
+        earlyExit: false,
+        userId,
+        tokenState,
+        previousRefreshTokenEncrypted,
+        previousVersion
+    };
+}
+
+function _checkUnexpiredToken(tokenState, force, marginMs, now, tokenField, userId) {
+    if (force) return null;
+    const expiresAt = Number(tokenState.expiresAt || 0);
+    const margin = Number.isFinite(Number(marginMs)) ? Number(marginMs) : DEFAULT_ON_DEMAND_MARGIN_MS;
+    if (expiresAt > now + margin && tokenState.encryptedAccessToken) {
+        const rawAccess = decryptToken(tokenState.encryptedAccessToken);
+        if (rawAccess) {
+            return {
+                ok: true,
+                refreshed: false,
+                accessToken: rawAccess,
+                expiresAt,
+                tokenField,
+                userId
+            };
+        }
+    }
+    return null;
+}
+
+async function _resolveAndDecryptRefreshToken(fresh, previousRefreshTokenEncrypted, userId, tokenField, model, now, effectiveFailMax, env) {
+    let rawRefreshToken;
+    try {
+        rawRefreshToken = decryptToken(previousRefreshTokenEncrypted);
+    } catch {
+        rawRefreshToken = null;
+    }
+    if (!rawRefreshToken) {
+        const decryptError = new Error("Failed to decrypt stored refresh token");
+        decryptError.code = "oauth_refresh_token_decrypt_failed";
+        dispatchOAuthAlert({
+            code: "oauth.token_decrypt_failed",
+            severity: "CRITICAL",
+            state: "OPEN",
+            title: "OAUTH TOKEN DECRYPT FAILED",
+            description: "ตรวจพบโทเคนในฐานข้อมูลไม่สามารถถอดรหัสได้ อาจเกิดจาก ENCRYPTION_KEY ไม่ตรงกับตอนเข้ารหัส หรือข้อมูลเสียหาย",
+            fields: [
+                { name: "สถานะ", value: "OPEN" },
+                { name: "User ID", value: String(userId) },
+                { name: "Token Field", value: String(tokenField) },
+                { name: "ผลกระทบ", value: "ไม่สามารถนำโทเคนไปใช้งานหรือต่ออายุได้" },
+                { name: "สิ่งที่ควรทำ", value: "ตรวจสอบความถูกต้องของ ENCRYPTION_KEY หรือให้ผู้ใช้ยืนยันตัวตนใหม่เพื่อบันทึกโทเคนชุดใหม่" }
+            ],
+            dedupeKey: `oauth-decrypt-failed:${userId}:${tokenField}`,
+            dedupeMs: 30 * 60 * 1000
+        });
+        const failureResult = await markRefreshFailure(fresh, decryptError, { model, now, failMax: effectiveFailMax, env, tokenField });
+        return { ok: false, result: failureResult };
+    }
+    return { ok: true, rawRefreshToken };
+}
+
+async function _fetchAndValidateRefreshedToken({ discord, rawRefreshToken, redirectUri, tokenField, signal, fresh, model, now, effectiveFailMax, env, userId }) {
+    let tokenData;
+    try {
+        const refreshArgs = [rawRefreshToken, redirectUri || resolveRedirectUriForField(tokenField)];
+        if (signal) refreshArgs.push({ signal });
+        tokenData = await discord.refreshToken(...refreshArgs);
+    } catch (error) {
+        if (signal?.aborted || error?.name === "AbortError") {
+            return {
+                ok: false,
+                result: {
+                    ok: false,
+                    code: "aborted",
+                    error,
+                    reason: "Token refresh was aborted",
+                    userId,
+                    tokenField
+                }
+            };
+        }
+        const failureResult = await markRefreshFailure(fresh, error, { model, now, failMax: effectiveFailMax, env, tokenField });
+        return { ok: false, result: failureResult };
+    }
+
+    try {
+        validateTokenData(tokenData);
+    } catch (valErr) {
+        const failureResult = await markRefreshFailure(fresh, valErr, { model, now, failMax: effectiveFailMax, env, tokenField });
+        return { ok: false, result: failureResult };
+    }
+
+    return { ok: true, tokenData };
+}
+
 async function performTokenRefreshUnderLock({
     doc,
     model = OAuthUser,
@@ -492,104 +610,45 @@ async function performTokenRefreshUnderLock({
         throw err;
     }
 
-    if (!fresh) return conflictOutcome(tokenField, lockUserId, "document_missing");
-    if (fresh.deletedAt) {
-        return { ok: false, code: "user_deleted", reason: "User is soft-deleted", userId: lockUserId, tokenField };
+    const stateValidation = _validateFreshTokenState(fresh, tokenField, lockUserId, effectiveFailMax);
+    if (stateValidation.earlyExit) {
+        return stateValidation.result;
     }
 
-    const userId = fresh.discord?.userId || lockUserId;
-    const tokenState = fresh[tokenField] || {};
+    const { userId, tokenState, previousRefreshTokenEncrypted, previousVersion } = stateValidation;
 
-    if (tokenState.revokedAt) {
-        return { ok: false, code: "token_revoked", reason: "Token is revoked", userId, tokenField };
-    }
-
-    if (Number(tokenState.refreshFailCount || 0) >= effectiveFailMax) {
-        return { ok: false, code: "oauth_refresh_exhausted", reason: "Token refresh attempts exhausted", userId, tokenField };
-    }
-
-    const previousRefreshTokenEncrypted = tokenState.encryptedRefreshToken;
-    if (!previousRefreshTokenEncrypted) {
-        return { ok: false, code: "oauth_reauth_required", reason: "Missing refresh token", userId, tokenField };
-    }
-
-    const previousVersion = Number(tokenState.version || 0);
-
-    if (!force) {
-        const expiresAt = Number(tokenState.expiresAt || 0);
-        const margin = Number.isFinite(Number(marginMs)) ? Number(marginMs) : DEFAULT_ON_DEMAND_MARGIN_MS;
-        if (expiresAt > now + margin && tokenState.encryptedAccessToken) {
-            const rawAccess = decryptToken(tokenState.encryptedAccessToken);
-            if (rawAccess) {
-                return {
-                    ok: true,
-                    refreshed: false,
-                    accessToken: rawAccess,
-                    expiresAt,
-                    tokenField,
-                    userId
-                };
-            }
-        }
+    const unexpiredResult = _checkUnexpiredToken(tokenState, force, marginMs, now, tokenField, userId);
+    if (unexpiredResult) {
+        return unexpiredResult;
     }
 
     if (signal?.aborted) {
         return { ok: false, code: "aborted", reason: "Operation aborted", userId, tokenField };
     }
 
-    let rawRefreshToken;
-    try {
-        rawRefreshToken = decryptToken(previousRefreshTokenEncrypted);
-    } catch {
-        rawRefreshToken = null;
-    }
-    if (!rawRefreshToken) {
-        const decryptError = new Error("Failed to decrypt stored refresh token");
-        decryptError.code = "oauth_refresh_token_decrypt_failed";
-        dispatchOAuthAlert({
-            code: "oauth.token_decrypt_failed",
-            severity: "CRITICAL",
-            state: "OPEN",
-            title: "OAUTH TOKEN DECRYPT FAILED",
-            description: "ตรวจพบโทเคนในฐานข้อมูลไม่สามารถถอดรหัสได้ อาจเกิดจาก ENCRYPTION_KEY ไม่ตรงกับตอนเข้ารหัส หรือข้อมูลเสียหาย",
-            fields: [
-                { name: "สถานะ", value: "OPEN" },
-                { name: "User ID", value: String(userId) },
-                { name: "Token Field", value: String(tokenField) },
-                { name: "ผลกระทบ", value: "ไม่สามารถนำโทเคนไปใช้งานหรือต่ออายุได้" },
-                { name: "สิ่งที่ควรทำ", value: "ตรวจสอบความถูกต้องของ ENCRYPTION_KEY หรือให้ผู้ใช้ยืนยันตัวตนใหม่เพื่อบันทึกโทเคนชุดใหม่" }
-            ],
-            dedupeKey: `oauth-decrypt-failed:${userId}:${tokenField}`,
-            dedupeMs: 30 * 60 * 1000
-        });
-        return markRefreshFailure(fresh, decryptError, { model, now, failMax: effectiveFailMax, env, tokenField });
+    const decryptRes = await _resolveAndDecryptRefreshToken(fresh, previousRefreshTokenEncrypted, userId, tokenField, model, now, effectiveFailMax, env);
+    if (!decryptRes.ok) {
+        return decryptRes.result;
     }
 
-    let tokenData;
-    try {
-        const refreshArgs = [rawRefreshToken, redirectUri || resolveRedirectUriForField(tokenField)];
-        if (signal) refreshArgs.push({ signal });
-        tokenData = await discord.refreshToken(...refreshArgs);
-    } catch (error) {
-        if (signal?.aborted || error?.name === "AbortError") {
-            return {
-                ok: false,
-                code: "aborted",
-                error,
-                reason: "Token refresh was aborted",
-                userId,
-                tokenField
-            };
-        }
-        return markRefreshFailure(fresh, error, { model, now, failMax: effectiveFailMax, env, tokenField });
+    const refreshRes = await _fetchAndValidateRefreshedToken({
+        discord,
+        rawRefreshToken: decryptRes.rawRefreshToken,
+        redirectUri,
+        tokenField,
+        signal,
+        fresh,
+        model,
+        now,
+        effectiveFailMax,
+        env,
+        userId
+    });
+    if (!refreshRes.ok) {
+        return refreshRes.result;
     }
 
-    try {
-        validateTokenData(tokenData);
-    } catch (valErr) {
-        return markRefreshFailure(fresh, valErr, { model, now, failMax: effectiveFailMax, env, tokenField });
-    }
-
+    const tokenData = refreshRes.tokenData;
     const nextPayload = prepareStoredToken(tokenData, { now, previousVersion, isRefresh: true });
     const result = await model.updateOne(
         {
@@ -1519,13 +1578,25 @@ async function migrateStoredTokenEncryption({
 
     // Sequential execution is intentional to prevent MongoDB write races,
     // preserve predictable cursor advancement, and avoid connection pool exhaustion.
-    for (const doc of docs) {
-        for (const field of targetFields) {
-            const outcome = await migrateSingleField(model, doc, field, dryRun);
-            if (outcome.eligible) eligibleFields++;
-            if (outcome.migrated) migratedFields++;
-            if (outcome.failed) failedFields++;
+    const processItem = async (docIndex, fieldIndex) => {
+        if (docIndex >= docs.length) return;
+        const doc = docs[docIndex];
+        const field = targetFields[fieldIndex];
+        const outcome = await migrateSingleField(model, doc, field, dryRun);
+        if (outcome.eligible) eligibleFields++;
+        if (outcome.migrated) migratedFields++;
+        if (outcome.failed) failedFields++;
+
+        const nextFieldIndex = fieldIndex + 1;
+        if (nextFieldIndex < targetFields.length) {
+            await processItem(docIndex, nextFieldIndex);
+        } else {
+            await processItem(docIndex + 1, 0);
         }
+    };
+
+    if (docs.length > 0 && targetFields.length > 0) {
+        await processItem(0, 0);
     }
 
     let remainingDocuments = null;

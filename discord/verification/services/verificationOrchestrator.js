@@ -425,28 +425,23 @@ async function loadExistingDeviceContext({ device, guildId, currentUserId }) {
     });
 }
 
-async function executeVerification({
-    req,
-    code,
-    stateObj,
-    redirectUri
-}) {
-    const oauthAttemptStartedAt = Date.now();
+async function _validateVerificationPreconditions(stateObj) {
     const guildId = safeSnowflakeStrict(stateObj.guildId, "guild_id");
     const stateRoleId = stateObj.roleId ? safeSnowflakeStrict(stateObj.roleId, "role_id") : null;
-    const expectedUserId = stateObj.expectedUserId ? safeSnowflakeStrict(stateObj.expectedUserId, "expected_user_id") : null;
 
-    // --- Step 1: Preconditions (GuildConfig) ---
     const guildConfig = await GuildConfig.findOne()
         .where("guildId").equals(guildId);
 
     if (!guildConfig) {
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: "ไม่พบการตั้งค่าระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ กรุณาติดต่อผู้ดูแล",
-                code: "guild_config_not_found"
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ไม่พบการตั้งค่าระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ กรุณาติดต่อผู้ดูแล",
+                    code: "guild_config_not_found"
+                }
             }
         };
     }
@@ -454,11 +449,14 @@ async function executeVerification({
     const verificationConfig = normalizeVerificationConfig(guildConfig.verification || {});
     if (verificationConfig.enabled === false) {
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: "ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งานในขณะนี้",
-                code: "verification_disabled"
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ระบบยืนยันตัวตนของเซิร์ฟเวอร์นี้ยังไม่เปิดใช้งานในขณะนี้",
+                    code: "verification_disabled"
+                }
             }
         };
     }
@@ -466,11 +464,14 @@ async function executeVerification({
     const configuredRoleId = getConfiguredRoleId(guildConfig, stateRoleId);
     if (!configuredRoleId) {
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: "เซิร์ฟเวอร์ยังไม่ได้กำหนดยศสำหรับผู้ยืนยันตัวตน กรุณาแจ้งผู้ดูแล",
-                code: "missing_configured_role"
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "เซิร์ฟเวอร์ยังไม่ได้กำหนดยศสำหรับผู้ยืนยันตัวตน กรุณาแจ้งผู้ดูแล",
+                    code: "missing_configured_role"
+                }
             }
         };
     }
@@ -478,11 +479,14 @@ async function executeVerification({
     const revisionCheck = isPanelRevisionValid(guildConfig, stateObj);
     if (!revisionCheck.ok) {
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: "ปุ่มยืนยันนี้ไม่ใช่รุ่นล่าสุด กรุณากลับไปกดปุ่มยืนยันใหม่ในห้อง Discord",
-                code: "panel_revision_mismatch"
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ปุ่มยืนยันนี้ไม่ใช่รุ่นล่าสุด กรุณากลับไปกดปุ่มยืนยันใหม่ในห้อง Discord",
+                    code: "panel_revision_mismatch"
+                }
             }
         };
     }
@@ -490,7 +494,17 @@ async function executeVerification({
     const roleName = getConfiguredRoleName(guildConfig);
     const guildName = getGuildName(guildConfig);
 
-    // --- Step 2: Collect Discord Data via OAuth ---
+    return {
+        ok: true,
+        guildConfig,
+        verificationConfig,
+        configuredRoleId,
+        roleName,
+        guildName
+    };
+}
+
+async function _collectDiscordOAuthData({ code, redirectUri, expectedUserId }) {
     let discordData;
     try {
         let previousSummary = null;
@@ -508,26 +522,32 @@ async function executeVerification({
     } catch (discordErr) {
         if (discord.isOAuthInvalidGrantError(discordErr)) {
             return {
-                statusCode: 200,
-                body: {
-                    success: false,
-                    error: "ลิงก์ยืนยันตัวตนหมดอายุแล้ว กรุณากลับไปกดปุ่มยืนยันใน Discord ใหม่อีกครั้ง",
-                    code: "oauth_code_expired"
+                ok: false,
+                response: {
+                    statusCode: 200,
+                    body: {
+                        success: false,
+                        error: "ลิงก์ยืนยันตัวตนหมดอายุแล้ว กรุณากลับไปกดปุ่มยืนยันใน Discord ใหม่อีกครั้ง",
+                        code: "oauth_code_expired"
+                    }
                 }
             };
         }
         console.error("[VERIFY] collectDiscordData failed:", discordErr.message);
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: "ไม่สามารถเชื่อมต่อกับ Discord เพื่อดึงข้อมูลได้ กรุณาลองใหม่อีกครั้ง",
-                code: "discord_api_error"
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ไม่สามารถเชื่อมต่อกับ Discord เพื่อดึงข้อมูลได้ กรุณาลองใหม่อีกครั้ง",
+                    code: "discord_api_error"
+                }
             }
         };
     }
 
-    const { tokenData, accessToken, profile, connections, guildSummary, fetchMetadata } = discordData;
+    const { profile, guildSummary } = discordData;
 
     if (guildSummary?.status === "failed" && !guildSummary.fetchedAt && profile?.id) {
         const safePId = safeSnowflakeStrict(profile.id, "discord_user_id");
@@ -541,18 +561,123 @@ async function executeVerification({
         }
     }
 
-    if (expectedUserId && String(profile.id) !== String(expectedUserId)) {
+    if (expectedUserId && String(profile?.id) !== String(expectedUserId)) {
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: "บัญชี Discord ที่เข้าสู่ระบบไม่ตรงกับบัญชีที่กดปุ่มในห้องแชท กรุณาลองใหม่อีกครั้ง",
-                code: "oauth_user_mismatch"
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "บัญชี Discord ที่เข้าสู่ระบบไม่ตรงกับบัญชีที่กดปุ่มในห้องแชท กรุณาลองใหม่อีกครั้ง",
+                    code: "oauth_user_mismatch"
+                }
             }
         };
     }
 
-    // --- Step 3: IP Intelligence & Device Extraction ---
+    return { ok: true, discordData };
+}
+
+async function _handleBlockedVerification({
+    securityEval,
+    guildId,
+    guildName,
+    configuredRoleId,
+    roleName,
+    profile,
+    ipInfo,
+    device,
+    allFindings,
+    tokenData,
+    connections,
+    guildSummary,
+    oauthAttemptStartedAt,
+    policySnapshot,
+    stateObj
+}) {
+    if (securityEval.moderationAction && securityEval.moderationAction !== "allow" && securityEval.moderationAction !== "deny_role") {
+        await safeSideEffect("moderateMember", () => discord.moderateVerificationMember(
+            guildId,
+            profile.id,
+            securityEval.moderationAction,
+            {
+                timeoutMinutes: securityEval.timeoutMinutes,
+                reason: `Verification security: ${securityEval.blockedReason}`
+            }
+        ));
+    }
+
+    const trackingSnapshot = await updateIpIdentityTrackingSafe({
+        guildId,
+        guildName,
+        profile,
+        ipInfo,
+        device,
+        roleId: configuredRoleId,
+        result: "blocked",
+        findings: allFindings
+    });
+
+    await saveOAuthUserSafe({
+        profile,
+        tokenData,
+        connections,
+        guildSummary,
+        guildId,
+        roleId: configuredRoleId,
+        result: "blocked",
+        findings: allFindings,
+        trackingSnapshot,
+        attemptStartedAt: oauthAttemptStartedAt
+    });
+
+    const { discordSnapshot, connectionsSnapshot } = buildVerificationSnapshots(profile, connections);
+
+    await saveVerifyLogSafe({
+        guildId,
+        userId: profile.id,
+        roleId: configuredRoleId,
+        result: "blocked",
+        reason: securityEval.blockedReason,
+        findings: allFindings,
+        oauthScope: tokenData.scope || "",
+        stateMode: stateObj.mode || null,
+        policySnapshot,
+        discordSnapshot,
+        connectionsSnapshot,
+        guildSummary,
+        joinResult: null,
+        roleAssignResult: null,
+        trackingSnapshot,
+        ipInfo,
+        device,
+        verifiedAt: Date.now()
+    });
+
+    return {
+        statusCode: 200,
+        body: {
+            success: false,
+            error: securityEval.userError || "ไม่ผ่านเงื่อนไขความปลอดภัยของเซิร์ฟเวอร์",
+            code: securityEval.blockedReason || "security_policy_blocked",
+            roleName
+        }
+    };
+}
+
+async function _evaluateVerificationSecurity({
+    req,
+    guildId,
+    guildName,
+    configuredRoleId,
+    roleName,
+    verificationConfig,
+    discordData,
+    stateObj,
+    oauthAttemptStartedAt
+}) {
+    const { profile, tokenData, connections, guildSummary, fetchMetadata } = discordData;
+
     const ipInfo = await safeSideEffect("processIP", () => processIP(req), {
         encryptedRawIp: null,
         ipHash: null,
@@ -567,7 +692,6 @@ async function executeVerification({
         fingerprintHash: null
     });
 
-    // --- Step 4: Security Evaluation ---
     const ipLinkContext = await loadExistingIpLinkContext({ ipInfo, guildId });
     const deviceContext = await loadExistingDeviceContext({
         device,
@@ -601,79 +725,37 @@ async function executeVerification({
         allFindings.push("connections_fallback_used");
     }
 
-    // --- Step 5: Handle Security Enforcement (If Blocked) ---
     if (securityEval.isBlocked) {
-        if (securityEval.moderationAction && securityEval.moderationAction !== "allow" && securityEval.moderationAction !== "deny_role") {
-            await safeSideEffect("moderateMember", () => discord.moderateVerificationMember(
-                guildId,
-                profile.id,
-                securityEval.moderationAction,
-                {
-                    timeoutMinutes: securityEval.timeoutMinutes,
-                    reason: `Verification security: ${securityEval.blockedReason}`
-                }
-            ));
-        }
-
-        const trackingSnapshot = await updateIpIdentityTrackingSafe({
+        const response = await _handleBlockedVerification({
+            securityEval,
             guildId,
             guildName,
+            configuredRoleId,
+            roleName,
             profile,
             ipInfo,
             device,
-            roleId: configuredRoleId,
-            result: "blocked",
-            findings: allFindings
-        });
-
-        await saveOAuthUserSafe({
-            profile,
+            allFindings,
             tokenData,
             connections,
             guildSummary,
-            guildId,
-            roleId: configuredRoleId,
-            result: "blocked",
-            findings: allFindings,
-            trackingSnapshot,
-            attemptStartedAt: oauthAttemptStartedAt
-        });
-
-        const { discordSnapshot, connectionsSnapshot } = buildVerificationSnapshots(profile, connections);
-
-        await saveVerifyLogSafe({
-            guildId,
-            userId: profile.id,
-            roleId: configuredRoleId,
-            result: "blocked",
-            reason: securityEval.blockedReason,
-            findings: allFindings,
-            oauthScope: tokenData.scope || "",
-            stateMode: stateObj.mode || null,
+            oauthAttemptStartedAt,
             policySnapshot,
-            discordSnapshot,
-            connectionsSnapshot,
-            guildSummary,
-            joinResult: null,
-            roleAssignResult: null,
-            trackingSnapshot,
-            ipInfo,
-            device,
-            verifiedAt: Date.now()
+            stateObj
         });
-
-        return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: securityEval.userError || "ไม่ผ่านเงื่อนไขความปลอดภัยของเซิร์ฟเวอร์",
-                code: securityEval.blockedReason || "security_policy_blocked",
-                roleName
-            }
-        };
+        return { isBlocked: true, response };
     }
 
-    // --- Step 6: Check Member & Role Assignment ---
+    return {
+        isBlocked: false,
+        ipInfo,
+        device,
+        policySnapshot,
+        allFindings
+    };
+}
+
+async function _resolveMemberRoleAssignment({ guildId, profileId, accessToken, configuredRoleId }) {
     let memberLookup = await safeSideEffect("getGuildMemberResult", () =>
         typeof discord.getGuildMemberResult === "function"
             ? discord.getGuildMemberResult(accessToken, guildId)
@@ -692,7 +774,6 @@ async function executeVerification({
     const isLookupFailure = Boolean(memberLookupFailure) || (memberLookupStatus && memberLookupStatus !== 200 && memberLookupStatus !== 404);
 
     if (!memberInfo && !isNotFound && isLookupFailure) {
-        // Membership lookup failed due to API / network failure (P1-A, P1-B)
         isLookupError = true;
         finalReason = "member_lookup_failed";
         roleAssignResult = { ok: false, error: "lookup_failed" };
@@ -705,7 +786,7 @@ async function executeVerification({
             roleAssignResult = { ok: true, alreadyHadRole: true };
         } else if (!memberInfo) {
             joinResult = await safeSideEffect("addMemberToGuild", () =>
-                discord.addMemberToGuild(guildId, profile.id, accessToken, [configuredRoleId]),
+                discord.addMemberToGuild(guildId, profileId, accessToken, [configuredRoleId]),
                 { ok: false, error: "join_failed" }
             );
 
@@ -717,7 +798,7 @@ async function executeVerification({
             }
         } else {
             roleAssignResult = await safeSideEffect("addRoleToMember", () =>
-                discord.addRoleToMember(guildId, profile.id, configuredRoleId),
+                discord.addRoleToMember(guildId, profileId, configuredRoleId),
                 { ok: false, error: "role_assign_failed" }
             );
 
@@ -728,9 +809,34 @@ async function executeVerification({
     }
 
     const isSuccess = roleAssignResult?.ok === true;
-    const finalResult = isSuccess ? "success" : "failed";
+    return {
+        isSuccess,
+        finalReason,
+        isLookupError,
+        joinResult,
+        roleAssignResult
+    };
+}
 
-    // --- Step 7: Persistence Updates (Always records all attempts for audit/forensics) ---
+async function _saveVerificationPersistence({
+    guildId,
+    guildName,
+    profile,
+    ipInfo,
+    device,
+    configuredRoleId,
+    finalResult,
+    finalReason,
+    allFindings,
+    tokenData,
+    connections,
+    guildSummary,
+    stateObj,
+    policySnapshot,
+    joinResult,
+    roleAssignResult,
+    oauthAttemptStartedAt
+}) {
     const trackingSnapshot = await updateIpIdentityTrackingSafe({
         guildId,
         guildName,
@@ -778,71 +884,96 @@ async function executeVerification({
         verifiedAt: Date.now()
     });
 
-    // If role assignment or lookup failed, return user error immediately without dispatching webhook or DM
-    if (!isSuccess) {
-        // Record recovery if critical persistence failed on failed attempts as well (Section 3.1)
-        const failedPersistenceResult = evaluateCriticalPersistence({
-            oauthSaved: oauthPersistence?.saved === true,
-            verifyLogSaved: Boolean(verifyLogSaved),
-            verifyLogDegraded: verifyLogSaved?.isBudgetDegraded === true,
-            trackingRequired: Boolean(ipInfo?.ipHash),
-            trackingSaved: Boolean(trackingSnapshot)
-        });
-        if (!failedPersistenceResult.ok) {
-            console.error("[VERIFY] Critical persistence failure on failed attempt. Recording recovery...");
-            await coordinatePersistenceFailure({
-                requestId: req?.id || `req_${Date.now()}`,
-                guildId,
-                userId: profile.id,
-                roleId: configuredRoleId,
-                result: "failed",
-                roleAssignResult,
-                roleApplied: false,
-                persistence: failedPersistenceResult.persistence,
-                removeRole: () => Promise.resolve({ ok: true }),
-                saveRecovery: async recoveryRecord => {
-                    const res = await VerificationRecovery.create(recoveryRecord);
-                    return Boolean(res);
-                }
-            }).catch(err => {
-                console.error("[VERIFY] Failed to record recovery for failed attempt persistence failure:", err);
-            });
-        }
+    return { trackingSnapshot, oauthPersistence, verifyLogSaved };
+}
 
-        if (isLookupError) {
-            return {
-                statusCode: 200,
-                body: {
-                    success: false,
-                    error: "ระบบไม่สามารถตรวจสอบสถานะสมาชิกใน Discord ได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง",
-                    code: "member_lookup_failed",
-                    roleName
-                }
-            };
-        }
-        if (finalReason === "guild_join_failed") {
-            return {
-                statusCode: 200,
-                body: {
-                    success: false,
-                    error: "ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณากดเข้าร่วมเซิร์ฟเวอร์ใน Discord ด้วยตนเองก่อน แล้วกดปุ่มยืนยันใหม่อีกครั้ง",
-                    code: "guild_join_failed",
-                    roleName
-                }
-            };
-        }
+async function _handleFailedRoleAssignment({
+    req,
+    guildId,
+    profile,
+    configuredRoleId,
+    roleName,
+    finalReason,
+    isLookupError,
+    roleAssignResult,
+    oauthPersistence,
+    verifyLogSaved,
+    ipInfo,
+    trackingSnapshot
+}) {
+    const failedPersistenceResult = evaluateCriticalPersistence({
+        oauthSaved: oauthPersistence?.saved === true,
+        verifyLogSaved: Boolean(verifyLogSaved),
+        verifyLogDegraded: verifyLogSaved?.isBudgetDegraded === true,
+        trackingRequired: Boolean(ipInfo?.ipHash),
+        trackingSaved: Boolean(trackingSnapshot)
+    });
+    if (!failedPersistenceResult.ok) {
+        console.error("[VERIFY] Critical persistence failure on failed attempt. Recording recovery...");
+        await coordinatePersistenceFailure({
+            requestId: req?.id || `req_${Date.now()}`,
+            guildId,
+            userId: profile.id,
+            roleId: configuredRoleId,
+            result: "failed",
+            roleAssignResult,
+            roleApplied: false,
+            persistence: failedPersistenceResult.persistence,
+            removeRole: () => Promise.resolve({ ok: true }),
+            saveRecovery: async recoveryRecord => {
+                const res = await VerificationRecovery.create(recoveryRecord);
+                return Boolean(res);
+            }
+        }).catch(err => {
+            console.error("[VERIFY] Failed to record recovery for failed attempt persistence failure:", err);
+        });
+    }
+
+    if (isLookupError) {
         return {
             statusCode: 200,
             body: {
                 success: false,
-                error: "ระบบไม่สามารถมอบยศให้คุณได้ในขณะนี้ กรุณาแจ้งผู้ดูแลเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ของบอท",
-                code: "role_assign_failed",
+                error: "ระบบไม่สามารถตรวจสอบสถานะสมาชิกใน Discord ได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง",
+                code: "member_lookup_failed",
                 roleName
             }
         };
     }
+    if (finalReason === "guild_join_failed") {
+        return {
+            statusCode: 200,
+            body: {
+                success: false,
+                error: "ระบบไม่สามารถพาคุณเข้าเซิร์ฟเวอร์ได้ กรุณากดเข้าร่วมเซิร์ฟเวอร์ใน Discord ด้วยตนเองก่อน แล้วกดปุ่มยืนยันใหม่อีกครั้ง",
+                code: "guild_join_failed",
+                roleName
+            }
+        };
+    }
+    return {
+        statusCode: 200,
+        body: {
+            success: false,
+            error: "ระบบไม่สามารถมอบยศให้คุณได้ในขณะนี้ กรุณาแจ้งผู้ดูแลเซิร์ฟเวอร์เพื่อตรวจสอบสิทธิ์ของบอท",
+            code: "role_assign_failed",
+            roleName
+        }
+    };
+}
 
-    // --- Step 8: Critical Persistence Check ---
+async function _verifyAndRecoverPersistence({
+    req,
+    guildId,
+    profile,
+    configuredRoleId,
+    roleName,
+    roleAssignResult,
+    oauthPersistence,
+    verifyLogSaved,
+    ipInfo,
+    trackingSnapshot
+}) {
     const persistenceResult = evaluateCriticalPersistence({
         oauthSaved: oauthPersistence?.saved === true,
         verifyLogSaved: Boolean(verifyLogSaved),
@@ -870,17 +1001,31 @@ async function executeVerification({
         });
 
         return {
-            statusCode: 200,
-            body: {
-                success: false,
-                error: recoveryOutcome.response?.error || "ระบบบันทึกข้อมูลไม่สมบูรณ์ กรุณาติดต่อผู้ดูแล",
-                code: "verification_persistence_failed",
-                roleName
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: recoveryOutcome.response?.error || "ระบบบันทึกข้อมูลไม่สมบูรณ์ กรุณาติดต่อผู้ดูแล",
+                    code: "verification_persistence_failed",
+                    roleName
+                }
             }
         };
     }
 
-    // --- Step 9: Webhook Log Verify Dispatch (Asynchronous) ---
+    return { ok: true };
+}
+
+async function _dispatchVerificationWebhookAndDM({
+    guildId,
+    guildName,
+    roleName,
+    profile,
+    verifyLogSaved,
+    roleAssignResult,
+    finalReason
+}) {
     const roleAssignedOk = roleAssignResult?.ok === true || roleAssignResult?.alreadyHadRole === true || roleAssignResult?.joinedWithRole === true;
     if (verifyLogSaved?._id && verifyLogSaved.result === "success" && roleAssignedOk) {
         verificationWebhookManager.dispatchLiveEvent({
@@ -891,7 +1036,6 @@ async function executeVerification({
         }).catch(err => console.error("[VERIFY] live webhook dispatch failed:", err.message));
     }
 
-    // --- Step 10: DM Notification ---
     await safeSideEffect("sendVerificationDM", () => discord.sendVerificationDM(profile.id, {
         ok: true,
         result: "success",
@@ -899,8 +1043,9 @@ async function executeVerification({
         roleName,
         reason: finalReason
     }));
+}
 
-    // --- Step 11: Return Final Outcome ---
+function _buildVerificationSuccessResponse(profile, roleName, finalReason) {
     const isAlreadyVerified = finalReason === "already_verified_has_role";
     const userFacingMessage = isAlreadyVerified
         ? "บัญชีของคุณยืนยันตัวตนเรียบร้อยแล้ว และมียศนี้อยู่แล้ว สามารถใช้งานได้ทันที"
@@ -922,6 +1067,119 @@ async function executeVerification({
             }
         }
     };
+}
+
+async function executeVerification({
+    req,
+    code,
+    stateObj,
+    redirectUri
+}) {
+    const oauthAttemptStartedAt = Date.now();
+    const preconditions = await _validateVerificationPreconditions(stateObj);
+    if (!preconditions.ok) {
+        return preconditions.response;
+    }
+    const { verificationConfig, configuredRoleId, roleName, guildName } = preconditions;
+    const guildId = safeSnowflakeStrict(stateObj.guildId, "guild_id");
+    const expectedUserId = stateObj.expectedUserId ? safeSnowflakeStrict(stateObj.expectedUserId, "expected_user_id") : null;
+
+    const dataCollection = await _collectDiscordOAuthData({ code, redirectUri, expectedUserId });
+    if (!dataCollection.ok) {
+        return dataCollection.response;
+    }
+    const discordData = dataCollection.discordData;
+    const { tokenData, accessToken, profile, connections, guildSummary } = discordData;
+
+    const securityResult = await _evaluateVerificationSecurity({
+        req,
+        guildId,
+        guildName,
+        configuredRoleId,
+        roleName,
+        verificationConfig,
+        discordData,
+        stateObj,
+        oauthAttemptStartedAt
+    });
+    if (securityResult.isBlocked) {
+        return securityResult.response;
+    }
+    const { ipInfo, device, policySnapshot, allFindings } = securityResult;
+
+    const roleResult = await _resolveMemberRoleAssignment({
+        guildId,
+        profileId: profile.id,
+        accessToken,
+        configuredRoleId
+    });
+    const { isSuccess, finalReason, isLookupError, joinResult, roleAssignResult } = roleResult;
+    const finalResult = isSuccess ? "success" : "failed";
+
+    const { trackingSnapshot, oauthPersistence, verifyLogSaved } = await _saveVerificationPersistence({
+        guildId,
+        guildName,
+        profile,
+        ipInfo,
+        device,
+        configuredRoleId,
+        finalResult,
+        finalReason,
+        allFindings,
+        tokenData,
+        connections,
+        guildSummary,
+        stateObj,
+        policySnapshot,
+        joinResult,
+        roleAssignResult,
+        oauthAttemptStartedAt
+    });
+
+    if (!isSuccess) {
+        return _handleFailedRoleAssignment({
+            req,
+            guildId,
+            profile,
+            configuredRoleId,
+            roleName,
+            finalReason,
+            isLookupError,
+            roleAssignResult,
+            oauthPersistence,
+            verifyLogSaved,
+            ipInfo,
+            trackingSnapshot
+        });
+    }
+
+    const persistenceCheck = await _verifyAndRecoverPersistence({
+        req,
+        guildId,
+        profile,
+        configuredRoleId,
+        roleName,
+        roleAssignResult,
+        oauthPersistence,
+        verifyLogSaved,
+        ipInfo,
+        trackingSnapshot
+    });
+    if (!persistenceCheck.ok) {
+        return persistenceCheck.response;
+    }
+
+    await _dispatchVerificationWebhookAndDM({
+        guildId,
+        guildName,
+        roleName,
+        profile,
+        verifyLogSaved,
+        roleAssignResult,
+        finalReason
+    });
+
+    return _buildVerificationSuccessResponse(profile, roleName, finalReason);
 }
 
 module.exports = {

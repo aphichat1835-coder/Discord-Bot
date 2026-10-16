@@ -47,29 +47,43 @@ function runProductionAudit() {
     }
 }
 
-function runFullAuditCheck() {
-    console.log("[AUDIT-GATE] Checking development dependencies and advisories...");
-    let auditJson;
+function _parseAuditJsonOutput() {
+    const npmBin = resolveNpmBin();
+    const env = getAuditEnv();
     try {
-        const npmBin = resolveNpmBin();
-        const env = getAuditEnv();
         const stdout = execSync(`"${npmBin}" audit --json`, { encoding: "utf8", env });
-        auditJson = JSON.parse(stdout);
+        return JSON.parse(stdout);
     } catch (err) {
-        if (err.stdout) {
-            try {
-                auditJson = JSON.parse(err.stdout);
-            } catch {
-                console.error("[AUDIT-GATE] ❌ Failed to parse npm audit JSON output.");
-                process.exit(1);
-            }
-        } else {
+        if (!err.stdout) {
             console.error("[AUDIT-GATE] ❌ npm audit execution failed:", err.message);
             process.exit(1);
         }
+        try {
+            return JSON.parse(err.stdout);
+        } catch {
+            console.error("[AUDIT-GATE] ❌ Failed to parse npm audit JSON output.");
+            process.exit(1);
+        }
     }
+}
 
-    const vulnerabilities = auditJson?.vulnerabilities || {};
+function _matchesAdvisory(v, exception) {
+    if (typeof v === "string") {
+        return v === exception.packageName || v === "node-forge";
+    }
+    return String(v.url || "").includes(exception.advisoryId) ||
+           String(v.name || "") === exception.packageName;
+}
+
+function _isVulnAllowed(pkgName, vuln) {
+    return ALLOWED_DEV_EXCEPTIONS.some(exception => {
+        if (exception.packageName !== pkgName) return false;
+        const via = vuln.via || [];
+        return via.some(v => _matchesAdvisory(v, exception));
+    });
+}
+
+function _classifyVulnerabilities(vulnerabilities) {
     const unhandled = [];
     const tolerated = [];
 
@@ -78,24 +92,16 @@ function runFullAuditCheck() {
             continue;
         }
 
-        const isAllowed = ALLOWED_DEV_EXCEPTIONS.some(exception => {
-            if (exception.packageName !== pkgName) return false;
-            const via = vuln.via || [];
-            const matchesAdvisory = via.some(v => {
-                if (typeof v === "string") return v === exception.packageName || v === "node-forge";
-                return String(v.url || "").includes(exception.advisoryId) ||
-                       String(v.name || "") === exception.packageName;
-            });
-            return matchesAdvisory;
-        });
-
-        if (isAllowed) {
+        if (_isVulnAllowed(pkgName, vuln)) {
             tolerated.push({ pkgName, severity: vuln.severity });
         } else {
             unhandled.push({ pkgName, vuln });
         }
     }
+    return { unhandled, tolerated };
+}
 
+function _reportAuditResults(unhandled, tolerated) {
     if (unhandled.length > 0) {
         console.error("[AUDIT-GATE] ❌ Unhandled high/critical vulnerabilities found:");
         for (const item of unhandled) {
@@ -113,6 +119,14 @@ function runFullAuditCheck() {
     }
 
     console.log("[AUDIT-GATE] ✅ Security audit gate completed successfully.");
+}
+
+function runFullAuditCheck() {
+    console.log("[AUDIT-GATE] Checking development dependencies and advisories...");
+    const auditJson = _parseAuditJsonOutput();
+    const vulnerabilities = auditJson?.vulnerabilities || {};
+    const { unhandled, tolerated } = _classifyVulnerabilities(vulnerabilities);
+    _reportAuditResults(unhandled, tolerated);
 }
 
 function main() {

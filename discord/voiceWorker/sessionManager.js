@@ -410,12 +410,22 @@ async function disconnectDB() {
         if (mongoose.connection.readyState !== 0) {
             await flushPendingSessionDeletes();
         }
-    } catch (_) {}
+    } catch (err) {
+        // Silently continue shutdown even if pending delete flush fails
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] Disconnect flushPendingSessionDeletes failed:", err?.message || err);
+        }
+    }
 
     try {
         const db = require("../../database");
         await db.shutdown();
-    } catch (_) {}
+    } catch (err) {
+        // Silently continue shutdown even if database shutdown fails
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] Database shutdown error during disconnect:", err?.message || err);
+        }
+    }
 
     if (mongoose.connection.readyState === 0) {
         dbConnected = false;
@@ -609,6 +619,46 @@ function hydrateLoadedSessionRecord(r) {
     return { sessionData, repairOp, isActive: state === "active" };
 }
 
+function _processLoadedRecords(records, targetMap) {
+    let activeLoaded = 0;
+    let recoverableLoaded = 0;
+    const loadRepairOps = [];
+
+    for (const r of records) {
+        const { sessionData, repairOp, isActive } = hydrateLoadedSessionRecord(r);
+        if (isActive) activeLoaded++;
+        else recoverableLoaded++;
+
+        if (repairOp) {
+            loadRepairOps.push(repairOp);
+        }
+        targetMap.set(sessionData.sessionId, sessionData);
+    }
+
+    return { activeLoaded, recoverableLoaded, loadRepairOps };
+}
+
+function _reconcileOrphanVoiceRuntimes(activeSessionsMap) {
+    try {
+        const voiceRepo = getVoiceRuntimeRepository();
+        if (voiceRepo && typeof voiceRepo.listActiveSessionRuntimes === "function") {
+            const activeRuntimes = voiceRepo.listActiveSessionRuntimes() || [];
+            let orphanPurged = 0;
+            for (const rt of activeRuntimes) {
+                if (rt?.session_id && !activeSessionsMap.has(rt.session_id)) {
+                    voiceRepo.deleteSessionRuntime(rt.session_id);
+                    orphanPurged++;
+                }
+            }
+            if (orphanPurged > 0) {
+                console.log(`[SESSION] 🧹 Reconciled SQLite voice runtimes: purged ${orphanPurged} orphan record(s).`);
+            }
+        }
+    } catch (reconcileErr) {
+        console.warn(`[SESSION] ⚠️ SQLite voice runtime reconciliation warning: ${reconcileErr.message}`);
+    }
+}
+
 async function loadDatabase() {
     if (!dbConnected) {
         console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
@@ -639,21 +689,7 @@ async function loadDatabase() {
             SessionModel.countDocuments(sessionLoadFilter)
         ]);
 
-        let activeLoaded = 0;
-        let recoverableLoaded = 0;
-        const loadRepairOps = [];
-
-        for (const r of records) {
-            const { sessionData, repairOp, isActive } = hydrateLoadedSessionRecord(r);
-            if (isActive) activeLoaded++;
-            else recoverableLoaded++;
-
-            if (repairOp) {
-                loadRepairOps.push(repairOp);
-            }
-            sessions.set(sessionData.sessionId, sessionData);
-        }
-
+        const { activeLoaded, recoverableLoaded, loadRepairOps } = _processLoadedRecords(records, sessions);
         await applySessionLoadRepairs(loadRepairOps);
 
         lastLoadStats = {
@@ -671,24 +707,7 @@ async function loadDatabase() {
         console.log(`[DATABASE] 📂 Loaded ${sessions.size} active/recoverable sessions from MongoDB${deleted}.`);
 
         // Startup reconciliation: purge orphan SQLite voice runtimes that have no active MongoDB counterpart
-        try {
-            const voiceRepo = getVoiceRuntimeRepository();
-            if (voiceRepo && typeof voiceRepo.listActiveSessionRuntimes === "function") {
-                const activeRuntimes = voiceRepo.listActiveSessionRuntimes() || [];
-                let orphanPurged = 0;
-                for (const rt of activeRuntimes) {
-                    if (rt?.session_id && !sessions.has(rt.session_id)) {
-                        voiceRepo.deleteSessionRuntime(rt.session_id);
-                        orphanPurged++;
-                    }
-                }
-                if (orphanPurged > 0) {
-                    console.log(`[SESSION] 🧹 Reconciled SQLite voice runtimes: purged ${orphanPurged} orphan record(s).`);
-                }
-            }
-        } catch (reconcileErr) {
-            console.warn(`[SESSION] ⚠️ SQLite voice runtime reconciliation warning: ${reconcileErr.message}`);
-        }
+        _reconcileOrphanVoiceRuntimes(sessions);
     } catch (err) {
         console.error(`[DATABASE] ❌ Failed to load sessions: ${err.message}`);
         throw err;
@@ -967,8 +986,11 @@ function getVoiceRuntimeRepository() {
     try {
         const db = require("../../database");
         return db?.repositories?.voiceSessionRuntime || null;
-    } catch (_err) {
-        // Ignored: Voice runtime repository may not be initialized yet
+    } catch (err) {
+        // Voice runtime repository may not be initialized yet in early boot or isolated test
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] Voice runtime repository unavailable:", err?.message || err);
+        }
         return null;
     }
 }
@@ -1057,7 +1079,12 @@ async function saveVoiceRuntimeState(sessionId) {
                 statusLabel: session.recoveryState?.phase || session.statusLabel || "active"
             });
         }
-    } catch (_) {}
+    } catch (err) {
+        // Best-effort SQLite heartbeat upsert during saveVoiceRuntimeState
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] SQLite upsertSessionRuntime failed:", err?.message || err);
+        }
+    }
 
     if (!dbConnected) return false;
 
@@ -1220,6 +1247,44 @@ function getAllSessions() {
     return sessions;
 }
 
+function _safeDeleteSessionRuntime(sessionId, context = "cleanup") {
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) repo.deleteSessionRuntime(sessionId);
+    } catch (err) {
+        if (context === "warning") {
+            console.warn(`[SESSION] ⚠️ Failed to delete session runtime for ${sessionId}: ${err.message}`);
+        }
+    }
+}
+
+function _recordSessionDeletedEvent(sessionId, session) {
+    try {
+        const db = require("../../database");
+        db?.repositories?.sessionEvent?.record({
+            sessionId,
+            eventType: "voice_session_deleted",
+            metadata: { stoppedReason: session?.stoppedReason || "manual_or_error" }
+        });
+    } catch (err) {
+        console.warn(`[SESSION] ⚠️ Failed to record session delete event for ${sessionId}: ${err.message}`);
+    }
+}
+
+function _handleDisconnectedOrFailedDelete(sessionId, session, err = null) {
+    if (err) {
+        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
+    } else {
+        console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
+    }
+    queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
+    _safeDeleteSessionRuntime(sessionId, "cleanup");
+    cleanupSessionMemory(sessionId, session);
+    systemMetrics.increment("errors");
+    console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
+    return true;
+}
+
 async function deleteSession(sessionId, options = {}) {
     const session = sessions.get(sessionId);
     if (!session) return false;
@@ -1231,18 +1296,7 @@ async function deleteSession(sessionId, options = {}) {
     }
 
     if (!dbConnected) {
-        console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
-        queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
-        try {
-            const repo = getVoiceRuntimeRepository();
-            if (repo) repo.deleteSessionRuntime(sessionId);
-        } catch (_err) {
-            // Best-effort local SQLite runtime deletion when database is disconnected
-        }
-        cleanupSessionMemory(sessionId, session);
-        systemMetrics.increment("errors");
-        console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
-        return true;
+        return _handleDisconnectedOrFailedDelete(sessionId, session);
     }
 
     try {
@@ -1256,40 +1310,14 @@ async function deleteSession(sessionId, options = {}) {
             console.warn(`[DATABASE] ⚠️ Session ${sessionId} was already absent in database; clearing memory record`);
         }
     } catch (err) {
-        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
-        queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
-        try {
-            const repo = getVoiceRuntimeRepository();
-            if (repo) repo.deleteSessionRuntime(sessionId);
-        } catch {
-            // Voice runtime repository cleanup failure is non-fatal during delete retry enqueueing
-        }
-        cleanupSessionMemory(sessionId, session);
-        systemMetrics.increment("errors");
-        console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
-        return true;
+        return _handleDisconnectedOrFailedDelete(sessionId, session, err);
     }
 
     pendingSessionDeletes.delete(sessionId);
     cleanupSessionMemory(sessionId, session);
 
-    try {
-        const repo = getVoiceRuntimeRepository();
-        if (repo) repo.deleteSessionRuntime(sessionId);
-    } catch (err) {
-        console.warn(`[SESSION] ⚠️ Failed to delete session runtime for ${sessionId}: ${err.message}`);
-    }
-
-    try {
-        const db = require("../../database");
-        db?.repositories?.sessionEvent?.record({
-            sessionId,
-            eventType: "voice_session_deleted",
-            metadata: { stoppedReason: session?.stoppedReason || "manual_or_error" }
-        });
-    } catch (err) {
-        console.warn(`[SESSION] ⚠️ Failed to record session delete event for ${sessionId}: ${err.message}`);
-    }
+    _safeDeleteSessionRuntime(sessionId, "warning");
+    _recordSessionDeletedEvent(sessionId, session);
 
     console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);
 

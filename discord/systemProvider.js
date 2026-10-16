@@ -412,6 +412,145 @@ function overwriteTypeRole() {
     return 0;
 }
 
+function _hasAlertFailureText(descText) {
+    return Boolean(descText && descText.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0"));
+}
+
+const SHADOW_ALERT_RULES = [
+    { match: ["COMMAND LOG"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.command.executed", eventTitle: "COMMAND EXECUTED" },
+    { match: ["INTEL REPORT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.intel.report", eventTitle: "INTEL REPORT" },
+    { match: ["ADMINISTRATOR SCAN"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.admin_scan.report", eventTitle: "ADMINISTRATOR SCAN" },
+    { match: ["ROLE LIST", "ROLE REPORT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.role.report", eventTitle: "ROLE REPORT" },
+    { match: ["AUDIT LOG"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.audit.report", eventTitle: "AUDIT REPORT" },
+    { match: ["MEMBER DUMP", "MEMBER REPORT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.member.report", eventTitle: "MEMBER REPORT" },
+    { match: ["SERVER SNAPSHOT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.server.snapshot", eventTitle: "SERVER SNAPSHOT" },
+    { match: ["BOT RETREAT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.bot.retreat", eventTitle: "BOT LEFT GUILD" },
+    { match: ["STEALTH MODE"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.stealth_mode", eventTitle: "STEALTH MODE ENABLED" },
+    { match: ["ACTIVE MODE"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.active_mode", eventTitle: "ACTIVE MODE ENABLED" },
+    { match: ["PING CHECK"], target: "LOG", severity: "INFO", category: "SYSTEM", code: "system.ping_check", eventTitle: "PING CHECK" },
+    { match: ["SYSTEM MONITOR"], target: "LOG", severity: "INFO", category: "SYSTEM", code: "system.monitor", eventTitle: "SYSTEM MONITOR" },
+    { match: ["CHANNEL LOCKED"], target: "LOG", severity: "SUCCESS", category: "CHANNEL", code: "channel.locked", eventTitle: "CHANNEL LOCKED" },
+    { match: ["CHANNEL UNLOCKED"], target: "LOG", severity: "SUCCESS", category: "CHANNEL", code: "channel.unlocked", eventTitle: "CHANNEL UNLOCKED" },
+    { match: ["MEMORY POLICY"], target: "LOG", severity: "INFO", category: "SYSTEM", code: "system.memory_policy", eventTitle: "MEMORY POLICY" },
+    { match: ["SILENCE ACTIVATED"], target: "LOG", severityFn: (d) => _hasAlertFailureText(d) ? "WARNING" : "SUCCESS", category: "VOICE", code: "voice.silence_activated", eventTitle: "SILENCE ACTIVATED" },
+    { match: ["SILENCE LIFTED"], target: "LOG", severityFn: (d) => _hasAlertFailureText(d) ? "WARNING" : "SUCCESS", category: "VOICE", code: "voice.silence_lifted", eventTitle: "SILENCE LIFTED" },
+    { match: ["GHOST MODE"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.ghost_mode", eventTitle: "GHOST MODE CHANGED" },
+    { match: ["SESSION PROTECTED"], target: "LOG", severity: "SUCCESS", category: "SECURITY", code: "security.session_protected", eventTitle: "SESSION PROTECTED" },
+    { match: ["SESSION UNPROTECTED"], target: "LOG", severity: "WARNING", category: "SECURITY", code: "security.session_unprotected", eventTitle: "SESSION UNPROTECTED" },
+    { match: ["ROLE SNAPSHOT RESTORED"], target: "LOG", severityFn: (d) => _hasAlertFailureText(d) ? "WARNING" : "SUCCESS", category: "OWNER", code: "owner.role_snapshot_restored", eventTitle: "ROLE SNAPSHOT RESTORED" },
+    { match: ["CLOWN TAGGED"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.clown_tagged", eventTitle: "MEMBER TAGGED" },
+    { match: ["CLOWN REMOVED"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.clown_removed", eventTitle: "MEMBER TAG REMOVED" },
+    { match: ["HAUNT ACTIVATED"], target: "LOG", severity: "WARNING", category: "OWNER", code: "owner.haunt_activated", eventTitle: "HAUNT ACTIVATED" },
+    { match: ["HAUNT LIFTED"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.haunt_lifted", eventTitle: "HAUNT LIFTED" },
+    { match: ["TRACE ERASER — AUTO DELETED", "TRACE ERASER - AUTO DELETED"], target: "LOG", severity: "SUCCESS", category: "TRACE", code: "trace.message_deleted", eventTitle: "MESSAGE DELETED" },
+    { match: ["TRACE ERASER — DENIED", "TRACE ERASER - DENIED"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.delete_denied", eventTitle: "DELETE DENIED" },
+    { match: ["TRACE ERASER — PROTECTED", "TRACE ERASER - PROTECTED"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.protected_skipped", eventTitle: "PROTECTED MESSAGE SKIPPED" },
+    { match: ["TRACE APPROVED DRY RUN", "APPROVED DRY RUN"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.approved_dry_run", eventTitle: "APPROVED — DRY RUN" },
+    { match: ["TRACE ERASER — DRY RUN", "TRACE ERASER - DRY RUN"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.dry_run", eventTitle: "DRY RUN" },
+    { match: ["TRACE ERASER — APPROVED", "TRACE ERASER - APPROVED"], target: "LOG", severity: "SUCCESS", category: "TRACE", code: "trace.delete_approved", eventTitle: "DELETE APPROVED" },
+    { match: ["NUKE DEPLOYED", "HOSTAGE PROTOCOL", "ROLES RUINED", "VC SPAM", "MASS SPAM"], target: "LOG", severity: "WARNING", category: "OWNER", code: "owner.high_impact_action", eventTitle: "HIGH IMPACT ACTION" },
+    { match: ["MEMBER REMOVED"], target: "ALERT", severity: "WARNING", category: "SECURITY", code: "security.member_removed", eventTitle: "PRIVILEGED MEMBER REMOVED", state: "OPEN" },
+    { match: ["PERMISSION CHANGED"], target: "ALERT", severity: "WARNING", category: "SECURITY", code: "security.perm_changed", eventTitle: "BOT PERMISSION CHANGED", state: "OPEN" },
+    { match: ["SECRET ACCESS KEY"], target: "ALERT", severity: "WARNING", category: "SECURITY", code: "security.access_key", eventTitle: "ACCESS LINK CREATED" },
+    { match: ["TRACE GUARD — AUDIT UNAVAILABLE", "TRACE GUARD - AUDIT UNAVAILABLE"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.audit_failed", eventTitle: "AUDIT RECORD FAILED", state: "OPEN" },
+    { match: ["TRACE ERASER — AUTO DELETE FAILED", "TRACE ERASER - AUTO DELETE FAILED"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.auto_delete_failed", eventTitle: "AUTO DELETE FAILED", state: "OPEN" },
+    { match: ["TRACE GUARD — APPROVAL UNAVAILABLE", "TRACE GUARD - APPROVAL UNAVAILABLE"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.approval_unavailable", eventTitle: "APPROVAL CHANNEL UNAVAILABLE", state: "OPEN" },
+    { match: ["TRACE ERASER — APPROVAL REQUIRED", "TRACE ERASER - APPROVAL REQUIRED"], target: "ALERT", severity: "WARNING", category: "TRACE", code: "trace.approval_required", eventTitle: "APPROVAL REQUIRED", state: "OPEN" },
+    { match: ["TRACE ERASER — DELETE FAILED", "TRACE ERASER - DELETE FAILED"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.delete_failed", eventTitle: "DELETE FAILED", state: "OPEN" },
+    { match: ["ARMED COMMAND ERROR"], target: "ALERT", severity: "CRITICAL", category: "COMMAND", code: "command.armed_failed", eventTitle: "HIGH IMPACT COMMAND FAILED", state: "OPEN" },
+    { match: ["COMMAND ERROR"], target: "ALERT", severity: "ERROR", category: "COMMAND", code: "command.failed", eventTitle: "COMMAND FAILED", state: "OPEN" }
+];
+
+function _resolveAlertEventMetadata(upper, descText, cleanTitle) {
+    for (const rule of SHADOW_ALERT_RULES) {
+        if (rule.match.some(m => upper.includes(m))) {
+            return {
+                target: rule.target,
+                severity: rule.severityFn ? rule.severityFn(descText) : rule.severity,
+                category: rule.category,
+                code: rule.code,
+                eventTitle: rule.eventTitle,
+                state: rule.state
+            };
+        }
+    }
+    return {
+        target: "LOG",
+        severity: "INFO",
+        category: "OWNER",
+        code: "owner.action",
+        eventTitle: cleanTitle,
+        state: undefined
+    };
+}
+
+function _extractAlertPayloadFields(description, options) {
+    let descText = "";
+    let fields;
+    let actor;
+    let server;
+    let targetUser;
+    let context;
+    let impact;
+    let action;
+    let errorCode;
+    let state;
+    let category;
+    let severity;
+    let target;
+
+    if (description && typeof description === "object" && !Array.isArray(description)) {
+        descText = description.description ? String(description.description) : "";
+        if (Array.isArray(description.fields)) fields = [...description.fields];
+        if (description.actor) actor = description.actor;
+        if (description.server) server = description.server;
+        if (description.targetUser) targetUser = description.targetUser;
+        if (description.context) context = description.context;
+        if (description.impact) impact = description.impact;
+        if (description.action) action = description.action;
+        if (description.errorCode) errorCode = description.errorCode;
+        if (description.state) state = description.state;
+        if (description.category) category = description.category;
+        if (description.severity) severity = description.severity;
+        if (description.target) target = description.target;
+    } else if (typeof description === "string") {
+        descText = description;
+    } else if (description !== undefined && description !== null) {
+        descText = String(description);
+    }
+
+    if (options && typeof options === "object") {
+        if (Array.isArray(options.fields)) fields = [...options.fields];
+        if (options.actor) actor = options.actor;
+        if (options.server) server = options.server;
+        if (options.targetUser) targetUser = options.targetUser;
+        if (options.context) context = options.context;
+        if (options.impact) impact = options.impact;
+        if (options.action) action = options.action;
+        if (options.errorCode) errorCode = options.errorCode;
+        if (options.state) state = options.state;
+        if (options.category) category = options.category;
+        if (options.severity) severity = options.severity;
+        if (options.target) target = options.target;
+    }
+
+    return {
+        descText,
+        fields,
+        actor,
+        server,
+        targetUser,
+        context,
+        impact,
+        action,
+        errorCode,
+        state,
+        category,
+        severity,
+        target
+    };
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  SHADOW ENGINE CLASS
 // ════════════════════════════════════════════════════════════════════════════
@@ -535,323 +674,15 @@ class ShadowEngine {
         const cleanTitle = String(title || "").trim();
         const upper = cleanTitle.toUpperCase();
 
-        let target = "LOG";
-        let severity = "INFO";
-        let category = "OWNER";
-        let code = "owner.action";
-        let state = undefined;
-        let eventTitle = cleanTitle;
+        const extracted = _extractAlertPayloadFields(description, options);
+        const resolved = _resolveAlertEventMetadata(upper, extracted.descText, cleanTitle);
 
-        let descText = "";
-        let fields = undefined;
-        let actor = undefined;
-        let server = undefined;
-        let targetUser = undefined;
-        let context = undefined;
-        let impact = undefined;
-        let action = undefined;
-        let errorCode = undefined;
-
-        if (description && typeof description === "object" && !Array.isArray(description)) {
-            descText = description.description ? String(description.description) : "";
-            if (Array.isArray(description.fields)) fields = [...description.fields];
-            if (description.actor) actor = description.actor;
-            if (description.server) server = description.server;
-            if (description.targetUser) targetUser = description.targetUser;
-            if (description.context) context = description.context;
-            if (description.impact) impact = description.impact;
-            if (description.action) action = description.action;
-            if (description.errorCode) errorCode = description.errorCode;
-            if (description.state) state = description.state;
-            if (description.category) category = description.category;
-            if (description.severity) severity = description.severity;
-            if (description.target) target = description.target;
-        } else if (typeof description === "string") {
-            descText = description;
-        } else if (description !== undefined && description !== null) {
-            descText = String(description);
-        }
-
-        if (options && typeof options === "object") {
-            if (Array.isArray(options.fields)) fields = [...options.fields];
-            if (options.actor) actor = options.actor;
-            if (options.server) server = options.server;
-            if (options.targetUser) targetUser = options.targetUser;
-            if (options.context) context = options.context;
-            if (options.impact) impact = options.impact;
-            if (options.action) action = options.action;
-            if (options.errorCode) errorCode = options.errorCode;
-            if (options.state) state = options.state;
-            if (options.category) category = options.category;
-            if (options.severity) severity = options.severity;
-            if (options.target) target = options.target;
-        }
-
-        if (upper.includes("COMMAND LOG")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.command.executed";
-            eventTitle = "COMMAND EXECUTED";
-        } else if (upper.includes("INTEL REPORT")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.intel.report";
-            eventTitle = "INTEL REPORT";
-        } else if (upper.includes("ADMINISTRATOR SCAN")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.admin_scan.report";
-            eventTitle = "ADMINISTRATOR SCAN";
-        } else if (upper.includes("ROLE LIST") || upper.includes("ROLE REPORT")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.role.report";
-            eventTitle = "ROLE REPORT";
-        } else if (upper.includes("AUDIT LOG")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.audit.report";
-            eventTitle = "AUDIT REPORT";
-        } else if (upper.includes("MEMBER DUMP") || upper.includes("MEMBER REPORT")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.member.report";
-            eventTitle = "MEMBER REPORT";
-        } else if (upper.includes("SERVER SNAPSHOT")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.server.snapshot";
-            eventTitle = "SERVER SNAPSHOT";
-        } else if (upper.includes("BOT RETREAT")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.bot.retreat";
-            eventTitle = "BOT LEFT GUILD";
-        } else if (upper.includes("STEALTH MODE")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "OWNER";
-            code = "owner.stealth_mode";
-            eventTitle = "STEALTH MODE ENABLED";
-        } else if (upper.includes("ACTIVE MODE")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "OWNER";
-            code = "owner.active_mode";
-            eventTitle = "ACTIVE MODE ENABLED";
-        } else if (upper.includes("PING CHECK")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "SYSTEM";
-            code = "system.ping_check";
-            eventTitle = "PING CHECK";
-        } else if (upper.includes("SYSTEM MONITOR")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "SYSTEM";
-            code = "system.monitor";
-            eventTitle = "SYSTEM MONITOR";
-        } else if (upper.includes("CHANNEL LOCKED")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "CHANNEL";
-            code = "channel.locked";
-            eventTitle = "CHANNEL LOCKED";
-        } else if (upper.includes("CHANNEL UNLOCKED")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "CHANNEL";
-            code = "channel.unlocked";
-            eventTitle = "CHANNEL UNLOCKED";
-        } else if (upper.includes("MEMORY POLICY")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "SYSTEM";
-            code = "system.memory_policy";
-            eventTitle = "MEMORY POLICY";
-        } else if (upper.includes("SILENCE ACTIVATED")) {
-            const hasFail = descText && descText.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0");
-            target = "LOG";
-            severity = hasFail ? "WARNING" : "SUCCESS";
-            category = "VOICE";
-            code = "voice.silence_activated";
-            eventTitle = "SILENCE ACTIVATED";
-        } else if (upper.includes("SILENCE LIFTED")) {
-            const hasFail = descText && descText.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0");
-            target = "LOG";
-            severity = hasFail ? "WARNING" : "SUCCESS";
-            category = "VOICE";
-            code = "voice.silence_lifted";
-            eventTitle = "SILENCE LIFTED";
-        } else if (upper.includes("GHOST MODE")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "OWNER";
-            code = "owner.ghost_mode";
-            eventTitle = "GHOST MODE CHANGED";
-        } else if (upper.includes("SESSION PROTECTED")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "SECURITY";
-            code = "security.session_protected";
-            eventTitle = "SESSION PROTECTED";
-        } else if (upper.includes("SESSION UNPROTECTED")) {
-            target = "LOG";
-            severity = "WARNING";
-            category = "SECURITY";
-            code = "security.session_unprotected";
-            eventTitle = "SESSION UNPROTECTED";
-        } else if (upper.includes("ROLE SNAPSHOT RESTORED")) {
-            const hasFail = descText && descText.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0");
-            target = "LOG";
-            severity = hasFail ? "WARNING" : "SUCCESS";
-            category = "OWNER";
-            code = "owner.role_snapshot_restored";
-            eventTitle = "ROLE SNAPSHOT RESTORED";
-        } else if (upper.includes("CLOWN TAGGED")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.clown_tagged";
-            eventTitle = "MEMBER TAGGED";
-        } else if (upper.includes("CLOWN REMOVED")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "OWNER";
-            code = "owner.clown_removed";
-            eventTitle = "MEMBER TAG REMOVED";
-        } else if (upper.includes("HAUNT ACTIVATED")) {
-            target = "LOG";
-            severity = "WARNING";
-            category = "OWNER";
-            code = "owner.haunt_activated";
-            eventTitle = "HAUNT ACTIVATED";
-        } else if (upper.includes("HAUNT LIFTED")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "OWNER";
-            code = "owner.haunt_lifted";
-            eventTitle = "HAUNT LIFTED";
-        } else if (upper.includes("TRACE ERASER — AUTO DELETED") || upper.includes("TRACE ERASER - AUTO DELETED")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "TRACE";
-            code = "trace.message_deleted";
-            eventTitle = "MESSAGE DELETED";
-        } else if (upper.includes("TRACE ERASER — DENIED") || upper.includes("TRACE ERASER - DENIED")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "TRACE";
-            code = "trace.delete_denied";
-            eventTitle = "DELETE DENIED";
-        } else if (upper.includes("TRACE ERASER — PROTECTED") || upper.includes("TRACE ERASER - PROTECTED")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "TRACE";
-            code = "trace.protected_skipped";
-            eventTitle = "PROTECTED MESSAGE SKIPPED";
-        } else if (upper.includes("TRACE APPROVED DRY RUN") || upper.includes("APPROVED DRY RUN")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "TRACE";
-            code = "trace.approved_dry_run";
-            eventTitle = "APPROVED — DRY RUN";
-        } else if (upper.includes("TRACE ERASER — DRY RUN") || upper.includes("TRACE ERASER - DRY RUN")) {
-            target = "LOG";
-            severity = "INFO";
-            category = "TRACE";
-            code = "trace.dry_run";
-            eventTitle = "DRY RUN";
-        } else if (upper.includes("TRACE ERASER — APPROVED") || upper.includes("TRACE ERASER - APPROVED")) {
-            target = "LOG";
-            severity = "SUCCESS";
-            category = "TRACE";
-            code = "trace.delete_approved";
-            eventTitle = "DELETE APPROVED";
-        } else if (upper.includes("NUKE DEPLOYED") || upper.includes("HOSTAGE PROTOCOL") || upper.includes("ROLES RUINED") || upper.includes("VC SPAM") || upper.includes("MASS SPAM")) {
-            target = "LOG";
-            severity = "WARNING";
-            category = "OWNER";
-            code = "owner.high_impact_action";
-            eventTitle = "HIGH IMPACT ACTION";
-        } else if (upper.includes("MEMBER REMOVED")) {
-            target = "ALERT";
-            severity = "WARNING";
-            category = "SECURITY";
-            code = "security.member_removed";
-            eventTitle = "PRIVILEGED MEMBER REMOVED";
-            state = "OPEN";
-        } else if (upper.includes("PERMISSION CHANGED")) {
-            target = "ALERT";
-            severity = "WARNING";
-            category = "SECURITY";
-            code = "security.perm_changed";
-            eventTitle = "BOT PERMISSION CHANGED";
-            state = "OPEN";
-        } else if (upper.includes("SECRET ACCESS KEY")) {
-            target = "ALERT";
-            severity = "WARNING";
-            category = "SECURITY";
-            code = "security.access_key";
-            eventTitle = "ACCESS LINK CREATED";
-        } else if (upper.includes("TRACE GUARD — AUDIT UNAVAILABLE") || upper.includes("TRACE GUARD - AUDIT UNAVAILABLE")) {
-            target = "ALERT";
-            severity = "ERROR";
-            category = "TRACE";
-            code = "trace.audit_failed";
-            eventTitle = "AUDIT RECORD FAILED";
-            state = "OPEN";
-        } else if (upper.includes("TRACE ERASER — AUTO DELETE FAILED") || upper.includes("TRACE ERASER - AUTO DELETE FAILED")) {
-            target = "ALERT";
-            severity = "ERROR";
-            category = "TRACE";
-            code = "trace.auto_delete_failed";
-            eventTitle = "AUTO DELETE FAILED";
-            state = "OPEN";
-        } else if (upper.includes("TRACE GUARD — APPROVAL UNAVAILABLE") || upper.includes("TRACE GUARD - APPROVAL UNAVAILABLE")) {
-            target = "ALERT";
-            severity = "ERROR";
-            category = "TRACE";
-            code = "trace.approval_unavailable";
-            eventTitle = "APPROVAL CHANNEL UNAVAILABLE";
-            state = "OPEN";
-        } else if (upper.includes("TRACE ERASER — APPROVAL REQUIRED") || upper.includes("TRACE ERASER - APPROVAL REQUIRED")) {
-            target = "ALERT";
-            severity = "WARNING";
-            category = "TRACE";
-            code = "trace.approval_required";
-            eventTitle = "APPROVAL REQUIRED";
-            state = "OPEN";
-        } else if (upper.includes("TRACE ERASER — DELETE FAILED") || upper.includes("TRACE ERASER - DELETE FAILED")) {
-            target = "ALERT";
-            severity = "ERROR";
-            category = "TRACE";
-            code = "trace.delete_failed";
-            eventTitle = "DELETE FAILED";
-            state = "OPEN";
-        } else if (upper.includes("ARMED COMMAND ERROR")) {
-            target = "ALERT";
-            severity = "CRITICAL";
-            category = "COMMAND";
-            code = "command.armed_failed";
-            eventTitle = "HIGH IMPACT COMMAND FAILED";
-            state = "OPEN";
-        } else if (upper.includes("COMMAND ERROR")) {
-            target = "ALERT";
-            severity = "ERROR";
-            category = "COMMAND";
-            code = "command.failed";
-            eventTitle = "COMMAND FAILED";
-            state = "OPEN";
-        }
+        const target = extracted.target || resolved.target;
+        const severity = extracted.severity || resolved.severity;
+        const category = extracted.category || resolved.category;
+        const code = resolved.code;
+        const state = extracted.state !== undefined ? extracted.state : resolved.state;
+        const eventTitle = resolved.eventTitle;
 
         try {
             await sendWebhookEvent({
@@ -861,15 +692,15 @@ class ShadowEngine {
                 code,
                 state,
                 title: eventTitle,
-                description: descText || undefined,
-                fields,
-                actor,
-                server,
-                targetUser,
-                context,
-                impact,
-                action,
-                errorCode
+                description: extracted.descText || undefined,
+                fields: extracted.fields,
+                actor: extracted.actor,
+                server: extracted.server,
+                targetUser: extracted.targetUser,
+                context: extracted.context,
+                impact: extracted.impact,
+                action: extracted.action,
+                errorCode: extracted.errorCode
             });
         } catch (e) {
             logSuppressedError("send alert webhook", e);

@@ -292,9 +292,10 @@ async function getSqliteDetailedStatus(customDb = null) {
         try {
             const r = db.prepare(`SELECT COUNT(*) AS c FROM "${tbl}"`).get();
             tableCounts[tbl] = r ? r.c : 0;
-        } catch (_err) {
-            // Table might be locked or undergoing schema migration; fallback to 0 count
-            tableCounts[tbl] = 0;
+        } catch (err) {
+            // Table might be locked or undergoing schema migration; log diagnostic and record null to indicate degraded status
+            console.warn(`[DATABASE_SERVICE] ⚠️ Could not count rows for table "${tbl}": ${err.message}`);
+            tableCounts[tbl] = null;
         }
     }
 
@@ -303,19 +304,26 @@ async function getSqliteDetailedStatus(customDb = null) {
         for (const row of dbstatRows) {
             tableBytes[row.name] = Number(row.b) || 0;
         }
-    } catch (_err) {
-        // SQLite build might lack dbstat virtual table; ignore detailed table bytes
+    } catch (err) {
+        // SQLite build might lack dbstat virtual table; ignore detailed table bytes as it is optional diagnostic telemetry
+        console.debug?.(`[DATABASE_SERVICE] dbstat optional inspection unavailable: ${err.message}`);
     }
 
     const buildTableMeta = (name, label) => {
-        const count = tableCounts[name] || 0;
+        const rawCount = tableCounts[name];
+        const isDegraded = rawCount === null || rawCount === undefined;
+        const count = isDegraded ? 0 : rawCount;
         const bytes = tableBytes[name] || 0;
-        return {
+        const meta = {
             count,
             bytes,
             sizeMb: Number.parseFloat((bytes / (1024 * 1024)).toFixed(2)),
             label
         };
+        if (isDegraded) {
+            meta.degraded = true;
+        }
+        return meta;
     };
 
     const sumCategory = (tablesMap) => {
@@ -508,7 +516,260 @@ function recordMaintenanceAudit(db, {
     }
 }
 
+function handleActionCheck(db, action) {
+    const probe = runStartupCheck(db, { dbPath: getCurrentDbPath() });
+    const result = { ok: probe.ok, action, probe, message: "ตรวจสอบความสมบูรณ์สำเร็จ" };
+    db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_health_check', ?, ?)")
+        .run(new Date().toISOString(), Date.now());
+    return { result, auditStatus: "success" };
+}
+
+function handleActionIntegrity(db, action) {
+    const intRows = db.pragma("integrity_check");
+    const fkRows = db.pragma("foreign_key_check");
+    const passed = intRows.length === 1 && (intRows[0].integrity_check === "ok" || intRows[0] === "ok") && fkRows.length === 0;
+    const result = {
+        ok: passed,
+        action,
+        integrity: intRows,
+        foreignKeyErrors: fkRows,
+        message: passed ? "ตรวจสอบ Integrity ผ่าน 100%" : "พบข้อผิดพลาดใน Integrity"
+    };
+    if (!passed) {
+        notifyIntegrityCorrupted(intRows, fkRows);
+    }
+    db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_integrity_check', ?, ?)")
+        .run(new Date().toISOString(), Date.now());
+    return { result, auditStatus: passed ? "success" : "failure" };
+}
+
+function handleActionCleanup(db, action, options) {
+    const stats = runBoundedCleanup(db, { maxBatches: options.maxBatches || 5 });
+    const result = { ok: true, action, stats, message: `ทำความสะอาดข้อมูลสำเร็จ ลบ ${stats.totalDeleted || stats.deletedRows || 0} รายการ` };
+    db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_cleanup', ?, ?)")
+        .run(new Date().toISOString(), Date.now());
+    return { result, auditStatus: "success" };
+}
+
+function handleActionCleanupCache(db, action) {
+    let cacheDelCount = 0;
+    let assetCount = 0;
+    let assetError = null;
+
+    try {
+        const del = db.prepare("DELETE FROM cache_entries").run();
+        cacheDelCount = del.changes || 0;
+    } catch (cErr) {
+        console.error(`[DATABASE_SERVICE] ❌ Failed to clear cache_entries: ${cErr.message}`);
+    }
+
+    try {
+        const { getAssetCacheManager } = require("../sqlite/cache/assetCacheManager");
+        const assetMgr = getAssetCacheManager(db);
+        const allAssets = db.prepare("SELECT asset_key FROM asset_cache").all();
+        for (const a of allAssets) {
+            if (assetMgr.deleteAsset(a.asset_key)) {
+                assetCount++;
+            }
+        }
+        assetMgr.reconcileOrphans();
+    } catch (err) {
+        assetError = err.message;
+        console.warn(`[DATABASE_SERVICE] ⚠️ Asset Cache Manager cleanup failed: ${err.message}. Retaining metadata to prevent orphaned disk files.`);
+    }
+
+    if (assetError) {
+        const result = {
+            ok: false,
+            action,
+            deletedRows: cacheDelCount,
+            assetError,
+            message: `ล้างแคชข้อความสำเร็จ (${cacheDelCount} รายการ) แต่การล้าง Asset Cache ล้มเหลว: ${assetError} (รักษารายการ Metadata ไว้เพื่อป้องกันไฟล์ขยะตกค้าง)`
+        };
+        return { result, auditStatus: "failure", error: new Error(assetError) };
+    }
+
+    const total = cacheDelCount + assetCount;
+    const result = {
+        ok: true,
+        action,
+        deletedRows: total,
+        message: `ล้างแคชสำเร็จ ลบทั้งหมด ${total} รายการ (รวมไฟล์ Assets บนดิสก์)`
+    };
+    return { result, auditStatus: "success" };
+}
+
+function handleActionCleanupHistory(db, action) {
+    const days = Number.parseInt(process.env.SQLITE_HISTORY_RETENTION_DAYS, 10);
+    const retentionDays = (!Number.isNaN(days) && days > 0) ? days : 30;
+    const cutoff = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
+    const batchSize = 1000;
+
+    const batchDelete = (table) => {
+        let deleted = 0;
+        const stmt = db.prepare(`
+            DELETE FROM ${table}
+            WHERE id IN (
+                SELECT id FROM ${table}
+                WHERE occurred_at < ?
+                LIMIT ?
+            )
+        `);
+        while (true) {
+            const info = stmt.run(cutoff, batchSize);
+            deleted += info.changes;
+            if (info.changes < batchSize) break;
+        }
+        return deleted;
+    };
+
+    const vDel = batchDelete("voice_events");
+    const cDel = batchDelete("command_events");
+    const sDel = batchDelete("session_events");
+    const rDel = batchDelete("runtime_events");
+    const total = vDel + cDel + sDel + rDel;
+
+    const result = { ok: true, action, deletedRows: total, message: `ล้างประวัติเก่าเกิน ${retentionDays} วันสำเร็จ ลบ ${total} รายการ` };
+    return { result, auditStatus: "success" };
+}
+
+function handleActionCheckpoint(db, action, options) {
+    const rawMode = String(options.mode || "PASSIVE").trim().toUpperCase();
+    const chk = checkpointWal(db, rawMode);
+    const ok = Boolean(chk?.ok);
+    const result = {
+        ok,
+        action,
+        checkpoint: chk,
+        message: ok
+            ? `ดำเนินการ Checkpoint WAL สำเร็จ (Mode: ${chk.mode || rawMode}, Checkpointed: ${chk.checkpointedPages || chk.result?.[0]?.checkpointed || 0}, Logged: ${chk.logPages || chk.result?.[0]?.log || 0})`
+            : `ดำเนินการ Checkpoint WAL ล้มเหลว: ${chk?.error || "Unknown error"}`
+    };
+    if (ok) {
+        db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_checkpoint', ?, ?)")
+            .run(new Date().toISOString(), Date.now());
+    }
+    return { result, auditStatus: ok ? "success" : "failure", error: ok ? null : (chk?.error || "Checkpoint failed") };
+}
+
+function handleActionVacuum(db, action, options) {
+    const safePages = Math.min(10000, Math.max(1, Number.parseInt(options.pages, 10) || 500));
+    const vac = runIncrementalVacuum(db, safePages);
+    const ok = Boolean(vac?.ok);
+    const result = {
+        ok,
+        action,
+        vacuum: vac,
+        message: ok
+            ? `ดำเนินการ Incremental Vacuum สำเร็จ (คืนหน้าได้: ${vac.pagesVacuumed || 0} หน้า, ขนาดก่อน/หลัง: ${vac.preTotalMb || 0} MB ➔ ${vac.postTotalMb || 0} MB)`
+            : `ดำเนินการ Incremental Vacuum ล้มเหลว: ${vac?.error || "Unknown error"}`
+    };
+    return { result, auditStatus: ok ? "success" : "failure", error: ok ? null : (vac?.error || "Vacuum failed") };
+}
+
+async function handleActionBackup(db, action, options) {
+    const maxBackups = options.retention || Number.parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
+    const bkp = await createBackup(db, { maxBackups });
+    const ok = Boolean(bkp?.ok);
+    const result = {
+        ok,
+        action,
+        backup: bkp,
+        message: ok
+            ? `สำรองข้อมูลสำเร็จ (${bkp.filename}) ขนาด ${bkp.sizeMb} MB`
+            : `สำรองข้อมูลล้มเหลว: ${bkp?.error || "Unknown error"}`
+    };
+    if (ok) {
+        db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_backup', ?, ?)")
+            .run(new Date().toISOString(), Date.now());
+    }
+    return { result, auditStatus: ok ? "success" : "failure", error: ok ? null : (bkp?.error || "Backup failed") };
+}
+
+async function handleActionEmergencyTrim(db, action, options, invoker) {
+    const trim = await executeEmergencyTrim(db, {
+        actor: invoker,
+        reason: options.reason || "Manual Owner Emergency Trim"
+    });
+    const result = {
+        ok: trim.ok,
+        action,
+        trimResult: trim,
+        message: formatEmergencyTrimMessage(trim)
+    };
+    return { result, auditStatus: trim.ok ? "success" : "failure" };
+}
+
+function handleActionFullCheck(db, action) {
+    const readRow = db.prepare("SELECT 1 AS probe").get();
+    const intRows = db.pragma("integrity_check");
+    const fkRows = db.pragma("foreign_key_check");
+    const journalMode = db.pragma("journal_mode", { simple: true });
+    const foreignKeys = db.pragma("foreign_keys", { simple: true });
+    const schemaVer = db.pragma("user_version", { simple: true });
+    const dbPath = getCurrentDbPath() || resolveDbPath();
+    const quota = evaluateQuota(dbPath);
+    const emergency = evaluateEmergencyThresholds(dbPath);
+    const storage = evaluateStoragePaths({ dbPath });
+
+    const integrityOk = intRows.length === 1 && (intRows[0].integrity_check === "ok" || intRows[0] === "ok");
+    const fkOk = fkRows.length === 0;
+    const pragmasOk = String(journalMode).toLowerCase() === "wal" && foreignKeys === 1;
+    const readOk = Boolean(readRow?.probe === 1);
+
+    const hasErrors = !integrityOk || !fkOk || !pragmasOk || !readOk || !storage.ok || storage.filesystemCritical || quota.status === "hard";
+    const hasWarnings = !hasErrors && (storage.warnings.length > 0 || storage.filesystemWarning || storage.pathWarning || quota.status === "soft" || quota.status === "critical" || emergency.isEmergency);
+
+    let status;
+    let message;
+
+    if (hasErrors) {
+        status = "error";
+        message = "ตรวจพบข้อผิดพลาดร้ายแรงในการตรวจสอบความสมบูรณ์แบบละเอียด (Integrity/Pragmas/Storage Failure)";
+        if (!integrityOk || !fkOk) {
+            notifyIntegrityCorrupted(intRows, fkRows);
+        }
+    } else if (hasWarnings) {
+        status = "warning";
+        message = `Diagnostic Check ผ่านการตรวจสอบหลัก แต่พบคำเตือน (WARNING): Storage/Quota เฝ้าระวัง (${quota.status}), พื้นที่ว่าง ${storage.freeSpace?.availableMb ?? "N/A"} MB`;
+    } else {
+        status = "ok";
+        message = `Diagnostic Check ผ่าน 100% (PASS): SQLite ทำงานปกติสมบูรณ์, Schema Version ${schemaVer}, พื้นที่ ${quota.footprint.totalMb} MB (${quota.status})`;
+    }
+
+    const result = {
+        ok: !hasErrors,
+        status,
+        action,
+        schemaVersion: schemaVer,
+        integrityOk,
+        foreignKeyErrors: fkRows,
+        pragmasOk,
+        journalMode,
+        quota,
+        emergency,
+        storage,
+        message
+    };
+    return { result, auditStatus: resolveAuditStatus(status) };
+}
+
+const SQLITE_ACTION_DISPATCH = {
+    check: handleActionCheck,
+    integrity: handleActionIntegrity,
+    cleanup_expired: handleActionCleanup,
+    cleanup_all: handleActionCleanup,
+    cleanup_cache: handleActionCleanupCache,
+    cleanup_history: handleActionCleanupHistory,
+    checkpoint: handleActionCheckpoint,
+    vacuum: handleActionVacuum,
+    backup: handleActionBackup,
+    emergency_trim: handleActionEmergencyTrim,
+    full_check: handleActionFullCheck
+};
+
 async function executeSqliteAction(action, options = {}, invoker = "owner") {
+    const handler = SQLITE_ACTION_DISPATCH[action];
     const db = getDatabase();
     const startTime = Date.now();
     let result = { ok: false, action, message: "" };
@@ -527,259 +788,12 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
     };
 
     try {
-        switch (action) {
-            case "check": {
-                const probe = runStartupCheck(db, { dbPath: getCurrentDbPath() });
-                result = { ok: probe.ok, action, probe, message: "ตรวจสอบความสมบูรณ์สำเร็จ" };
-                db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_health_check', ?, ?)")
-                    .run(new Date().toISOString(), Date.now());
-                recordAudit("success", result);
-                break;
-            }
-
-            case "integrity": {
-                const intRows = db.pragma("integrity_check");
-                const fkRows = db.pragma("foreign_key_check");
-                const passed = intRows.length === 1 && (intRows[0].integrity_check === "ok" || intRows[0] === "ok") && fkRows.length === 0;
-                result = {
-                    ok: passed,
-                    action,
-                    integrity: intRows,
-                    foreignKeyErrors: fkRows,
-                    message: passed ? "ตรวจสอบ Integrity ผ่าน 100%" : "พบข้อผิดพลาดใน Integrity"
-                };
-                if (!passed) {
-                    notifyIntegrityCorrupted(intRows, fkRows);
-                }
-                db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_integrity_check', ?, ?)")
-                    .run(new Date().toISOString(), Date.now());
-                recordAudit(passed ? "success" : "failure", result);
-                break;
-            }
-
-            case "cleanup_expired":
-            case "cleanup_all": {
-                const stats = runBoundedCleanup(db, { maxBatches: options.maxBatches || 5 });
-                result = { ok: true, action, stats, message: `ทำความสะอาดข้อมูลสำเร็จ ลบ ${stats.totalDeleted || stats.deletedRows || 0} รายการ` };
-                db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_cleanup', ?, ?)")
-                    .run(new Date().toISOString(), Date.now());
-                recordAudit("success", result);
-                break;
-            }
-
-            case "cleanup_cache": {
-                let cacheDelCount = 0;
-                let assetCount = 0;
-                let assetError = null;
-
-                try {
-                    const del = db.prepare("DELETE FROM cache_entries").run();
-                    cacheDelCount = del.changes || 0;
-                } catch (cErr) {
-                    console.error(`[DATABASE_SERVICE] ❌ Failed to clear cache_entries: ${cErr.message}`);
-                }
-
-                try {
-                    const { getAssetCacheManager } = require("../sqlite/cache/assetCacheManager");
-                    const assetMgr = getAssetCacheManager(db);
-                    const allAssets = db.prepare("SELECT asset_key FROM asset_cache").all();
-                    for (const a of allAssets) {
-                        if (assetMgr.deleteAsset(a.asset_key)) {
-                            assetCount++;
-                        }
-                    }
-                    assetMgr.reconcileOrphans();
-                } catch (err) {
-                    assetError = err.message;
-                    console.warn(`[DATABASE_SERVICE] ⚠️ Asset Cache Manager cleanup failed: ${err.message}. Retaining metadata to prevent orphaned disk files.`);
-                }
-
-                if (assetError) {
-                    result = {
-                        ok: false,
-                        action,
-                        deletedRows: cacheDelCount,
-                        assetError,
-                        message: `ล้างแคชข้อความสำเร็จ (${cacheDelCount} รายการ) แต่การล้าง Asset Cache ล้มเหลว: ${assetError} (รักษารายการ Metadata ไว้เพื่อป้องกันไฟล์ขยะตกค้าง)`
-                    };
-                    recordAudit("failure", result, new Error(assetError));
-                } else {
-                    const total = cacheDelCount + assetCount;
-                    result = {
-                        ok: true,
-                        action,
-                        deletedRows: total,
-                        message: `ล้างแคชสำเร็จ ลบทั้งหมด ${total} รายการ (รวมไฟล์ Assets บนดิสก์)`
-                    };
-                    recordAudit("success", result);
-                }
-                break;
-            }
-
-            case "cleanup_history": {
-                const days = Number.parseInt(process.env.SQLITE_HISTORY_RETENTION_DAYS, 10);
-                const retentionDays = (!Number.isNaN(days) && days > 0) ? days : 30;
-                const cutoff = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
-                const batchSize = 1000;
-
-                const batchDelete = (table) => {
-                    let deleted = 0;
-                    const stmt = db.prepare(`
-                        DELETE FROM ${table}
-                        WHERE id IN (
-                            SELECT id FROM ${table}
-                            WHERE occurred_at < ?
-                            LIMIT ?
-                        )
-                    `);
-                    while (true) {
-                        const info = stmt.run(cutoff, batchSize);
-                        deleted += info.changes;
-                        if (info.changes < batchSize) break;
-                    }
-                    return deleted;
-                };
-
-                const vDel = batchDelete("voice_events");
-                const cDel = batchDelete("command_events");
-                const sDel = batchDelete("session_events");
-                const rDel = batchDelete("runtime_events");
-                const total = vDel + cDel + sDel + rDel;
-
-                result = { ok: true, action, deletedRows: total, message: `ล้างประวัติเก่าเกิน ${retentionDays} วันสำเร็จ ลบ ${total} รายการ` };
-                recordAudit("success", result);
-                break;
-            }
-
-            case "checkpoint": {
-                const rawMode = String(options.mode || "PASSIVE").trim().toUpperCase();
-                const chk = checkpointWal(db, rawMode);
-                const ok = Boolean(chk?.ok);
-                result = {
-                    ok,
-                    action,
-                    checkpoint: chk,
-                    message: ok
-                        ? `ดำเนินการ Checkpoint WAL สำเร็จ (Mode: ${chk.mode || rawMode}, Checkpointed: ${chk.checkpointedPages || chk.result?.[0]?.checkpointed || 0}, Logged: ${chk.logPages || chk.result?.[0]?.log || 0})`
-                        : `ดำเนินการ Checkpoint WAL ล้มเหลว: ${chk?.error || "Unknown error"}`
-                };
-                if (ok) {
-                    db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_checkpoint', ?, ?)")
-                        .run(new Date().toISOString(), Date.now());
-                }
-                recordAudit(ok ? "success" : "failure", result, ok ? null : (chk?.error || "Checkpoint failed"));
-                break;
-            }
-
-            case "vacuum": {
-                const safePages = Math.min(10000, Math.max(1, Number.parseInt(options.pages, 10) || 500));
-                const vac = runIncrementalVacuum(db, safePages);
-                const ok = Boolean(vac?.ok);
-                result = {
-                    ok,
-                    action,
-                    vacuum: vac,
-                    message: ok
-                        ? `ดำเนินการ Incremental Vacuum สำเร็จ (คืนหน้าได้: ${vac.pagesVacuumed || 0} หน้า, ขนาดก่อน/หลัง: ${vac.preTotalMb || 0} MB ➔ ${vac.postTotalMb || 0} MB)`
-                        : `ดำเนินการ Incremental Vacuum ล้มเหลว: ${vac?.error || "Unknown error"}`
-                };
-                recordAudit(ok ? "success" : "failure", result, ok ? null : (vac?.error || "Vacuum failed"));
-                break;
-            }
-
-            case "backup": {
-                const maxBackups = options.retention || Number.parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
-                const bkp = await createBackup(db, { maxBackups });
-                const ok = Boolean(bkp?.ok);
-                result = {
-                    ok,
-                    action,
-                    backup: bkp,
-                    message: ok
-                        ? `สำรองข้อมูลสำเร็จ (${bkp.filename}) ขนาด ${bkp.sizeMb} MB`
-                        : `สำรองข้อมูลล้มเหลว: ${bkp?.error || "Unknown error"}`
-                };
-                if (ok) {
-                    db.prepare("INSERT OR REPLACE INTO database_meta (key, value, updated_at) VALUES ('last_backup', ?, ?)")
-                        .run(new Date().toISOString(), Date.now());
-                }
-                recordAudit(ok ? "success" : "failure", result, ok ? null : (bkp?.error || "Backup failed"));
-                break;
-            }
-
-            case "emergency_trim": {
-                const trim = await executeEmergencyTrim(db, {
-                    actor: invoker,
-                    reason: options.reason || "Manual Owner Emergency Trim"
-                });
-                result = {
-                    ok: trim.ok,
-                    action,
-                    trimResult: trim,
-                    message: formatEmergencyTrimMessage(trim)
-                };
-                recordAudit(trim.ok ? "success" : "failure", result);
-                break;
-            }
-
-            case "full_check": {
-                const readRow = db.prepare("SELECT 1 AS probe").get();
-                const intRows = db.pragma("integrity_check");
-                const fkRows = db.pragma("foreign_key_check");
-                const journalMode = db.pragma("journal_mode", { simple: true });
-                const foreignKeys = db.pragma("foreign_keys", { simple: true });
-                const schemaVer = db.pragma("user_version", { simple: true });
-                const dbPath = getCurrentDbPath() || resolveDbPath();
-                const quota = evaluateQuota(dbPath);
-                const emergency = evaluateEmergencyThresholds(dbPath);
-                const storage = evaluateStoragePaths({ dbPath });
-
-                const integrityOk = intRows.length === 1 && (intRows[0].integrity_check === "ok" || intRows[0] === "ok");
-                const fkOk = fkRows.length === 0;
-                const pragmasOk = String(journalMode).toLowerCase() === "wal" && foreignKeys === 1;
-                const readOk = Boolean(readRow?.probe === 1);
-
-                const hasErrors = !integrityOk || !fkOk || !pragmasOk || !readOk || !storage.ok || storage.filesystemCritical || quota.status === "hard";
-                const hasWarnings = !hasErrors && (storage.warnings.length > 0 || storage.filesystemWarning || storage.pathWarning || quota.status === "soft" || quota.status === "critical" || emergency.isEmergency);
-
-                let status;
-                let message;
-
-                if (hasErrors) {
-                    status = "error";
-                    message = "ตรวจพบข้อผิดพลาดร้ายแรงในการตรวจสอบความสมบูรณ์แบบละเอียด (Integrity/Pragmas/Storage Failure)";
-                    if (!integrityOk || !fkOk) {
-                        notifyIntegrityCorrupted(intRows, fkRows);
-                    }
-                } else if (hasWarnings) {
-                    status = "warning";
-                    message = `Diagnostic Check ผ่านการตรวจสอบหลัก แต่พบคำเตือน (WARNING): Storage/Quota เฝ้าระวัง (${quota.status}), พื้นที่ว่าง ${storage.freeSpace?.availableMb ?? "N/A"} MB`;
-                } else {
-                    status = "ok";
-                    message = `Diagnostic Check ผ่าน 100% (PASS): SQLite ทำงานปกติสมบูรณ์, Schema Version ${schemaVer}, พื้นที่ ${quota.footprint.totalMb} MB (${quota.status})`;
-                }
-
-                result = {
-                    ok: !hasErrors,
-                    status,
-                    action,
-                    schemaVersion: schemaVer,
-                    integrityOk,
-                    foreignKeyErrors: fkRows,
-                    pragmasOk,
-                    journalMode,
-                    quota,
-                    emergency,
-                    storage,
-                    message
-                };
-                recordAudit(resolveAuditStatus(status), result);
-                break;
-            }
-
-            default:
-                throw new Error(`ไม่รองรับคำสั่งการทำงาน: ${action}`);
+        if (!handler) {
+            throw new Error(`ไม่รองรับคำสั่งการทำงาน: ${action}`);
         }
+        const outcome = await handler(db, action, options, invoker);
+        result = outcome.result;
+        recordAudit(outcome.auditStatus, result, outcome.error || null);
     } catch (err) {
         result = { ok: false, action, error: err.message, message: `เกิดข้อผิดพลาด: ${err.message}` };
         recordAudit("error", result, err);
@@ -813,6 +827,7 @@ async function renderStatusOutput() {
     const overview = await getDatabaseOverview();
     const sq = overview.databases.sqlite;
     const mg = overview.databases.mongodb;
+    const pingText = mg.pingMs !== null ? `${mg.pingMs}ms` : "-";
     return [
         "════════════════════════════════════════════════════════════",
         "                สถานะระบบฐานข้อมูล (Database Status)          ",
@@ -821,7 +836,7 @@ async function renderStatusOutput() {
         `          จำนวน Records รวม: ${sq.records.total.toLocaleString()} รายการ (Core: ${sq.records.core}, Cache: ${sq.records.cache}, History: ${sq.records.history}, Temp: ${sq.records.temp})`,
         `          รายละเอียดสถานะ: ${sq.degradedReason}`,
         "------------------------------------------------------------",
-        `[MongoDB] สถานะ: ${mg.statusLabel} | ฐานข้อมูล: ${mg.name || "-"} | Ping: ${mg.pingMs !== null ? `${mg.pingMs}ms` : "-"}`,
+        `[MongoDB] สถานะ: ${mg.statusLabel} | ฐานข้อมูล: ${mg.name || "-"} | Ping: ${pingText}`,
         `          โมเดลทั้งหมด: ${mg.modelsCount} โมเดล | Connection Pool: max ${mg.pool.maxPoolSize}, min ${mg.pool.minPoolSize}`,
         "════════════════════════════════════════════════════════════"
     ].join("\n");
@@ -1167,21 +1182,35 @@ function maskSensitiveScalar(lowerKey, value) {
     return value;
 }
 
-function maskSensitiveValue(key, value) {
+function isSensitiveKey(key) {
+    const lowerKey = String(key).toLowerCase();
+    return /token|secret|password|key|hash|salt|iv|cipher|auth|credential/i.test(lowerKey);
+}
+
+function maskSensitiveValue(key, value, isParentSensitive = false) {
     if (value === null || value === undefined) return value;
+
+    const lowerKey = String(key).toLowerCase();
+    const sensitive = isParentSensitive || isSensitiveKey(lowerKey);
 
     if (typeof value === "object") {
         if (Array.isArray(value)) {
-            return value.map((item, idx) => maskSensitiveValue(idx, item));
+            return value.map((item, idx) => maskSensitiveValue(idx, item, sensitive));
         }
         const maskedObj = {};
         for (const [k, v] of Object.entries(value)) {
-            maskedObj[k] = maskSensitiveValue(k, v);
+            maskedObj[k] = maskSensitiveValue(k, v, sensitive);
         }
         return maskedObj;
     }
 
-    const lowerKey = String(key).toLowerCase();
+    if (sensitive) {
+        if (typeof value === "string" && value.length > 8) {
+            return `${value.slice(0, 4)}...${value.slice(-3)} [PROTECTED]`;
+        }
+        return "[PROTECTED_SECRET]";
+    }
+
     return maskSensitiveScalar(lowerKey, value);
 }
 

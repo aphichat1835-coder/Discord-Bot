@@ -164,6 +164,49 @@ class AssetCacheManager {
         }
     }
 
+    _writeAssetFile(fullPath, buffer) {
+        this._ensureDirectory();
+        if (fs.existsSync(fullPath)) {
+            return false;
+        }
+        const tempPath = `${fullPath}.${Date.now()}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+        fs.writeFileSync(tempPath, buffer);
+        fs.renameSync(tempPath, fullPath);
+        return true;
+    }
+
+    _upsertAssetMetadata(assetKey, assetType, relativePath, mimeType, sizeBytes, sha256, sourceUrl, now, expiresAt) {
+        const stmt = this.db.prepare(`
+            INSERT INTO asset_cache (
+                asset_key, asset_type, relative_path, mime_type,
+                size_bytes, sha256, source_url, created_at,
+                last_used_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(asset_key) DO UPDATE SET
+                asset_type = excluded.asset_type,
+                relative_path = excluded.relative_path,
+                mime_type = excluded.mime_type,
+                size_bytes = excluded.size_bytes,
+                sha256 = excluded.sha256,
+                source_url = excluded.source_url,
+                last_used_at = excluded.last_used_at,
+                expires_at = excluded.expires_at
+        `);
+
+        stmt.run(
+            String(assetKey),
+            String(assetType),
+            relativePath,
+            mimeType,
+            sizeBytes,
+            sha256,
+            sourceUrl ? String(sourceUrl) : null,
+            now,
+            now,
+            expiresAt
+        );
+    }
+
     setAsset(assetKey, buffer, options = {}) {
         if (!canWrite("cache")) {
             return null;
@@ -190,53 +233,17 @@ class AssetCacheManager {
         const expiresAt = now + ttlMs;
 
         try {
-            // 1. Quota check & eviction
             const currentTotal = this.getTotalSizeBytes();
             if (currentTotal + sizeBytes > this.maxQuotaBytes) {
                 this.evictIfOverQuota(this.maxQuotaBytes - sizeBytes);
             }
 
-            // 2. Ensure dir & write file safely
-            this._ensureDirectory();
-            const fileExistedBefore = fs.existsSync(fullPath);
-            let newlyCreatedFile = false;
-            if (!fileExistedBefore) {
-                const tempPath = `${fullPath}.${Date.now()}.${crypto.randomBytes(6).toString("hex")}.tmp`;
-                fs.writeFileSync(tempPath, buffer);
-                fs.renameSync(tempPath, fullPath);
-                newlyCreatedFile = true;
-            }
+            const newlyCreatedFile = this._writeAssetFile(fullPath, buffer);
 
-            // 3. Upsert SQLite metadata
             try {
-                const stmt = this.db.prepare(`
-                    INSERT INTO asset_cache (
-                        asset_key, asset_type, relative_path, mime_type,
-                        size_bytes, sha256, source_url, created_at,
-                        last_used_at, expires_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(asset_key) DO UPDATE SET
-                        asset_type = excluded.asset_type,
-                        relative_path = excluded.relative_path,
-                        mime_type = excluded.mime_type,
-                        size_bytes = excluded.size_bytes,
-                        sha256 = excluded.sha256,
-                        source_url = excluded.source_url,
-                        last_used_at = excluded.last_used_at,
-                        expires_at = excluded.expires_at
-                `);
-
-                stmt.run(
-                    String(assetKey),
-                    String(assetType),
-                    relativePath,
-                    mimeType,
-                    sizeBytes,
-                    sha256,
-                    options.sourceUrl ? String(options.sourceUrl) : null,
-                    now,
-                    now,
-                    expiresAt
+                this._upsertAssetMetadata(
+                    assetKey, assetType, relativePath, mimeType,
+                    sizeBytes, sha256, options.sourceUrl, now, expiresAt
                 );
             } catch (dbErr) {
                 if (newlyCreatedFile && fs.existsSync(fullPath)) {
@@ -307,9 +314,9 @@ class AssetCacheManager {
                 )
             `).get();
             return row ? Number(row.total) : 0;
-        } catch (_err) {
-            // Return 0 if asset_cache table is unavailable or closed
-            return 0;
+        } catch (err) {
+            console.error(`[ASSET_CACHE] ⚠️ Failed to query asset cache size: ${err.message}`);
+            throw err;
         }
     }
 
@@ -353,6 +360,40 @@ class AssetCacheManager {
         return stats;
     }
 
+    _cleanOrphanFilesOnDisk() {
+        let removed = 0;
+        if (!fs.existsSync(this.assetDir)) return removed;
+        const filesOnDisk = fs.readdirSync(this.assetDir);
+        const dbPaths = new Set(this.db.prepare("SELECT DISTINCT relative_path FROM asset_cache").all().map(r => r.relative_path));
+
+        for (const file of filesOnDisk) {
+            if (!dbPaths.has(file)) {
+                try {
+                    fs.unlinkSync(path.join(this.assetDir, file));
+                    removed++;
+                } catch (unlinkErr) {
+                    if (unlinkErr.code !== 'ENOENT') {
+                        console.warn(`[ASSET_CACHE] Failed to remove orphan file ${file}:`, unlinkErr.message);
+                    }
+                }
+            }
+        }
+        return removed;
+    }
+
+    _cleanOrphanDbRows() {
+        let removed = 0;
+        const allRows = this.db.prepare("SELECT asset_key, relative_path FROM asset_cache").all();
+        for (const row of allRows) {
+            const fullPath = path.join(this.assetDir, row.relative_path);
+            if (!fs.existsSync(fullPath)) {
+                this.db.prepare("DELETE FROM asset_cache WHERE asset_key = ?").run(row.asset_key);
+                removed++;
+            }
+        }
+        return removed;
+    }
+
     reconcileOrphans() {
         const stats = {
             orphanFilesRemoved: 0,
@@ -360,34 +401,8 @@ class AssetCacheManager {
         };
 
         try {
-            // 1. Check orphan files on disk not referenced in SQLite
-            if (fs.existsSync(this.assetDir)) {
-                const filesOnDisk = fs.readdirSync(this.assetDir);
-                const dbPaths = new Set(this.db.prepare("SELECT DISTINCT relative_path FROM asset_cache").all().map(r => r.relative_path));
-
-                for (const file of filesOnDisk) {
-                    if (!dbPaths.has(file)) {
-                        try {
-                            fs.unlinkSync(path.join(this.assetDir, file));
-                            stats.orphanFilesRemoved++;
-                        } catch (unlinkErr) {
-                            if (unlinkErr.code !== 'ENOENT') {
-                                console.warn(`[ASSET_CACHE] Failed to remove orphan file ${file}:`, unlinkErr.message);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 2. Check orphan rows in SQLite whose files do not exist on disk
-            const allRows = this.db.prepare("SELECT asset_key, relative_path FROM asset_cache").all();
-            for (const row of allRows) {
-                const fullPath = path.join(this.assetDir, row.relative_path);
-                if (!fs.existsSync(fullPath)) {
-                    this.db.prepare("DELETE FROM asset_cache WHERE asset_key = ?").run(row.asset_key);
-                    stats.orphanRowsRemoved++;
-                }
-            }
+            stats.orphanFilesRemoved = this._cleanOrphanFilesOnDisk();
+            stats.orphanRowsRemoved = this._cleanOrphanDbRows();
         } catch (err) {
             console.error(`[ASSET_CACHE] ⚠️ Error during orphan reconciliation: ${err.message}`);
         }

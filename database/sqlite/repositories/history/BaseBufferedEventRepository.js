@@ -47,7 +47,8 @@ class BaseBufferedEventRepository {
                 try {
                     this._insertSingle(cItem);
                     this.criticalRetryQueue.shift();
-                } catch (_err) {
+                } catch (err) {
+                    console.warn(`${this.logPrefix} ⚠️ Insert failed on flusher stop (${err.message}); falling back to P0 spool file`);
                     // Fall back to P0 spool file when database insert fails
                     const spooled = p0Journal.spoolP0Event(this.tableName, cItem);
                     if (spooled) {
@@ -138,7 +139,8 @@ class BaseBufferedEventRepository {
                 try {
                     this._insertSingle(cItem);
                     this.criticalRetryQueue.shift();
-                } catch (_err) {
+                } catch (err) {
+                    console.warn(`${this.logPrefix} ⚠️ Critical queue drain interrupted by database error: ${err.message}`);
                     // Stop draining critical queue if SQLite write still fails
                     break;
                 }
@@ -146,8 +148,8 @@ class BaseBufferedEventRepository {
         } else {
             try {
                 p0Journal.drainP0Spool(this.db, { [this.tableName]: this });
-            } catch (_err) {
-                // Best-effort P0 journal spool draining during flush
+            } catch (drainErr) {
+                console.warn(`${this.logPrefix} ⚠️ P0 journal spool drain encountered error: ${drainErr.message}`);
             }
         }
 

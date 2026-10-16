@@ -21,7 +21,8 @@ class SessionEventRepository extends BaseBufferedEventRepository {
                 const cleaned = sanitizeDetails(event.metadata);
                 metadataJson = JSON.stringify(cleaned).slice(0, 4096);
             } catch (err) {
-                // Best-effort serialization of metadata; fallback to null on error
+                // Best-effort serialization of metadata; log diagnostic and fallback to null on error
+                console.warn(`[SESSION_EVENT_BUFFER] ⚠️ Failed to serialize session metadata (${err.message}); persisting event with null metadata`);
                 metadataJson = null;
             }
         }

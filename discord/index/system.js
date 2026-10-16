@@ -97,10 +97,9 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
         if (isMutedLogLine(line)) return;
 
         // Determine subsystem category from tags in log text (skipping generic BOT/LEVEL tags)
-        const tagMatches = [...line.matchAll(/\[([^[\]]{1,64})\]/g)]
+        const rawTag = [...line.matchAll(/\[([^[\]]{1,64})\]/g)]
             .map(m => m[1].trim().toUpperCase())
-            .filter(t => !["BOT", "OK", "INFO", "WARN", "FAIL", "ERROR", "CRITICAL"].includes(t.replace(/[^A-Z]/g, "")));
-        const rawTag = tagMatches[0] || "RUNTIME";
+            .find(t => !["BOT", "OK", "INFO", "WARN", "FAIL", "ERROR", "CRITICAL"].includes(t.replace(/[^A-Z]/g, ""))) || "RUNTIME";
         const category = deriveLogCategory(rawTag);
 
         // Clean message text for dedupe key and embed

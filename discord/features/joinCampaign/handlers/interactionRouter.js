@@ -20,6 +20,92 @@ function isJoinCampaignInteraction(interaction) {
         id === CUSTOM_IDS.MODAL_START;
 }
 
+async function _handleModeSelect(interaction, repository) {
+    const selectedModeId = interaction.values[0];
+    const mode = getMode(selectedModeId);
+    const panel = repository.findPanelByChannelId(interaction.channelId) || {};
+    const modal = buildBaseSetupModal({ mode, currentState: panel });
+    await interaction.showModal(modal);
+}
+
+async function _handleStartButton(interaction, repository) {
+    if (joinCampaignService.isRunning) {
+        await interaction.reply({
+            content: `> ${emoji.loading} ตอนนี้มีงานดึงสมาชิกกำลังทำงานอยู่ กรุณารอให้งานเดิมเสร็จสิ้นก่อนนะครับ`,
+            ephemeral: true
+        });
+        return;
+    }
+
+    const panel = repository.findPanelByChannelId(interaction.channelId) || {};
+    const mode = getMode(panel.mode);
+
+    if (!panel.targetGuildId) {
+        const modal = buildBaseSetupModal({ mode, currentState: panel });
+        await interaction.showModal(modal);
+        return;
+    }
+
+    const startModal = buildStartOptionsModal();
+    await interaction.showModal(startModal);
+}
+
+async function _updateMainPanelRunningState(client, repository, channelId, requestedAmount) {
+    try {
+        const panel = repository.findPanelByChannelId(channelId);
+        if (!panel?.messageId) return;
+
+        const channel = await client.channels.fetch(panel.channelId).catch(() => null);
+        if (!channel) return;
+
+        const message = await channel.messages.fetch(panel.messageId).catch(() => null);
+        if (!message) return;
+
+        const mode = getMode(panel.mode);
+        const targetGuild = client.guilds.cache.get(panel.targetGuildId);
+        const targetQuota = requestedAmount || panel.requestedAmount || panel.lastReadyCount;
+        const payload = buildPanelPayload({
+            mode,
+            panelState: panel,
+            readyCount: panel.lastReadyCount,
+            liveJob: {
+                status: "RUNNING",
+                joinedCount: 0,
+                requestedAmount: targetQuota
+            },
+            targetGuildName: targetGuild?.name || panel.targetGuildId
+        });
+        await message.edit(payload).catch(() => {});
+    } catch (_) {
+        // Non-critical background message edit failure; panel refreshes on next worker update
+    }
+}
+
+async function _handleConfirmButton(interaction, client, repository) {
+    const stageId = interaction.customId.slice(CONFIRM_IDS.BTN_CONFIRM_PREFIX.length);
+    const result = await joinCampaignService.confirmAndStartCampaign({
+        stageId,
+        client,
+        repository
+    });
+
+    if (!result.ok) {
+        await interaction.update({
+            content: `> ${emoji.error} **ไม่สามารถเริ่มงานได้:** ${result.error}`,
+            components: []
+        });
+        return;
+    }
+
+    await interaction.update({
+        content: `> ${emoji.boost} ${result.message}`,
+        embeds: [],
+        components: []
+    });
+
+    await _updateMainPanelRunningState(client, repository, interaction.channelId, result.requestedAmount);
+}
+
 async function handleJoinCampaignInteraction(interaction, client) {
     if (!isJoinCampaignInteraction(interaction)) {
         return false;
@@ -39,107 +125,21 @@ async function handleJoinCampaignInteraction(interaction, client) {
     const repository = database.repositories.joinCampaign;
     const { customId } = interaction;
 
-    // 1. Dropdown Mode Select Menu
     if (interaction.isStringSelectMenu() && customId === PANEL_IDS.SELECT_MODE) {
-        const selectedModeId = interaction.values[0];
-        const mode = getMode(selectedModeId);
-        const panel = repository.findPanelByChannelId(interaction.channelId) || {};
-
-        const modal = buildBaseSetupModal({
-            mode,
-            currentState: panel
-        });
-        await interaction.showModal(modal);
+        await _handleModeSelect(interaction, repository);
         return true;
     }
 
-    // 2. Start Action Button
     if (interaction.isButton() && customId === PANEL_IDS.BTN_START) {
-        if (joinCampaignService.isRunning) {
-            await interaction.reply({
-                content: `> ${emoji.loading} ตอนนี้มีงานดึงสมาชิกกำลังทำงานอยู่ กรุณารอให้งานเดิมเสร็จสิ้นก่อนนะครับ`,
-                ephemeral: true
-            });
-            return true;
-        }
-
-        const panel = repository.findPanelByChannelId(interaction.channelId) || {};
-        const mode = getMode(panel.mode);
-
-        // If Target Guild is not yet configured, open Setup Modal first
-        if (!panel.targetGuildId) {
-            const modal = buildBaseSetupModal({
-                mode,
-                currentState: panel
-            });
-            await interaction.showModal(modal);
-            return true;
-        }
-
-        // If Target Guild is already configured, open Phase 2 Start Options Modal
-        const startModal = buildStartOptionsModal();
-        await interaction.showModal(startModal);
+        await _handleStartButton(interaction, repository);
         return true;
     }
 
-    // 3. Confirm Start Button (Preflight Ephemeral Confirmation)
     if (interaction.isButton() && customId.startsWith(CONFIRM_IDS.BTN_CONFIRM_PREFIX)) {
-        const stageId = customId.slice(CONFIRM_IDS.BTN_CONFIRM_PREFIX.length);
-        const result = await joinCampaignService.confirmAndStartCampaign({
-            stageId,
-            client,
-            repository
-        });
-
-        if (!result.ok) {
-            await interaction.update({
-                content: `> ${emoji.error} **ไม่สามารถเริ่มงานได้:** ${result.error}`,
-                components: []
-            });
-            return true;
-        }
-
-        // Update confirmation message
-        await interaction.update({
-            content: `> ${emoji.boost} ${result.message}`,
-            embeds: [],
-            components: []
-        });
-
-        // Trigger immediate visual update on main panel in channel
-        try {
-            const panel = repository.findPanelByChannelId(interaction.channelId);
-            if (panel?.messageId) {
-                const channel = await client.channels.fetch(panel.channelId).catch(() => null);
-                if (channel) {
-                    const message = await channel.messages.fetch(panel.messageId).catch(() => null);
-                    if (message) {
-                        const mode = getMode(panel.mode);
-                        const targetGuild = client.guilds.cache.get(panel.targetGuildId);
-                        const targetQuota = result.requestedAmount || panel.requestedAmount || panel.lastReadyCount;
-                        const payload = buildPanelPayload({
-                            mode,
-                            panelState: panel,
-                            readyCount: panel.lastReadyCount,
-                            liveJob: {
-                                status: "RUNNING",
-                                joinedCount: 0,
-                                requestedAmount: targetQuota
-                            },
-                            targetGuildName: targetGuild?.name || panel.targetGuildId
-                        });
-                        await message.edit(payload).catch(() => {});
-                    }
-                }
-            }
-        } catch (_err) {
-            // Non-critical background message edit failure; panel refreshes on next worker update
-        }
-
+        await _handleConfirmButton(interaction, client, repository);
         return true;
     }
 
-    // 4. Modal Submissions
     if (interaction.isModalSubmit()) {
         await handleModalSubmit(interaction, client);
         return true;

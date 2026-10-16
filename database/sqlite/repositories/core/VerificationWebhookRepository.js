@@ -2,6 +2,20 @@
 
 const { getDatabase } = require("../../connection");
 
+function _formatProgressValues(progress, now, jobId) {
+    return [
+        progress.totalEligible !== undefined ? Number(progress.totalEligible) : null,
+        progress.processedCount !== undefined ? Number(progress.processedCount) : null,
+        progress.successCount !== undefined ? Number(progress.successCount) : null,
+        progress.failureCount !== undefined ? Number(progress.failureCount) : null,
+        progress.retryCount !== undefined ? Number(progress.retryCount) : null,
+        progress.lastCursorVerifiedAt != null ? Number(progress.lastCursorVerifiedAt) : null,
+        progress.lastCursorId != null ? String(progress.lastCursorId) : null,
+        now,
+        String(jobId)
+    ];
+}
+
 class VerificationWebhookRepository {
     constructor(db = null) {
         this._db = db;
@@ -76,18 +90,10 @@ class VerificationWebhookRepository {
         this._deliverySchemaEnsured = true;
     }
 
-    updateJobProgress(jobId, {
-        totalEligible,
-        processedCount,
-        successCount,
-        failureCount,
-        retryCount,
-        lastCursorVerifiedAt = null,
-        lastCursorId = null,
-        leaseToken = null
-    }) {
+    updateJobProgress(jobId, progress = {}) {
         const now = Date.now();
-        if (leaseToken) {
+        const baseValues = _formatProgressValues(progress, now, jobId);
+        if (progress.leaseToken) {
             const stmt = this.db.prepare(`
                 UPDATE verification_webhook_jobs
                 SET total_eligible = COALESCE(?, total_eligible),
@@ -101,16 +107,8 @@ class VerificationWebhookRepository {
                 WHERE job_id = ? AND status = 'RUNNING' AND lease_token = ? AND lease_expires_at >= ?
             `);
             return stmt.run(
-                totalEligible !== undefined ? Number(totalEligible) : null,
-                processedCount !== undefined ? Number(processedCount) : null,
-                successCount !== undefined ? Number(successCount) : null,
-                failureCount !== undefined ? Number(failureCount) : null,
-                retryCount !== undefined ? Number(retryCount) : null,
-                lastCursorVerifiedAt !== null ? Number(lastCursorVerifiedAt) : null,
-                lastCursorId !== null ? String(lastCursorId) : null,
-                now,
-                String(jobId),
-                String(leaseToken),
+                ...baseValues,
+                String(progress.leaseToken),
                 now
             );
         }
@@ -126,17 +124,7 @@ class VerificationWebhookRepository {
                 updated_at = ?
             WHERE job_id = ? AND status = 'RUNNING'
         `);
-        return stmt.run(
-            totalEligible !== undefined ? Number(totalEligible) : null,
-            processedCount !== undefined ? Number(processedCount) : null,
-            successCount !== undefined ? Number(successCount) : null,
-            failureCount !== undefined ? Number(failureCount) : null,
-            retryCount !== undefined ? Number(retryCount) : null,
-            lastCursorVerifiedAt !== null ? Number(lastCursorVerifiedAt) : null,
-            lastCursorId !== null ? String(lastCursorId) : null,
-            now,
-            String(jobId)
-        );
+        return stmt.run(...baseValues);
     }
 
     resetJobLease(jobId) {
