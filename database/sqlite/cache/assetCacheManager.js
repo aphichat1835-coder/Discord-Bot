@@ -175,7 +175,7 @@ class AssetCacheManager {
         return true;
     }
 
-    _upsertAssetMetadata(assetKey, assetType, relativePath, mimeType, sizeBytes, sha256, sourceUrl, now, expiresAt) {
+    _upsertAssetMetadata({ assetKey, assetType, relativePath, mimeType, sizeBytes, sha256, sourceUrl, now, expiresAt }) {
         const stmt = this.db.prepare(`
             INSERT INTO asset_cache (
                 asset_key, asset_type, relative_path, mime_type,
@@ -207,6 +207,24 @@ class AssetCacheManager {
         );
     }
 
+    _enforceQuotaForNewAsset(sizeBytes) {
+        const currentTotal = this.getTotalSizeBytes();
+        if (currentTotal + sizeBytes > this.maxQuotaBytes) {
+            this.evictIfOverQuota(this.maxQuotaBytes - sizeBytes);
+        }
+    }
+
+    _cleanupNewFileOnError(fullPath, newlyCreatedFile) {
+        if (!newlyCreatedFile || !fs.existsSync(fullPath)) return;
+        try {
+            fs.unlinkSync(fullPath);
+        } catch (unlinkErr) {
+            if (unlinkErr.code !== 'ENOENT') {
+                console.warn(`[ASSET_CACHE] Failed to clean up file ${fullPath}:`, unlinkErr.message);
+            }
+        }
+    }
+
     setAsset(assetKey, buffer, options = {}) {
         if (!canWrite("cache")) {
             return null;
@@ -233,28 +251,23 @@ class AssetCacheManager {
         const expiresAt = now + ttlMs;
 
         try {
-            const currentTotal = this.getTotalSizeBytes();
-            if (currentTotal + sizeBytes > this.maxQuotaBytes) {
-                this.evictIfOverQuota(this.maxQuotaBytes - sizeBytes);
-            }
-
+            this._enforceQuotaForNewAsset(sizeBytes);
             const newlyCreatedFile = this._writeAssetFile(fullPath, buffer);
 
             try {
-                this._upsertAssetMetadata(
-                    assetKey, assetType, relativePath, mimeType,
-                    sizeBytes, sha256, options.sourceUrl, now, expiresAt
-                );
+                this._upsertAssetMetadata({
+                    assetKey,
+                    assetType,
+                    relativePath,
+                    mimeType,
+                    sizeBytes,
+                    sha256,
+                    sourceUrl: options.sourceUrl,
+                    now,
+                    expiresAt
+                });
             } catch (dbErr) {
-                if (newlyCreatedFile && fs.existsSync(fullPath)) {
-                    try {
-                        fs.unlinkSync(fullPath);
-                    } catch (unlinkErr) {
-                        if (unlinkErr.code !== 'ENOENT') {
-                            console.warn(`[ASSET_CACHE] Failed to clean up file ${fullPath}:`, unlinkErr.message);
-                        }
-                    }
-                }
+                this._cleanupNewFileOnError(fullPath, newlyCreatedFile);
                 throw dbErr;
             }
 

@@ -68,9 +68,71 @@ function loadMigrationFiles(migrationsDir) {
     });
 }
 
+function _stripSqlCommentsAndLiterals(sql) {
+    let result = "";
+    let i = 0;
+    const len = sql.length;
+
+    while (i < len) {
+        const char = sql[i];
+        const next = i + 1 < len ? sql[i + 1] : "";
+
+        if (char === "-" && next === "-") {
+            i += 2;
+            while (i < len && sql[i] !== "\n") {
+                i++;
+            }
+            result += " ";
+        } else if (char === "/" && next === "*") {
+            i += 2;
+            while (i < len) {
+                if (sql[i] === "*" && i + 1 < len && sql[i + 1] === "/") {
+                    i += 2;
+                    break;
+                }
+                i++;
+            }
+            result += " ";
+        } else if (char === "'") {
+            i++;
+            while (i < len) {
+                if (sql[i] === "'") {
+                    if (i + 1 < len && sql[i + 1] === "'") {
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            result += " ";
+        } else if (char === '"') {
+            i++;
+            while (i < len) {
+                if (sql[i] === '"') {
+                    if (i + 1 < len && sql[i + 1] === '"') {
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            result += " ";
+        } else {
+            result += char;
+            i++;
+        }
+    }
+
+    return result;
+}
+
 function isDestructiveMigration(content) {
     if (!content || typeof content !== "string") return false;
-    const stripped = content.replace(/--.*$/gm, "").replace(/\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\//g, "");
+    const stripped = _stripSqlCommentsAndLiterals(content);
     return /\b(DROP\s+TABLE|DROP\s+COLUMN|TRUNCATE)\b/i.test(stripped);
 }
 

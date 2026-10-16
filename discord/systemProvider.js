@@ -413,7 +413,7 @@ function overwriteTypeRole() {
 }
 
 function _hasAlertFailureText(descText) {
-    return Boolean(descText && descText.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0"));
+    return Boolean(descText?.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0"));
 }
 
 const SHADOW_ALERT_RULES = [
@@ -484,71 +484,68 @@ function _resolveAlertEventMetadata(upper, descText, cleanTitle) {
     };
 }
 
+const ALERT_PAYLOAD_ATTRIBUTES = [
+    "actor",
+    "server",
+    "targetUser",
+    "context",
+    "impact",
+    "action",
+    "errorCode",
+    "state",
+    "category",
+    "severity",
+    "target"
+];
+
+function _extractDescriptionText(description) {
+    if (description && typeof description === "object" && !Array.isArray(description)) {
+        return description.description ? String(description.description) : "";
+    }
+    if (typeof description === "string") {
+        return description;
+    }
+    if (description !== undefined && description !== null) {
+        return String(description);
+    }
+    return "";
+}
+
+function _applyPayloadAttributes(target, source) {
+    if (!source || typeof source !== "object") return;
+    if (Array.isArray(source.fields)) {
+        target.fields = [...source.fields];
+    }
+    for (const key of ALERT_PAYLOAD_ATTRIBUTES) {
+        if (source[key]) {
+            target[key] = source[key];
+        }
+    }
+}
+
 function _extractAlertPayloadFields(description, options) {
-    let descText = "";
-    let fields;
-    let actor;
-    let server;
-    let targetUser;
-    let context;
-    let impact;
-    let action;
-    let errorCode;
-    let state;
-    let category;
-    let severity;
-    let target;
+    const payload = {
+        descText: _extractDescriptionText(description),
+        fields: undefined,
+        actor: undefined,
+        server: undefined,
+        targetUser: undefined,
+        context: undefined,
+        impact: undefined,
+        action: undefined,
+        errorCode: undefined,
+        state: undefined,
+        category: undefined,
+        severity: undefined,
+        target: undefined
+    };
 
     if (description && typeof description === "object" && !Array.isArray(description)) {
-        descText = description.description ? String(description.description) : "";
-        if (Array.isArray(description.fields)) fields = [...description.fields];
-        if (description.actor) actor = description.actor;
-        if (description.server) server = description.server;
-        if (description.targetUser) targetUser = description.targetUser;
-        if (description.context) context = description.context;
-        if (description.impact) impact = description.impact;
-        if (description.action) action = description.action;
-        if (description.errorCode) errorCode = description.errorCode;
-        if (description.state) state = description.state;
-        if (description.category) category = description.category;
-        if (description.severity) severity = description.severity;
-        if (description.target) target = description.target;
-    } else if (typeof description === "string") {
-        descText = description;
-    } else if (description !== undefined && description !== null) {
-        descText = String(description);
+        _applyPayloadAttributes(payload, description);
     }
+    _applyPayloadAttributes(payload, options);
 
-    if (options && typeof options === "object") {
-        if (Array.isArray(options.fields)) fields = [...options.fields];
-        if (options.actor) actor = options.actor;
-        if (options.server) server = options.server;
-        if (options.targetUser) targetUser = options.targetUser;
-        if (options.context) context = options.context;
-        if (options.impact) impact = options.impact;
-        if (options.action) action = options.action;
-        if (options.errorCode) errorCode = options.errorCode;
-        if (options.state) state = options.state;
-        if (options.category) category = options.category;
-        if (options.severity) severity = options.severity;
-        if (options.target) target = options.target;
-    }
-
-    return {
-        descText,
-        fields,
-        actor,
-        server,
-        targetUser,
-        context,
-        impact,
-        action,
-        errorCode,
-        state,
-        category,
-        severity,
-        target
-    };
+    return payload;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

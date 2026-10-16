@@ -513,7 +513,7 @@ function _checkUnexpiredToken(tokenState, force, marginMs, now, tokenField, user
     return null;
 }
 
-async function _resolveAndDecryptRefreshToken(fresh, previousRefreshTokenEncrypted, userId, tokenField, model, now, effectiveFailMax, env) {
+async function _resolveAndDecryptRefreshToken({ fresh, previousRefreshTokenEncrypted, userId, tokenField, model, now, effectiveFailMax, env }) {
     let rawRefreshToken;
     try {
         rawRefreshToken = decryptToken(previousRefreshTokenEncrypted);
@@ -626,7 +626,7 @@ async function performTokenRefreshUnderLock({
         return { ok: false, code: "aborted", reason: "Operation aborted", userId, tokenField };
     }
 
-    const decryptRes = await _resolveAndDecryptRefreshToken(fresh, previousRefreshTokenEncrypted, userId, tokenField, model, now, effectiveFailMax, env);
+    const decryptRes = await _resolveAndDecryptRefreshToken({ fresh, previousRefreshTokenEncrypted, userId, tokenField, model, now, effectiveFailMax, env });
     if (!decryptRes.ok) {
         return decryptRes.result;
     }

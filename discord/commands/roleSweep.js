@@ -462,6 +462,35 @@ async function replyMessage(message, payload) {
     return message.reply(formatted).catch(() => message?.channel?.send?.(formatted).catch(() => null));
 }
 
+async function _deliverButtonEdit(target, formatted) {
+    const editPayload = { ...formatted };
+    if (!editPayload.content && editPayload.embeds?.length > 0) {
+        editPayload.content = null;
+    }
+    try {
+        return await target.editReply(editPayload);
+    } catch {
+        try {
+            return await target?.channel?.send?.(formatted);
+        } catch {
+            return null;
+        }
+    }
+}
+
+function _deliverMessageOrChannel(target, formatted) {
+    const cleanPayload = { ...formatted };
+    if (cleanPayload.content === null) delete cleanPayload.content;
+
+    if (typeof target?.reply === "function") {
+        return replyMessage(target, cleanPayload);
+    }
+    if (typeof target?.channel?.send === "function") {
+        return target.channel.send(cleanPayload).catch(() => null);
+    }
+    return null;
+}
+
 /** Delivers the sweep outcome to either a message reply or a button interaction edit. */
 async function deliverSweepResult(target, payload) {
     const formatted = typeof payload === "string"
@@ -469,31 +498,9 @@ async function deliverSweepResult(target, payload) {
         : { allowedMentions: { parse: [], repliedUser: false }, ...payload };
 
     if (typeof target?.editReply === "function" && target?.isButton?.()) {
-        const editPayload = { ...formatted };
-        if (!editPayload.content && editPayload.embeds?.length > 0) {
-            editPayload.content = null;
-        }
-        try {
-            return await target.editReply(editPayload);
-        } catch {
-            try {
-                return await target?.channel?.send?.(formatted);
-            } catch {
-                return null;
-            }
-        }
+        return _deliverButtonEdit(target, formatted);
     }
-    if (typeof target?.reply === "function") {
-        const msgPayload = { ...formatted };
-        if (msgPayload.content === null) delete msgPayload.content;
-        return replyMessage(target, msgPayload);
-    }
-    if (typeof target?.channel?.send === "function") {
-        const sendPayload = { ...formatted };
-        if (sendPayload.content === null) delete sendPayload.content;
-        return target.channel.send(sendPayload).catch(() => null);
-    }
-    return null;
+    return _deliverMessageOrChannel(target, formatted);
 }
 
 /** Removes a pending sweep, optionally only when it still matches an expected job. */

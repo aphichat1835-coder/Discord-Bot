@@ -132,9 +132,22 @@ describe("Pass 1: Write Policy, Asset Accounting & Storage Semantics Suite", () 
 
         assert.equal(isDestructiveMigration("CREATE TABLE foo (id INT);"), false);
         assert.equal(isDestructiveMigration("-- comment with DROP TABLE\nCREATE TABLE bar (id INT);"), false);
+        assert.equal(isDestructiveMigration("/* block comment DROP TABLE users */ CREATE TABLE foo (id INT);"), false);
+        assert.equal(isDestructiveMigration("/* multiline\r\nDROP TABLE\r\nTRUNCATE\r\n*/ CREATE TABLE bar (id INT);"), false);
+        assert.equal(isDestructiveMigration("INSERT INTO logs VALUES ('DROP TABLE in string');"), false);
+        assert.equal(isDestructiveMigration("INSERT INTO logs VALUES ('Escaped '' DROP TABLE '' quote');"), false);
+        assert.equal(isDestructiveMigration("/* unterminated comment DROP TABLE"), false);
         assert.equal(isDestructiveMigration("DROP TABLE users;"), true);
         assert.equal(isDestructiveMigration("DROP TABLE IF EXISTS asset_cache;"), true);
         assert.equal(isDestructiveMigration("ALTER TABLE orders DROP COLUMN old_col;"), true);
+        assert.equal(isDestructiveMigration("TRUNCATE TABLE logs;"), true);
+
+        // Adversarial ReDoS resistance check: long repetitive input must finish in linear time
+        const adversarial = "/* " + "*".repeat(20000) + " / ".repeat(5000) + " */ CREATE TABLE safe (id INT);";
+        const t0 = Date.now();
+        assert.equal(isDestructiveMigration(adversarial), false);
+        const elapsed = Date.now() - t0;
+        assert.ok(elapsed < 200, `Scanner must complete in linear time (< 200ms, took ${elapsed}ms)`);
 
         // Test that running a destructive migration against a database with backupDir creates a pre-migration backup
         const testMigrationsDir = path.join(tempDir, "custom_migrations");
@@ -191,5 +204,53 @@ describe("Pass 1: Write Policy, Asset Accounting & Storage Semantics Suite", () 
         assert.equal(captured.subsystem, "quest", "Subsystem must be passed into event");
         assert.equal(captured.reason, "429_test");
         assert.equal(captured.source, "rest_api");
+    });
+
+    test("8. _upsertAssetMetadata object parameter contract and setAsset rollback on DB error", () => {
+        const assetDir = path.join(tempDir, "assets_rollback_test");
+        fs.mkdirSync(assetDir, { recursive: true });
+        const assetMgr = new AssetCacheManager(testDb, { assetDir });
+
+        try {
+            // Direct call to _upsertAssetMetadata with object parameter
+            const now = Date.now();
+            assetMgr._upsertAssetMetadata({
+                assetKey: "direct_object_test_key",
+                assetType: "avatar",
+                relativePath: "avatar_direct.png",
+                mimeType: "image/png",
+                sizeBytes: 1234,
+                sha256: "abc123sha",
+                sourceUrl: "https://example.com/avatar.png",
+                now,
+                expiresAt: now + 60000
+            });
+
+            const row = testDb.prepare("SELECT * FROM asset_cache WHERE asset_key = ?").get("direct_object_test_key");
+            assert.ok(row, "Metadata row must be inserted via object param");
+            assert.equal(row.asset_type, "avatar");
+            assert.equal(row.size_bytes, 1234);
+            assert.equal(row.source_url, "https://example.com/avatar.png");
+
+            // Test setAsset compensation/rollback when _upsertAssetMetadata throws
+            const origUpsert = assetMgr._upsertAssetMetadata;
+            assetMgr._upsertAssetMetadata = () => {
+                throw new Error("Simulated database failure during metadata insert");
+            };
+
+            const payload = Buffer.from("unique_rollback_payload_test");
+            const res = assetMgr.setAsset("rollback_key_1", payload, { mimeType: "image/png" });
+            assert.equal(res, null, "setAsset must return null on failure");
+
+            // Verify file was cleaned up on disk and not left orphaned
+            const crypto = require("node:crypto");
+            const sha = crypto.createHash("sha256").update(payload).digest("hex");
+            const expectedFilePath = path.join(assetDir, `${sha}.png`);
+            assert.equal(fs.existsSync(expectedFilePath), false, "Orphaned file must be deleted on DB error");
+
+            assetMgr._upsertAssetMetadata = origUpsert;
+        } finally {
+            assetMgr.stopTouchFlusher();
+        }
     });
 });

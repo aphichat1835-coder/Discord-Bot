@@ -1160,7 +1160,7 @@ async function sendDedupedWebhook(target, payload, options) {
             pending: null
         };
 
-        return await _dispatchDedupeEntry(key, entry, target, payload, options, ttlMs);
+        return _dispatchDedupeEntry(key, entry, target, payload, options, ttlMs);
     }
 
     return false;
