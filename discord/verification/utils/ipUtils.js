@@ -1362,44 +1362,12 @@ startLookupCacheCleanup();
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
         return {
+            ...makeLookupDisabledInfo(ip),
             provider: 'local',
-            raw: null,
             status: 'local',
-
-            country: 'unknown',
-            countryCode: 'unknown',
-            region: 'unknown',
-            city: 'unknown',
-            zip: 'unknown',
-            lat: null,
-            lon: null,
-            timezone: 'unknown',
-
             isp: 'local/private',
             org: 'local/private',
-            as: 'unknown',
-            asname: 'unknown',
-            reverse: 'unknown',
-
-            mobile: false,
-            proxy: false,
-            hosting: false,
-            vpn: false,
-            tor: false,
-            anycast: false,
-            networkType: null,
-            accuracyRadiusKm: null,
-            locationAccuracy: null,
-            locationConfidence: 'unknown',
-            locationConfidenceScore: null,
             locationConfidenceReasons: ['private_or_reserved_ip'],
-            providerAgreement: null,
-            providerEvidence: [],
-            providerCount: 0,
-            consensusUsed: false,
-            securitySignalsAvailable: false,
-
-            query: ip,
             message: null
         };
     }

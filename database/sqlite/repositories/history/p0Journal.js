@@ -107,7 +107,9 @@ function ensureReceiptsTable(db) {
             );
             CREATE INDEX IF NOT EXISTS idx_p0_journal_receipts_replayed ON p0_journal_receipts(replayed_at);
         `);
-    } catch (_) {}
+    } catch (_tableErr) {
+        // Table or index may already exist or schema creation handled concurrently
+    }
 }
 
 /**

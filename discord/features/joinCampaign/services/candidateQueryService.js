@@ -2,6 +2,20 @@
 
 const oauthTokenManager = require("../../../tokens/oauthTokenManager");
 
+function resolveNextCursor(page, candidates) {
+    if (page?.nextCursor != null) {
+        return page.nextCursor;
+    }
+    if (candidates.length > 0) {
+        const lastCandidate = candidates[candidates.length - 1];
+        const lastId = lastCandidate?._id || lastCandidate?.recordId;
+        if (lastId) {
+            return String(lastId);
+        }
+    }
+    return null;
+}
+
 async function* streamCandidates({
     mode,
     baseConfig = {},
@@ -36,7 +50,7 @@ async function* streamCandidates({
         } else if (Array.isArray(page)) {
             candidates = page;
         }
-        const nextCursor = page?.nextCursor ?? (candidates.length > 0 && (candidates[candidates.length - 1]?._id || candidates[candidates.length - 1]?.recordId) ? String(candidates[candidates.length - 1]._id || candidates[candidates.length - 1].recordId) : null);
+        const nextCursor = resolveNextCursor(page, candidates);
 
         // Note: onPage is intended for telemetry/stats only; persistent job cursors must be
         // checkpointed by the consumer after items are safely enqueued, not on page fetch.

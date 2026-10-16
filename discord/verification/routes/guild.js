@@ -1021,7 +1021,7 @@ router.get("/api/guilds", requireAdmin, async (req, res) => {
    Config / Resources
 ============================================================================= */
 
-router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, async (req, res) => {
+async function handleGetGuildConfig(req, res, logContext, failMsg) {
   try {
     const { guildId } = req.params;
     const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
@@ -1032,9 +1032,11 @@ router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, async 
       config: serializeConfig(config)
     });
   } catch (err) {
-    return sendServerError(res, "config", err);
+    return sendServerError(res, logContext, err, failMsg);
   }
-});
+}
+
+router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, (req, res) => handleGetGuildConfig(req, res, "config"));
 
 router.post("/api/guild/:guildId/settings", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
@@ -1918,20 +1920,7 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
    Compatibility aliases
 ============================================================================= */
 
-router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, res) => {
-  try {
-    const { guildId } = req.params;
-    const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
-
-    res.json({
-      success: true,
-      guild: serializeGuildFromSession(req.adminGuild),
-      config: serializeConfig(config)
-    });
-  } catch (err) {
-    return sendServerError(res, "get-guild", err, "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ");
-  }
-});
+router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, (req, res) => handleGetGuildConfig(req, res, "get-guild", "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ"));
 
 router._test = {
   mergeVerificationConfig,

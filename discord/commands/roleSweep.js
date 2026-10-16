@@ -715,20 +715,27 @@ async function handleConfirmation(message) {
     return true;
 }
 
-/** Handles the //ถอดยศ shortcut after validating ownership and bot permissions. */
-async function handleTargetShortcut(message) {
-    const parsed = parseTargetRoleShortcut(message?.content);
-    if (!parsed.matched) return false;
+async function validateShortcutPreflight(message, parsed) {
+    if (!parsed.matched) return { shouldProceed: false, handled: false };
     await message.delete?.().catch(() => {});
     if (!isGuildOwner(message.author?.id, message.guild)) {
         await replyMessage(message, `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้สงวนไว้สำหรับเจ้าของเซิร์ฟเวอร์หรือ Owner ของบอท`);
-        return true;
+        return { shouldProceed: false, handled: true };
     }
     const errorEmoji = config.emojis?.error || "❌";
     if (parsed.error) {
         await replyMessage(message, `> ${errorEmoji} ${parsed.error}`);
-        return true;
+        return { shouldProceed: false, handled: true };
     }
+    return { shouldProceed: true, handled: true, errorEmoji };
+}
+
+/** Handles the //ถอดยศ shortcut after validating ownership and bot permissions. */
+async function handleTargetShortcut(message) {
+    const parsed = parseTargetRoleShortcut(message?.content);
+    const preflight = await validateShortcutPreflight(message, parsed);
+    if (!preflight.shouldProceed) return preflight.handled;
+    const { errorEmoji } = preflight;
     const roleMap = message.guild?.roles?.cache;
     const targetRole = roleMap?.get?.(parsed.targetRoleId);
     if (!targetRole) {
@@ -766,17 +773,9 @@ async function handleTargetShortcut(message) {
 /** Handles the //รียศ shortcut after validating ownership and bot permissions. */
 async function handleShortcut(message) {
     const parsed = parseShortcutRoleIds(message?.content);
-    if (!parsed.matched) return false;
-    await message.delete?.().catch(() => {});
-    if (!isGuildOwner(message.author?.id, message.guild)) {
-        await replyMessage(message, `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้สงวนไว้สำหรับเจ้าของเซิร์ฟเวอร์หรือ Owner ของบอท`);
-        return true;
-    }
-    const errorEmoji = config.emojis?.error || "❌";
-    if (parsed.error) {
-        await replyMessage(message, `> ${errorEmoji} ${parsed.error}`);
-        return true;
-    }
+    const preflight = await validateShortcutPreflight(message, parsed);
+    if (!preflight.shouldProceed) return preflight.handled;
+    const { errorEmoji } = preflight;
     const roleMap = message.guild?.roles?.cache;
     if (parsed.roleIds.some(roleId => !roleMap?.get?.(roleId))) {
         await replyMessage(message, `> ${errorEmoji} พบ Role ID ที่ไม่มีอยู่ในเซิร์ฟเวอร์`);

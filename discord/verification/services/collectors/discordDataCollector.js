@@ -252,6 +252,7 @@ async function collectDiscordData({ code, redirectUri, previousSummary = null, p
 }
 
 module.exports = {
+    USER_BADGE_FLAGS,
     getAccountCreatedAt,
     getAccountAgeDays,
     decodeUserBadgeFlags,

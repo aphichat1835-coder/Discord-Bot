@@ -35,7 +35,9 @@ function resolveAssetDir() {
             fs.accessSync("/persistent", fs.constants.R_OK | fs.constants.W_OK);
             return path.resolve("/persistent", "cache-assets");
         }
-    } catch (_) {}
+    } catch (_err) {
+        // Ignored: /persistent directory does not exist or lacks permissions
+    }
     return path.join(process.cwd(), "data", "cache-assets");
 }
 

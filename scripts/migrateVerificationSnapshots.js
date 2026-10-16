@@ -29,22 +29,7 @@ function migrationFilter() {
     };
 }
 
-const BADGES = Object.freeze([
-    [2 ** 0, "STAFF"],
-    [2 ** 1, "PARTNER"],
-    [2 ** 2, "HYPESQUAD"],
-    [2 ** 3, "BUG_HUNTER_LEVEL_1"],
-    [2 ** 6, "HYPESQUAD_BRAVERY"],
-    [2 ** 7, "HYPESQUAD_BRILLIANCE"],
-    [2 ** 8, "HYPESQUAD_BALANCE"],
-    [2 ** 9, "PREMIUM_EARLY_SUPPORTER"],
-    [2 ** 10, "TEAM_PSEUDO_USER"],
-    [2 ** 14, "BUG_HUNTER_LEVEL_2"],
-    [2 ** 16, "VERIFIED_BOT"],
-    [2 ** 17, "VERIFIED_DEVELOPER"],
-    [2 ** 18, "CERTIFIED_MODERATOR"],
-    [2 ** 19, "BOT_HTTP_INTERACTIONS"]
-]);
+const { USER_BADGE_FLAGS: BADGES } = require("../discord/verification/services/collectors/discordDataCollector");
 
 function badgeFlags(discord = {}) {
     const flags = Number(discord.publicFlags ?? discord.flags ?? 0) || 0;

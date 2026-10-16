@@ -327,7 +327,9 @@ async function runEmergencyEvaluation() {
             const cBuf = getCommandEventRepository()?.getBufferStats()?.bufferedCount || 0;
             const sBuf = getSessionEventRepository()?.getBufferStats()?.bufferedCount || 0;
             totalBufferCount = vBuf + cBuf + sBuf;
-        } catch (_) {}
+        } catch (_err) {
+            // Best-effort: history repository buffer metric inspection failure should not block emergency evaluation
+        }
 
         const evalResult = evaluateEmergencyThresholds(dbPath, { writeBufferCount: totalBufferCount });
 
@@ -352,10 +354,10 @@ async function runEmergencyEvaluation() {
                             title: "🚨 ตรวจพบภาวะวิกฤตพื้นที่จัดเก็บ SQLite (Storage Critical)",
                             description: `ระบบตรวจพบพื้นที่จัดเก็บบนดิสก์เกินเกณฑ์วิกฤต กำลังเริ่ม Emergency Auto-Trim อัตโนมัติ เพื่อล้างข้อมูลหมดอายุและคืนพื้นที่ดิสก์:\n${storageReasons.map(r => `• ${r}`).join("\n")}`,
                             context: {
-                                "ขนาด Footprint": `${evalResult.quota.footprint.totalMb} MB`,
-                                "เพดานวิกฤต": `${evalResult.quota.limits.critMb} MB`,
+                                "ขนาด Footprint": `${evalResult.quota?.footprint?.totalMb ?? "N/A"} MB`,
+                                "เพดานวิกฤต": `${evalResult.quota?.limits?.critMb ?? "N/A"} MB`,
                                 "ขนาดไฟล์ WAL": `${evalResult.walMb} MB`,
-                                "สถานะระบบ": evalResult.quota.status.toUpperCase()
+                                "สถานะระบบ": evalResult.quota?.status?.toUpperCase() || "UNKNOWN"
                             }
                         }).catch(() => {});
                     } catch (_err) {
