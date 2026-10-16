@@ -269,6 +269,16 @@ async function findLinkForUser(guildId, userId, options = {}) {
         .lean();
 }
 
+async function listTrackedUsersForLink(guildId, ipHash, options = {}) {
+    const models = defaultModels(options);
+    const safeGuildId = strictSnowflake(guildId, "invalid_guild_id");
+    const filter = { guildId: safeGuildId, ipHash: String(ipHash) };
+    return models.UserHistory.find(filter)
+        .sort({ lastSeenAt: -1, _id: -1 })
+        .limit(options.limit || 100)
+        .lean();
+}
+
 function legacyEventId(link, role) {
     return roleEventId({
         guildId: link.guildId,
@@ -704,6 +714,7 @@ module.exports = {
     loadHistoryPage,
     loadInitialHistory,
     findLinkForUser,
+    listTrackedUsersForLink,
     migrateLegacyHistory,
     migrateVerifyLogHistory,
     ensureLegacyLinkMigrated,

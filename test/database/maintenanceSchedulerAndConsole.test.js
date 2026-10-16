@@ -150,4 +150,82 @@ test("Maintenance Scheduler and Console Commands Suite", async (t) => { // NOSON
         assert.match(maskedObj.token, /PROTECTED/);
         assert.equal(maskedObj.user, "normalUser");
     });
+
+    await t.test("9. Scheduler error handling on action failure and exception", async () => {
+        const originalAction = databaseService.executeSqliteAction;
+
+        // 1. Action returns ok: false
+        databaseService.executeSqliteAction = async () => ({ ok: false, error: "Simulated Action Failure" });
+
+        await scheduler.runWalCheckpoint();
+        let diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.wal.lastStatus, "error");
+        assert.equal(diag.diagnostics.wal.lastError, "Simulated Action Failure");
+
+        await scheduler.runCleanup();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.cleanup.lastStatus, "error");
+
+        await scheduler.runVacuum();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.vacuum.lastStatus, "error");
+
+        await scheduler.runAutoBackup();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.backup.lastStatus, "error");
+
+        // 2. Action throws exception
+        databaseService.executeSqliteAction = async () => { throw new Error("Simulated Action Crash"); };
+
+        await scheduler.runWalCheckpoint();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.wal.lastStatus, "error");
+        assert.equal(diag.diagnostics.wal.lastError, "Simulated Action Crash");
+
+        await scheduler.runCleanup();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.cleanup.lastStatus, "error");
+
+        await scheduler.runVacuum();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.vacuum.lastStatus, "error");
+
+        await scheduler.runAutoBackup();
+        diag = scheduler.getSchedulerDiagnostics();
+        assert.equal(diag.diagnostics.backup.lastStatus, "error");
+
+        databaseService.executeSqliteAction = originalAction;
+    });
+
+    await t.test("10. Scheduler concurrency guards skip overlapping executions", async () => {
+        const originalAction = databaseService.executeSqliteAction;
+        let resolveBlocker;
+        const blockerPromise = new Promise((resolve) => { resolveBlocker = resolve; });
+
+        databaseService.executeSqliteAction = async () => {
+            await blockerPromise;
+            return { ok: true };
+        };
+
+        // Start background run
+        const pWal1 = scheduler.runWalCheckpoint();
+        // Overlapping run should skip
+        const pWal2 = scheduler.runWalCheckpoint();
+
+        const pClean1 = scheduler.runCleanup();
+        const pClean2 = scheduler.runCleanup();
+
+        const pVac1 = scheduler.runVacuum();
+        const pVac2 = scheduler.runVacuum();
+
+        const pBkp1 = scheduler.runAutoBackup();
+        const pBkp2 = scheduler.runAutoBackup();
+
+        // Release blocker
+        resolveBlocker();
+        await Promise.all([pWal1, pWal2, pClean1, pClean2, pVac1, pVac2, pBkp1, pBkp2]);
+
+        databaseService.executeSqliteAction = originalAction;
+    });
 });
+

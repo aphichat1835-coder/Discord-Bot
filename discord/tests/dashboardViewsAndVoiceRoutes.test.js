@@ -295,6 +295,7 @@ test("Views & VoiceRoutes Suite", async (t) => { // NOSONAR -- node:test asserti
             forceReconnectSession: async () => ({ ok: true, ready: true }),
             stopSession: async () => true,
             applyAutoDeafSettings: () => {},
+            applyNaturalSettings: () => {},
             getAutoDeafSettings: () => ({ enabled: true, intervalMs: 3600000, openDurationMs: 60000 }),
             getNaturalSettings: () => ({ enabled: true, minDelaySec: 30, maxDelaySec: 90 }),
             getVoiceLogs: () => [{ sessionId: "sess1", message: "voice log" }]
@@ -365,10 +366,66 @@ test("Views & VoiceRoutes Suite", async (t) => { // NOSONAR -- node:test asserti
         const stopRes = await callRoute(postRoutes.get("/api/stop-session"), { body: { sessionId: "sess1" } });
         assert.equal(stopRes.body.success, true);
 
+        // Test POST /api/stop-session: missing sessionId -> 400
+        const stopMissing = await callRoute(postRoutes.get("/api/stop-session"), { body: {} });
+        assert.equal(stopMissing.status, 400);
+
+        // Test POST /api/stop-session: already removed session
+        const stopNotFound = await callRoute(postRoutes.get("/api/stop-session"), { body: { sessionId: "non_existent" } });
+        assert.equal(stopNotFound.body.action, "already_removed");
+
+        // Test POST /api/stop-session: stop fails -> 409
+        mockVoiceWorker.stopSession = async () => false;
+        const stopFailed = await callRoute(postRoutes.get("/api/stop-session"), { body: { sessionId: "sess1" } });
+        assert.equal(stopFailed.status, 409);
+        mockVoiceWorker.stopSession = async () => true;
+
         // Test POST /api/settings/auto-deaf
         const autodeafRes = await callRoute(postRoutes.get("/api/settings/auto-deaf"), {
             body: { enabled: true, intervalMs: 3600000, openDurationMs: 60000 }
         });
         assert.equal(autodeafRes.body.success, true);
+
+        const autodeafInvalid = await callRoute(postRoutes.get("/api/settings/auto-deaf"), {
+            body: { enabled: "not_a_boolean" }
+        });
+        assert.equal(autodeafInvalid.status, 400);
+
+        // Test POST /api/settings/natural
+        const naturalPost = await callRoute(postRoutes.get("/api/settings/natural"), {
+            body: { enabled: true, intervalMs: 120000, durationMs: 15000 }
+        });
+        assert.equal(naturalPost.body.success, true);
+
+        const naturalInvalid = await callRoute(postRoutes.get("/api/settings/natural"), {
+            body: { enabled: "not_a_boolean" }
+        });
+        assert.equal(naturalInvalid.status, 400);
+
+        // Test POST /api/voice-session/ensure
+        mockVoiceWorker.ensureVoiceSession = async () => ({ ok: true, action: "created", sessionId: "sess_ensured" });
+        const ensureGood = await callRoute(postRoutes.get("/api/voice-session/ensure"), {
+            body: { token: "clean_token_123", guildId: "123", channelId: "456" }
+        });
+        assert.equal(ensureGood.body.success, true);
+        assert.equal(ensureGood.body.sessionId, "sess_ensured");
+
+        // Ensure session conflict -> 409
+        mockVoiceWorker.ensureVoiceSession = async () => ({ ok: false, action: "already_active" });
+        const ensureConflict = await callRoute(postRoutes.get("/api/voice-session/ensure"), {
+            body: { token: "token", guildId: "123", channelId: "456" }
+        });
+        assert.equal(ensureConflict.status, 409);
+
+        // Ensure session invalid format -> 400
+        mockVoiceWorker.ensureVoiceSession = async () => { throw new Error("INVALID_TOKEN_FORMAT"); };
+        const ensureBadToken = await callRoute(postRoutes.get("/api/voice-session/ensure"), {
+            body: { token: "token", guildId: "123", channelId: "456" }
+        });
+        assert.equal(ensureBadToken.status, 400);
+
+        // Test GET /api/session/:id missing -> 404
+        const missingRes = await callRoute(getRoutes.get("/api/session/:id"), { params: { id: "non_existent" } });
+        assert.equal(missingRes.status, 404);
     });
 });

@@ -197,4 +197,23 @@ test("guildRoute maskWebhookUrl, saveConfigWithRetry, and rollback helpers", asy
   jest.restoreAllMocks();
 });
 
+test("guildRoute resolveUrlFormatText and resolveWorkerReadyText readiness resolvers", () => {
+  const { resolveUrlFormatText, resolveWorkerReadyText } = guildRoute._test;
+
+  // resolveUrlFormatText
+  expect(resolveUrlFormatText({ urlValid: true })).toBe("รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล");
+  expect(resolveUrlFormatText({ urlValid: false, urlConfigured: true })).toBe("รูปแบบ Webhook URL ไม่ถูกต้อง");
+  expect(resolveUrlFormatText({ urlValid: false, urlConfigured: false })).toBe("ยังไม่ได้ระบุ Webhook URL");
+
+  // resolveWorkerReadyText
+  expect(resolveWorkerReadyText({ databaseReady: { ok: false } })).toBe("ฐานข้อมูลไม่พร้อมทำงาน ไม่สามารถส่งข้อมูลได้");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: false } })).toBe("ระบบคิวส่งข้อมูลไม่พร้อมทำงาน");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: false })).toBe("รูปแบบ Webhook URL ไม่ถูกต้อง");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: true, enabled: false })).toBe("ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: true, enabled: true, activeJob: true })).toBe("ระบบกำลังส่งข้อมูลประวัติย้อนหลัง");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: true, enabled: true, stats: { retry: 1 } })).toBe("ระบบทำงานอยู่ (มีรายการรอส่งใหม่)");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: true, enabled: true, stats: { failed: 1 } })).toBe("ระบบทำงานอยู่ (พบข้อผิดพลาดบางรายการ)");
+  expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: true, enabled: true, stats: {} })).toBe("ระบบพร้อมส่งข้อมูลตามเวลาจริง");
+});
+
 

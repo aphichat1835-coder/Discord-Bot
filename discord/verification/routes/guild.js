@@ -1934,7 +1934,9 @@ router._test = {
   comparablePanel,
   panelDifferences,
   persistedPanelMatches,
-  rollbackDiscordPanel
+  rollbackDiscordPanel,
+  resolveUrlFormatText,
+  resolveWorkerReadyText
 };
 
 module.exports = router;

@@ -54,6 +54,8 @@ async function* streamCandidates({
     const allowAllGuilds = !mode?.requiresSource;
     const additionalMongoFilter = typeof mode?.buildMongoFilter === "function" ? mode.buildMongoFilter(baseConfig) : null;
 
+    tokenManager = tokenManager || oauthTokenManager;
+
     while (hasMore) {
         const page = await tokenManager.listAccessTokenCandidates({
             requiredScopes: ["guilds.join"],
@@ -97,7 +99,7 @@ async function countEligibleCandidates({
 }) {
     let readyCount = 0;
     const countedUsers = new Set();
-    const candidatesStream = streamCandidates({ mode, baseConfig, tokenManager });
+    const candidatesStream = streamCandidates({ mode, baseConfig, tokenManager: tokenManager || oauthTokenManager });
 
     for await (const item of candidatesStream) {
         const candidate = item.candidate || item;

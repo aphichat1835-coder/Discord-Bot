@@ -1190,5 +1190,20 @@ module.exports = {
     loadExistingIpLinkContext,
     loadExistingDeviceContext,
     isPanelRevisionValid,
-    fitVerifyLogBudget
+    fitVerifyLogBudget,
+    _test: {
+        safeString,
+        safeNullableString,
+        safeNumberOrNull,
+        safeSnowflakeStrict,
+        safeIpHashStrict,
+        objectOrEmpty,
+        sanitizeSideEffectError,
+        getGuildName,
+        getConfiguredRoleId,
+        getConfiguredRoleName,
+        getLatestPanelRevision,
+        getStatePanelRevision,
+        buildVerificationSnapshots
+    }
 };

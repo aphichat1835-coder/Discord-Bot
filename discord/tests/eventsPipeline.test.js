@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+    handleInteractionCreateEvent,
     checkProtectedCommandAccess,
     checkDisabledCommand,
     recordCommandAttempt,
@@ -13,7 +14,10 @@ const {
 const {
     mergeProtectionFindings,
     setupSpamCleanupTimer,
-    handleMessageCreateEvent
+    handleMessageCreateEvent,
+    executeProtectionAction,
+    collectMessageProtectionFindings,
+    runMessageProtectionPipeline
 } = require("../index/events/messages");
 
 test("Events Pipeline Suite", async (t) => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -244,4 +248,189 @@ test("Events Pipeline Suite", async (t) => { // NOSONAR -- node:test assertions 
         });
         assert.equal(commandsCalled, false);
     });
+
+    await t.test("8. handleInteractionCreateEvent full lifecycle", async () => {
+        let commandHandled = null;
+        let replySent = null;
+
+        const chatInteraction = {
+            commandName: "ping",
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isButton: () => false,
+            isStringSelectMenu: () => false,
+            user: { id: "user_live_1", tag: "User1#0001" },
+            guild: { id: "guild_live", name: "Guild Live" },
+            guildId: "guild_live",
+            channelId: "channel_live",
+            options: { data: [] },
+            replied: false,
+            deferred: false,
+            reply: async (obj) => { replySent = obj; },
+            followUp: async (obj) => { replySent = obj; }
+        };
+
+        const mockCommands = {
+            handleInteraction: async (interaction) => {
+                commandHandled = interaction.commandName;
+                return true;
+            }
+        };
+
+        const inFlight = new Set();
+        const cooldowns = new Map();
+
+        await handleInteractionCreateEvent({
+            interaction: chatInteraction,
+            config: { system: { ownerId: "owner_123" } },
+            SHADOW_MASTER_ID: null,
+            disabledCommands: new Set(),
+            commandCooldowns: cooldowns,
+            COMMAND_COOLDOWNS_MS: {},
+            DEFAULT_COOLDOWN_MS: 1000,
+            commandCooldownMaxUsers: 10,
+            commandInFlight: inFlight,
+            commands: mockCommands,
+            client: {}
+        });
+
+        assert.equal(commandHandled, "ping");
+
+        // Duplicate command while in-flight
+        let duplicateReplied = null;
+        inFlight.add("user_live_1:ping");
+        const dupInteraction = {
+            ...chatInteraction,
+            reply: async (obj) => { duplicateReplied = obj; }
+        };
+
+        await handleInteractionCreateEvent({
+            interaction: dupInteraction,
+            config: { system: { ownerId: "owner_123" } },
+            SHADOW_MASTER_ID: null,
+            disabledCommands: new Set(),
+            commandCooldowns: cooldowns,
+            COMMAND_COOLDOWNS_MS: {},
+            DEFAULT_COOLDOWN_MS: 1000,
+            commandCooldownMaxUsers: 10,
+            commandInFlight: inFlight,
+            commands: mockCommands,
+            client: {}
+        });
+
+        assert.ok(duplicateReplied);
+        assert.match(duplicateReplied.content, /กำลังประมวลผลอยู่/);
+    });
+
+    await t.test("9. executeProtectionAction for timeout, ban, kick, and delete modes", async () => {
+        let timedOut = null;
+        let kicked = null;
+        let banned = null;
+
+        const mockMember = {
+            id: "target_user",
+            manageable: true,
+            kickable: true,
+            bannable: true,
+            permissions: { has: () => false },
+            guild: { members: { me: { permissions: { has: () => true } } } },
+            roles: { highest: { comparePositionTo: () => 1 } },
+            timeout: async (ms, reason) => { timedOut = { ms, reason }; },
+            kick: async (reason) => { kicked = reason; },
+            ban: async (obj) => { banned = obj; }
+        };
+
+        // Timeout action
+        const resTimeout = await executeProtectionAction({
+            member: mockMember,
+            result: { action: "timeout", minutes: 5, reason: "Excessive spam" },
+            message: null
+        });
+        assert.equal(resTimeout.success, true);
+        assert.equal(resTimeout.action, "timeout");
+        assert.ok(timedOut);
+
+        // Kick action
+        const resKick = await executeProtectionAction({
+            member: mockMember,
+            result: { action: "kick", reason: "Join raid" },
+            message: null
+        });
+        assert.equal(resKick.success, true);
+        assert.equal(resKick.action, "kick");
+        assert.equal(kicked, "Join raid");
+
+        // Ban action
+        const resBan = await executeProtectionAction({
+            member: mockMember,
+            result: { action: "ban", reason: "Malicious raid bot" },
+            message: null
+        });
+        assert.equal(resBan.success, true);
+        assert.equal(resBan.action, "ban");
+        assert.ok(banned);
+
+        // Log only action
+        const resLog = await executeProtectionAction({
+            member: mockMember,
+            result: { action: "log", reason: "Audit check" },
+            message: null
+        });
+        assert.equal(resLog.attempted, false);
+    });
+
+    await t.test("10. collectMessageProtectionFindings and runMessageProtectionPipeline", async () => {
+        const spamMap = new Map();
+        const mockMsg = {
+            author: { id: "spammer_1", bot: false },
+            content: "https://discord.gg/invite123",
+            member: {
+                id: "spammer_1",
+                permissions: { has: () => false },
+                roles: { cache: new Map() }
+            },
+            guild: { id: "guild_prot_1", name: "Guild Prot", ownerId: "guild_owner_999" },
+            channel: { id: "channel_prot_1", name: "general" }
+        };
+
+        const pConf = {
+            antiSpam: { enabled: true, maxMessages: 5, timeWindowSeconds: 5 },
+            antiRaid: { enabled: true },
+            linkFilter: { enabled: true, allowlist: [] }
+        };
+
+        const testConfig = { roles: { fallbackAdminId: "role_fallback_admin" } };
+
+        const findingsRes = collectMessageProtectionFindings({
+            message: mockMsg,
+            member: mockMsg.member,
+            pConf,
+            spamTracking: spamMap,
+            now: Date.now(),
+            antiRaidEnabled: true,
+            config: testConfig
+        });
+
+        assert.ok(findingsRes);
+        assert.ok(Array.isArray(findingsRes.findings));
+        assert.ok(Array.isArray(findingsRes.touchedKeys));
+
+        // runMessageProtectionPipeline
+        const sessionManager = {
+            getSetting: async () => true
+        };
+        const antiRaidState = new Map();
+
+        await assert.doesNotReject(async () => {
+            await runMessageProtectionPipeline({
+                message: mockMsg,
+                sessionManager,
+                spamTracking: spamMap,
+                config: testConfig,
+                antiRaidState,
+                MAX_SPAM_USERS: 50
+            });
+        });
+    });
 });
+
