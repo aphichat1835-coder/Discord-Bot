@@ -144,3 +144,57 @@ test("guildRoute panel comparison and rollback helpers work correctly", () => {
   expect(tokenRevealErrorStatus("OTHER")).toBe(500);
 });
 
+test("guildRoute maskWebhookUrl, saveConfigWithRetry, and rollback helpers", async () => {
+  const {
+    maskWebhookUrl,
+    saveConfigWithRetry,
+    rollbackDiscordPanel,
+    persistedPanelMatches
+  } = guildRoute._test;
+
+  // maskWebhookUrl
+  expect(maskWebhookUrl(null)).toBe(null);
+  expect(maskWebhookUrl("invalid-url")).toBe("••••••••••••");
+  expect(maskWebhookUrl("https://discord.com/api/webhooks/1234567890/tokenABC123")).toMatch(/1234567890/);
+
+  // saveConfigWithRetry success
+  const mockConfigSuccess = {
+    attempts: 0,
+    async save() {
+      this.attempts++;
+      return this;
+    }
+  };
+  const saved = await saveConfigWithRetry(mockConfigSuccess, 2);
+  expect(saved).toBe(mockConfigSuccess);
+  expect(mockConfigSuccess.attempts).toBe(1);
+
+  // saveConfigWithRetry failure
+  const mockConfigFail = {
+    attempts: 0,
+    async save() {
+      this.attempts++;
+      throw new Error("DB_WRITE_ERROR");
+    }
+  };
+  await expect(saveConfigWithRetry(mockConfigFail, 1)).rejects.toThrow("DB_WRITE_ERROR");
+
+  // rollbackDiscordPanel failure handling
+  const rb = await rollbackDiscordPanel("chan_1", "msg_1", {});
+  expect(rb.complete).toBe(false);
+
+  // persistedPanelMatches
+  const GuildConfig = require("../discord/verification/models/GuildConfig");
+  jest.spyOn(GuildConfig, "findOne").mockReturnValue({
+    select: () => ({
+      lean: () => Promise.resolve({
+        verification: { channelId: "c1", messageId: "m1", panelRevision: "r1" }
+      })
+    })
+  });
+  const pm = await persistedPanelMatches("guild_1", { channelId: "c1", messageId: "m1", panelRevision: "r1" });
+  expect(pm.status).toBe("matched");
+  jest.restoreAllMocks();
+});
+
+

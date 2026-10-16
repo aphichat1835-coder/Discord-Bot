@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+    registerAdminRoutes,
     validateCommandToggleRequest,
     getCommandToggleCooldown,
     createCommandTogglePlan,
@@ -388,3 +389,168 @@ test('handleApprovedGuildKick: handles unauth, missing guildId, missing guild an
     assert.equal(goodRes.body.success, true);
     assert.equal(left, true);
 });
+
+test('registerAdminRoutes: endpoints handle requests correctly', async () => {
+    function createMockRes() {
+        const res = {
+            statusCode: 200,
+            body: null,
+            status(code) {
+                res.statusCode = code;
+                return res;
+            },
+            json(payload) {
+                res.body = payload;
+                return res;
+            }
+        };
+        return res;
+    }
+
+    const routes = {};
+    const mockApp = {
+        get(path, ...handlers) { routes[`GET ${path}`] = handlers[handlers.length - 1]; },
+        post(path, ...handlers) { routes[`POST ${path}`] = handlers[handlers.length - 1]; },
+        delete(path, ...handlers) { routes[`DELETE ${path}`] = handlers[handlers.length - 1]; }
+    };
+
+    const mockExpress = {
+        json: () => (_req, _res, next) => { if (next) next(); }
+    };
+
+    const settingsStored = {};
+    const mockSessionManager = {
+        getPendingGuilds: async () => [{ guildId: "pending_1" }],
+        getApprovedGuildDocs: async () => [{ guildId: "approved_1" }],
+        setSetting: async (key, val) => { settingsStored[key] = val; return true; },
+        ApprovedGuildModel: {
+            updateOne: async () => ({ acknowledged: true }),
+            deleteOne: async () => ({ deletedCount: 1 })
+        },
+        PendingGuildModel: {
+            deleteOne: async () => ({ deletedCount: 1 })
+        }
+    };
+
+    let presenceSet = null;
+    const mockClient = {
+        isReady: () => true,
+        user: {
+            setPresence: (p) => { presenceSet = p; }
+        },
+        guilds: {
+            cache: new Map([["guild_1", { name: "Test Server", iconURL: () => null }]])
+        }
+    };
+
+    let rotatedTimerStarted = false;
+    registerAdminRoutes({
+        app: mockApp,
+        express: mockExpress,
+        sessionManager: mockSessionManager,
+        voiceWorker: {},
+        commands: { slashCommandsData: [{ name: "ping" }] },
+        client: mockClient,
+        checkAuth: (req) => !req.unauthorized,
+        disabledCommands: new Set(),
+        commandAuditLog: [],
+        toggleCooldowns: new Map(),
+        startRotateTimer: async () => { rotatedTimerStarted = true; },
+        ROTATE_MESSAGES_MAX: 10
+    });
+
+    // 1. Pending & Approved guilds listing
+    const resPending = createMockRes();
+    await routes["GET /api/pending-guilds"]({}, resPending);
+    assert.equal(resPending.statusCode, 200);
+    assert.equal(resPending.body.pending[0].guildId, "pending_1");
+
+    const resApproved = createMockRes();
+    await routes["GET /api/approved-guilds"]({}, resApproved);
+    assert.equal(resApproved.statusCode, 200);
+    assert.equal(resApproved.body.approved[0].guildId, "approved_1");
+
+    // 2. Commands status and audit
+    const resCmdStatus = createMockRes();
+    routes["GET /api/commands-status"]({}, resCmdStatus);
+    assert.equal(resCmdStatus.statusCode, 200);
+
+    const resCmdAudit = createMockRes();
+    routes["GET /api/commands-audit"]({}, resCmdAudit);
+    assert.equal(resCmdAudit.statusCode, 200);
+
+    // 3. Settings update
+    const resSettings = createMockRes();
+    await routes["POST /api/settings"]({
+        body: { maxSessions: 10, rateLimitRequests: 20, idleTimeoutHrs: 4, antiRaidEnabled: true, voiceDmMode: "important_only" }
+    }, resSettings);
+    assert.equal(resSettings.statusCode, 200);
+    assert.equal(settingsStored.maxSessions, 10);
+    assert.equal(settingsStored.voiceDmMode, "important_only");
+
+    // 4. Presence update
+    const resPresenceBad = createMockRes();
+    await routes["POST /api/presence"]({ body: { botStatus: "invalid_status" } }, resPresenceBad);
+    assert.equal(resPresenceBad.statusCode, 400);
+
+    const resPresenceNoActivity = createMockRes();
+    await routes["POST /api/presence"]({ body: { botStatus: "online", botActivity: "" } }, resPresenceNoActivity);
+    assert.equal(resPresenceNoActivity.statusCode, 400);
+
+    const resPresenceGood = createMockRes();
+    await routes["POST /api/presence"]({
+        body: { botStatus: "dnd", botActivityType: "PLAYING", botActivity: "Custom Game", botNote: "Busy" }
+    }, resPresenceGood);
+    assert.equal(resPresenceGood.statusCode, 200);
+    assert.equal(settingsStored.botStatus, "dnd");
+    assert.ok(presenceSet);
+    assert.equal(presenceSet.status, "dnd");
+
+    // 5. Presence rotate
+    const resRotateBad = createMockRes();
+    await routes["POST /api/presence/rotate"]({ body: { rotateEnabled: "not_boolean" } }, resRotateBad);
+    assert.equal(resRotateBad.statusCode, 400);
+
+    const resRotateGood = createMockRes();
+    await routes["POST /api/presence/rotate"]({
+        body: { rotateEnabled: true, rotateInterval: 5, rotateMessages: ["Line 1", "Line 2"] }
+    }, resRotateGood);
+    assert.equal(resRotateGood.statusCode, 200);
+    assert.equal(rotatedTimerStarted, true);
+
+    // 6. Guild approve and remove
+    const resApproveBad = createMockRes();
+    await routes["POST /api/approve"]({ body: {} }, resApproveBad);
+    assert.equal(resApproveBad.statusCode, 400);
+
+    const resApproveGood = createMockRes();
+    await routes["POST /api/approve"]({ body: { guildId: "guild_1" } }, resApproveGood);
+    assert.equal(resApproveGood.statusCode, 200);
+
+    const resRemoveBad = createMockRes();
+    await routes["POST /api/approved/remove"]({ body: {} }, resRemoveBad);
+    assert.equal(resRemoveBad.statusCode, 400);
+
+    const resRemoveGood = createMockRes();
+    await routes["POST /api/approved/remove"]({ body: { guildId: "guild_1" } }, resRemoveGood);
+    assert.equal(resRemoveGood.statusCode, 200);
+
+    // 7. Token hub routes
+    const resHubStatus = createMockRes();
+    routes["GET /api/token-hub/status"]({}, resHubStatus);
+    assert.equal(resHubStatus.statusCode, 200);
+    assert.equal(resHubStatus.body.success, true);
+
+    const resReleaseBad = createMockRes();
+    routes["POST /api/token-hub/quarantine/release"]({ body: {} }, resReleaseBad);
+    assert.equal(resReleaseBad.statusCode, 400);
+
+    const resReleaseGood = createMockRes();
+    routes["POST /api/token-hub/quarantine/release"]({ body: { tokenHash: "hash_xyz" } }, resReleaseGood);
+    assert.equal(resReleaseGood.statusCode, 200);
+
+    const resClearCache = createMockRes();
+    routes["POST /api/token-hub/cache/clear"]({ body: { tokenHash: "hash_xyz" } }, resClearCache);
+    assert.equal(resClearCache.statusCode, 200);
+});
+

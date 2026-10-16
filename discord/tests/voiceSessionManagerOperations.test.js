@@ -127,4 +127,81 @@ test("Voice SessionManager Operations Suite", async (t) => { // NOSONAR -- node:
         const allPanels = await sm.getPanelStates().catch(() => []);
         assert.ok(Array.isArray(allPanels));
     });
+
+    await t.test("8. In-memory session CRUD, queries, and diagnostics", async () => {
+        const rawToken = "test_discord_token_alpha_123456";
+        const encrypted = sm.encryptToken(rawToken);
+        const tokenHash = sm.hashToken(rawToken);
+        const sessionId = sm.buildVoiceSessionId(tokenHash, "g_test_1", "o_test_1");
+
+        const session = {
+            sessionId,
+            token: encrypted,
+            tokenHash,
+            serverId: "g_test_1",
+            voiceId: "v_test_1",
+            serverName: "Server Alpha",
+            ownerId: "o_test_1",
+            startedAt: Date.now(),
+            lastActivity: Date.now(),
+            state: "active",
+            lifecycleGeneration: "gen_test_123",
+            tokenInvalid: false,
+            reconnectCount: 0
+        };
+
+        sm.getAllSessions().set(sessionId, session);
+
+        // Verification of state helpers
+        assert.equal(sm.isSessionRunnable(session), true);
+        assert.equal(sm.shouldResumeSession(session), true);
+        assert.equal(sm.getSessionToken(sessionId), rawToken);
+        assert.equal(sm.getSessionTokenHash(sessionId), tokenHash);
+
+        // Session lookup by token + guild
+        const activeLookup = sm.findActiveVoiceSessionByTokenGuild(tokenHash, "g_test_1");
+        assert.ok(activeLookup);
+        assert.equal(activeLookup.id, sessionId);
+
+        assert.equal(sm.hasActiveTokenGuildSession(tokenHash, "g_test_1"), true);
+        assert.equal(sm.countActiveSessionsByTokenHash(tokenHash), 1);
+
+        const listByHash = sm.getActiveSessionsByTokenHash(tokenHash);
+        assert.equal(listByHash.length, 1);
+
+        const listByGuild = sm.getActiveSessionsByGuild("g_test_1");
+        assert.equal(listByGuild.length, 1);
+
+        // Summaries
+        const summary = sm.getVoiceSessionSummary(session);
+        assert.ok(summary);
+        assert.equal(summary.sessionId, sessionId);
+        assert.equal(summary.serverId, "g_test_1");
+
+        const allSummaries = sm.getAllSessionSummaries();
+        assert.ok(allSummaries.length >= 1);
+
+        // Metadata updates and heartbeat touch
+        sm.touchSession(sessionId);
+        await sm.updateSessionMetadata(sessionId, { serverName: "Server Updated" });
+        assert.equal(session.serverName, "Server Updated");
+
+        await sm.saveVoiceRuntimeState(sessionId);
+
+        // Mark failed
+        const failRes = await sm.markSessionFailed(sessionId, "manual_test_failure");
+        assert.equal(failRes.memoryUpdated, true);
+        assert.equal(session.state, "failed");
+
+        // Build save operation
+        const saveOp = sm._test.buildSessionSaveOperation(sessionId, session);
+        assert.ok(saveOp);
+        assert.equal(saveOp.updateOne.filter.sessionId, sessionId);
+
+        // Delete session
+        const deleted = await sm.deleteSession(sessionId);
+        assert.equal(deleted, true);
+        assert.equal(sm.getAllSessions().has(sessionId), false);
+    });
 });
+

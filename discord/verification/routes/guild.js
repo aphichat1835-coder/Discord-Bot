@@ -1923,6 +1923,7 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
 router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, (req, res) => handleGetGuildConfig(req, res, "get-guild", "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ"));
 
 router._test = {
+  maskWebhookUrl,
   mergeVerificationConfig,
   tokenRevealErrorStatus,
   saveConfigWithRetry,
