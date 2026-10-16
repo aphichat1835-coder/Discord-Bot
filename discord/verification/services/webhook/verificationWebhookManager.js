@@ -669,7 +669,7 @@ function isPermanentWebhookError(err) {
     if (!err) return false;
     let status = Number(err.status);
     if (!status) {
-        const match = String(err.message || "").match(/webhook_http_(\d{3})/);
+        const match = /webhook_http_(\d{3})/.exec(String(err.message || ""));
         status = match ? Number(match[1]) : null;
     }
     if (status && [400, 401, 403, 404, 405, 410].includes(status)) {
