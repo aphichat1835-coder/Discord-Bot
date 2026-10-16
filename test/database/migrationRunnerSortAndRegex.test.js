@@ -1,6 +1,6 @@
 "use strict";
 
-const { test, describe } = require("node:test");
+const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -45,7 +45,7 @@ describe("Migration Runner Sort, Regex and In-Memory Execution Suite", () => {
     describe("2. Natural Numeric Sorting & Tie-Breaking", () => {
         let tempDir;
 
-        test("prepares temporary migrations directory with mixed numeric filenames", () => {
+        before(() => {
             tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "migration-sort-test-"));
             
             // Files intentionally out of order and containing single-digit and multi-digit prefixes
@@ -100,7 +100,7 @@ describe("Migration Runner Sort, Regex and In-Memory Execution Suite", () => {
             }
         });
 
-        test("cleans up temporary migrations directory", () => {
+        after(() => {
             if (tempDir && fs.existsSync(tempDir)) {
                 fs.rmSync(tempDir, { recursive: true, force: true });
             }
