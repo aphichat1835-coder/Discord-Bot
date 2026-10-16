@@ -40,8 +40,8 @@ function resolveAssetDir() {
 }
 
 function resolveMaxQuotaBytes() {
-    const envVal = parseInt(process.env.SQLITE_ASSET_CACHE_MAX_BYTES, 10);
-    return !isNaN(envVal) && envVal > 0 ? envVal : DEFAULT_MAX_QUOTA_BYTES;
+    const envVal = Number.parseInt(process.env.SQLITE_ASSET_CACHE_MAX_BYTES, 10);
+    return !Number.isNaN(envVal) && envVal > 0 ? envVal : DEFAULT_MAX_QUOTA_BYTES;
 }
 
 const MIME_EXT_MAP = {

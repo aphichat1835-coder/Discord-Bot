@@ -155,7 +155,7 @@ class DmNotificationRepository {
         }
         if (updateFields.priorityRank !== undefined) {
             setClauses.push("priority_rank = ?");
-            values.push(parseInt(updateFields.priorityRank, 10));
+            values.push(Number.parseInt(updateFields.priorityRank, 10));
         }
 
         setClauses.push("updated_at = ?");
@@ -208,18 +208,18 @@ class DmNotificationRepository {
             }
         }
 
-        if (filter.nextAttemptAt && filter.nextAttemptAt.$lte !== undefined) {
+        if (filter.nextAttemptAt?.$lte !== undefined) {
             conditions.push("next_attempt_at <= ?");
             params.push(Number(filter.nextAttemptAt.$lte));
         }
 
-        if (filter.expiresAt && filter.expiresAt.$gt !== undefined) {
+        if (filter.expiresAt?.$gt !== undefined) {
             conditions.push("expires_at > ?");
             params.push(Number(filter.expiresAt.$gt));
         }
 
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-        const limitClause = options.limit ? `LIMIT ${parseInt(options.limit, 10)}` : "";
+        const limitClause = options.limit ? `LIMIT ${Number.parseInt(options.limit, 10)}` : "";
         const orderClause = "ORDER BY priority_rank ASC, created_at ASC";
 
         const rows = this.db.prepare(`SELECT * FROM dm_notifications ${whereClause} ${orderClause} ${limitClause}`).all(...params);

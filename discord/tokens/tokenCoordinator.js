@@ -652,7 +652,7 @@ class TokenCoordinator extends EventEmitter {
         this.emit('token:quarantined', { tokenHash: hash, reason: safeReason, state });
 
         // Notify registered subsystems to gracefully clean up
-        for (const [subName, sub] of this.subsystems.entries()) {
+        for (const sub of this.subsystems.values()) {
             if (typeof sub?.onTokenQuarantined === 'function') {
                 try {
                     sub.onTokenQuarantined(hash, safeReason, state);

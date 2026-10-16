@@ -75,7 +75,9 @@ function spoolP0Event(repositoryName, item) {
                     payloadBytes,
                     maxBytes: MAX_SPOOL_BYTES
                 });
-            } catch (_) {}
+            } catch (_alertErr) {
+                // Ignored: Alert failure should not crash spool fallback
+            }
             return false;
         }
 
@@ -88,7 +90,9 @@ function spoolP0Event(repositoryName, item) {
             notifyP0SpoolFailed(repositoryName, "write_error", {
                 errorMessage: err.message
             });
-        } catch (_) {}
+        } catch (_alertErr) {
+            // Ignored: Alert failure should not crash spool fallback
+        }
         return false;
     }
 }

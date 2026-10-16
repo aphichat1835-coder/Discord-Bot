@@ -85,52 +85,39 @@ function listPreMigrationBackups(customDir = null) {
         .sort((a, b) => b.mtime - a.mtime);
 }
 
-async function createBackup(db, options = {}) {
-    if (!db) throw new TypeError("createBackup requires an active database");
-
-    const startTime = Date.now();
-    const backupDir = resolveBackupDir(options.backupDir);
-    if (!fs.existsSync(backupDir)) {
-        fs.mkdirSync(backupDir, { recursive: true });
-    }
-
-    // Safety check: ensure sufficient filesystem free space (including WAL and SHM)
-    if (!options.skipSpaceCheck && db.name && fs.existsSync(db.name)) {
-        const footprint = getDatabaseFootprint(db.name);
-        const requiredBytes = Math.max(footprint.totalBytes * 1.5, 50 * 1024 * 1024); // at least 1.5x total footprint or 50MB
-        const freeSpace = getFilesystemFreeSpace(backupDir);
-
-        if (freeSpace.availableBytes !== null && freeSpace.availableBytes < requiredBytes) {
-            const neededMb = (requiredBytes / (1024 * 1024)).toFixed(1);
-            const availMb = freeSpace.availableMb;
-            throw new Error(`พื้นที่ดิสก์คงเหลือไม่เพียงพอสำหรับการสำรองข้อมูล (ต้องการพื้นที่ว่างอย่างน้อย ${neededMb} MB, มีอยู่ ${availMb} MB)`);
+function cleanupBackupFiles(paths) {
+    for (const p of paths) {
+        if (p && fs.existsSync(p)) {
+            try { fs.unlinkSync(p); } catch (_) {}
         }
     }
+}
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const filename = options.filename || `sqlite_backup_${timestamp}.sqlite`;
-    const targetPath = path.join(backupDir, filename);
-    const tempPath = path.join(backupDir, `${filename}.tmp`);
-
-    // Clean up any stale temp file
-    if (fs.existsSync(tempPath)) {
-        try { fs.unlinkSync(tempPath); } catch (_) {}
+function validateBackupSpace(db, backupDir, options = {}) {
+    if (options.skipSpaceCheck || !db.name || !fs.existsSync(db.name)) {
+        return;
     }
+    const footprint = getDatabaseFootprint(db.name);
+    const requiredBytes = Math.max(footprint.totalBytes * 1.5, 50 * 1024 * 1024);
+    const freeSpace = getFilesystemFreeSpace(backupDir);
 
-    // better-sqlite3 provides native online async backup API
+    if (freeSpace.availableBytes !== null && freeSpace.availableBytes < requiredBytes) {
+        const neededMb = (requiredBytes / (1024 * 1024)).toFixed(1);
+        const availMb = freeSpace.availableMb;
+        throw new Error(`พื้นที่ดิสก์คงเหลือไม่เพียงพอสำหรับการสำรองข้อมูล (ต้องการพื้นที่ว่างอย่างน้อย ${neededMb} MB, มีอยู่ ${availMb} MB)`);
+    }
+}
+
+async function executeNativeBackup(db, tempPath, targetPath) {
     try {
         await db.backup(tempPath);
     } catch (err) {
-        if (fs.existsSync(tempPath)) {
-            try { fs.unlinkSync(tempPath); } catch (_) {}
-        }
-        if (fs.existsSync(targetPath)) {
-            try { fs.unlinkSync(targetPath); } catch (_) {}
-        }
+        cleanupBackupFiles([tempPath, targetPath]);
         throw new Error(`การสำรองข้อมูล SQLite ล้มเหลวระหว่างเขียนไฟล์: ${err.message}`);
     }
+}
 
-    // Post-backup verification: verify backup file physically opens and passes quick_check on temp file
+function verifyBackupIntegrity(tempPath) {
     let verifyDb = null;
     let verified = false;
     let quickCheckOutput = null;
@@ -147,12 +134,32 @@ async function createBackup(db, options = {}) {
             try { verifyDb.close(); } catch (_) {}
         }
     }
+    return { verified, quickCheckOutput };
+}
 
+async function createBackup(db, options = {}) {
+    if (!db) throw new TypeError("createBackup requires an active database");
+
+    const startTime = Date.now();
+    const backupDir = resolveBackupDir(options.backupDir);
+    if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+    }
+
+    validateBackupSpace(db, backupDir, options);
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = options.filename || `sqlite_backup_${timestamp}.sqlite`;
+    const targetPath = path.join(backupDir, filename);
+    const tempPath = path.join(backupDir, `${filename}.tmp`);
+
+    cleanupBackupFiles([tempPath]);
+
+    await executeNativeBackup(db, tempPath, targetPath);
+
+    const { verified, quickCheckOutput } = verifyBackupIntegrity(tempPath);
     if (!verified) {
-        try { fs.unlinkSync(tempPath); } catch (_) {}
-        if (fs.existsSync(targetPath)) {
-            try { fs.unlinkSync(targetPath); } catch (_) {}
-        }
+        cleanupBackupFiles([tempPath, targetPath]);
         throw new Error(`ไฟล์สำรองข้อมูลไม่ผ่านการตรวจสอบความสมบูรณ์ (Quick Check Failed): ${JSON.stringify(quickCheckOutput)}`);
     }
 
@@ -162,7 +169,6 @@ async function createBackup(db, options = {}) {
     fs.renameSync(tempPath, targetPath);
 
     const stat = fs.statSync(targetPath);
-
     const durationMs = Date.now() - startTime;
 
     // Apply rotation to keep storage bounded (default: 2 sets)

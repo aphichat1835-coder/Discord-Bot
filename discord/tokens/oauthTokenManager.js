@@ -626,6 +626,40 @@ async function performTokenRefreshUnderLock({
     };
 }
 
+function checkTokenEligibility(doc, tokenField, failMax) {
+    if (!doc || doc.deletedAt) {
+        return { ok: false, code: doc ? "user_deleted" : "user_not_found", reason: doc ? "User is soft-deleted" : "User not found in OAuth registry" };
+    }
+    const tokenState = doc[tokenField] || {};
+    if (tokenState.revokedAt) {
+        return { ok: false, code: "token_revoked", reason: "Token is marked revoked" };
+    }
+    if (Number(tokenState.refreshFailCount || 0) >= failMax) {
+        return { ok: false, code: "oauth_refresh_exhausted", reason: "Token refresh attempts exhausted" };
+    }
+    return null;
+}
+
+function tryGetCachedAccessToken({ tokenState, forceRefresh, now, marginMs, userId, tokenField }) {
+    const expiresAt = Number(tokenState.expiresAt || 0);
+    const isDue = expiresAt <= (now + marginMs);
+
+    if (!forceRefresh && !isDue && tokenState.encryptedAccessToken) {
+        const decrypted = decryptToken(tokenState.encryptedAccessToken);
+        if (decrypted) {
+            return {
+                ok: true,
+                accessToken: decrypted,
+                refreshed: false,
+                expiresAt,
+                tokenField,
+                userId
+            };
+        }
+    }
+    return null;
+}
+
 async function getAccessToken({
     userId,
     tokenField = "oauth",
@@ -678,35 +712,16 @@ async function getAccessToken({
         return { ok: false, code: "aborted", error, reason: "Operation aborted", userId, tokenField };
     }
 
-    if (!doc || doc.deletedAt) {
-        return { ok: false, code: doc ? "user_deleted" : "user_not_found", reason: doc ? "User is soft-deleted" : "User not found in OAuth registry", userId, tokenField };
+    const failMax = getOAuthRefreshConfig(env).failMax;
+    const eligibilityError = checkTokenEligibility(doc, tokenField, failMax);
+    if (eligibilityError) {
+        return { ...eligibilityError, userId, tokenField };
     }
 
     const tokenState = doc[tokenField] || {};
-    if (tokenState.revokedAt) {
-        return { ok: false, code: "token_revoked", reason: "Token is marked revoked", userId, tokenField };
-    }
-
-    const failMax = getOAuthRefreshConfig(env).failMax;
-    if (Number(tokenState.refreshFailCount || 0) >= failMax) {
-        return { ok: false, code: "oauth_refresh_exhausted", reason: "Token refresh attempts exhausted", userId, tokenField };
-    }
-
-    const expiresAt = Number(tokenState.expiresAt || 0);
-    const isDue = expiresAt <= (now + marginMs);
-
-    if (!forceRefresh && !isDue && tokenState.encryptedAccessToken) {
-        const decrypted = decryptToken(tokenState.encryptedAccessToken);
-        if (decrypted) {
-            return {
-                ok: true,
-                accessToken: decrypted,
-                refreshed: false,
-                expiresAt,
-                tokenField,
-                userId
-            };
-        }
+    const cachedResult = tryGetCachedAccessToken({ tokenState, forceRefresh, now, marginMs, userId, tokenField });
+    if (cachedResult) {
+        return cachedResult;
     }
 
     const redirectUri = resolveRedirectUriForField(tokenField, env);
@@ -721,7 +736,7 @@ async function getAccessToken({
                 tokenField,
                 now,
                 marginMs,
-                failMax: getOAuthRefreshConfig(env).failMax,
+                failMax,
                 env,
                 redirectUri,
                 force: forceRefresh,
@@ -903,7 +918,9 @@ async function refreshDueTokens(options = {}) {
         errors: []
     };
 
-    for (const fieldConfig of tokenFields) {
+    async function processFieldConfig(index) {
+        if (index >= tokenFields.length) return;
+        const fieldConfig = tokenFields[index];
         const tokenField = fieldConfig.tokenField || fieldConfig.field || "oauth";
         const fieldSummary = await refreshTokenField({
             model,
@@ -922,7 +939,11 @@ async function refreshDueTokens(options = {}) {
         summary.revoked += fieldSummary.revoked;
         summary.persistenceFailed += fieldSummary.persistenceFailed || 0;
         summary.errors.push(...fieldSummary.errors.slice(0, Math.max(0, 10 - summary.errors.length)));
+
+        await processFieldConfig(index + 1);
     }
+
+    await processFieldConfig(0);
 
     diagnosticStats.lastRefreshAt = now;
     diagnosticStats.lastRefreshSummary = summary;
@@ -1209,13 +1230,7 @@ function revealTokenStateForOwner(token = {}) {
     };
 }
 
-async function getOwnerTokenState(userId, { model = OAuthUser, tokenFields = TOKEN_FIELDS, includeDeleted = false } = {}) {
-    if (!userId) {
-        const error = new Error("User ID is required for owner token reveal");
-        error.code = "oauth_user_id_required";
-        throw error;
-    }
-
+async function findUserTokenDoc(model, userId, tokenFields, includeDeleted) {
     const fields = Array.isArray(tokenFields) ? tokenFields : [tokenFields];
     for (const f of fields) assertValidTokenField(f);
 
@@ -1230,6 +1245,18 @@ async function getOwnerTokenState(userId, { model = OAuthUser, tokenFields = TOK
     const doc = await model.findOne(filter)
         .select(`discord.userId ${fields.join(" ")}`)
         .lean();
+
+    return { doc, fields };
+}
+
+async function getOwnerTokenState(userId, { model = OAuthUser, tokenFields = TOKEN_FIELDS, includeDeleted = false } = {}) {
+    if (!userId) {
+        const error = new Error("User ID is required for owner token reveal");
+        error.code = "oauth_user_id_required";
+        throw error;
+    }
+
+    const { doc, fields } = await findUserTokenDoc(model, userId, tokenFields, includeDeleted);
 
     const result = {};
     for (const field of fields) {
@@ -1261,20 +1288,7 @@ async function getOwnerTokenMetadata(userId, { model = OAuthUser, tokenFields = 
         return { oauth: null };
     }
 
-    const fields = Array.isArray(tokenFields) ? tokenFields : [tokenFields];
-    for (const f of fields) assertValidTokenField(f);
-
-    const filter = { "discord.userId": String(userId) };
-    if (!includeDeleted) {
-        filter.$or = [
-            { deletedAt: { $exists: false } },
-            { deletedAt: null }
-        ];
-    }
-
-    const doc = await model.findOne(filter)
-        .select(`discord.userId ${fields.join(" ")}`)
-        .lean();
+    const { doc, fields } = await findUserTokenDoc(model, userId, tokenFields, includeDeleted);
 
     const result = {};
     for (const field of fields) {
@@ -1426,6 +1440,64 @@ function modelLegacyFilter(fields, afterId = null) {
     return filter;
 }
 
+function executeCandidateQuery(model, filter, targetFields, limit) {
+    let query = model.find(filter);
+    if (typeof query.select === "function") {
+        query = query.select(["_id", ...targetFields].join(" "));
+    }
+    if (typeof query.sort === "function") query = query.sort({ _id: 1 });
+    if (typeof query.limit === "function") query = query.limit(limit);
+    if (typeof query.lean === "function") query = query.lean();
+    return query;
+}
+
+async function fetchMigrationCandidates(model, targetFields, afterId, limit) {
+    let queryFilter = modelLegacyFilter(targetFields, afterId);
+    let docs = await executeCandidateQuery(model, queryFilter, targetFields, limit);
+    let cursorWrapped = false;
+
+    if (docs.length === 0 && afterId) {
+        cursorWrapped = true;
+        docs = await executeCandidateQuery(model, modelLegacyFilter(targetFields), targetFields, limit);
+    }
+    return { docs, cursorWrapped };
+}
+
+async function migrateSingleField(model, doc, field, dryRun) {
+    const parts = field.split(".");
+    const currentVal = doc[parts[0]]?.[parts[1]];
+    if (typeof currentVal !== "string" || currentVal.length === 0 || currentVal.startsWith("v3:gcm:")) {
+        return { eligible: false, migrated: false, failed: false };
+    }
+
+    let decrypted;
+    try {
+        decrypted = decryptTokenForMigration(currentVal);
+    } catch {
+        return { eligible: true, migrated: false, failed: true };
+    }
+
+    if (!decrypted?.plaintext || decrypted.needsMigration !== true) {
+        return { eligible: true, migrated: false, failed: true };
+    }
+
+    if (dryRun) {
+        return { eligible: true, migrated: false, failed: false };
+    }
+
+    try {
+        const replacement = encryptToken(decrypted.plaintext);
+        const result = await model.updateOne(
+            { _id: doc._id, [field]: currentVal },
+            { $set: { [field]: replacement } }
+        );
+        const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
+        return { eligible: true, migrated: modified === 1, failed: modified !== 1 };
+    } catch {
+        return { eligible: true, migrated: false, failed: true };
+    }
+}
+
 async function migrateStoredTokenEncryption({
     dryRun = false,
     scanMax = 200,
@@ -1439,30 +1511,7 @@ async function migrateStoredTokenEncryption({
         "oauth.encryptedRefreshToken"
     ];
 
-    let queryFilter = modelLegacyFilter(targetFields, afterId);
-    let query = model.find(queryFilter);
-    if (typeof query.select === "function") {
-        query = query.select(["_id", ...targetFields].join(" "));
-    }
-    if (typeof query.sort === "function") query = query.sort({ _id: 1 });
-    if (typeof query.limit === "function") query = query.limit(limit);
-    if (typeof query.lean === "function") query = query.lean();
-
-    let docs = await query;
-    let cursorWrapped = false;
-
-    if (docs.length === 0 && afterId) {
-        cursorWrapped = true;
-        queryFilter = modelLegacyFilter(targetFields);
-        let retryQuery = model.find(queryFilter);
-        if (typeof retryQuery.select === "function") {
-            retryQuery = retryQuery.select(["_id", ...targetFields].join(" "));
-        }
-        if (typeof retryQuery.sort === "function") retryQuery = retryQuery.sort({ _id: 1 });
-        if (typeof retryQuery.limit === "function") retryQuery = retryQuery.limit(limit);
-        if (typeof retryQuery.lean === "function") retryQuery = retryQuery.lean();
-        docs = await retryQuery;
-    }
+    const { docs, cursorWrapped } = await fetchMigrationCandidates(model, targetFields, afterId, limit);
 
     let eligibleFields = 0;
     let migratedFields = 0;
@@ -1470,45 +1519,10 @@ async function migrateStoredTokenEncryption({
 
     for (const doc of docs) {
         for (const field of targetFields) {
-            const parts = field.split(".");
-            const currentVal = doc[parts[0]]?.[parts[1]];
-            if (typeof currentVal !== "string" || currentVal.length === 0 || currentVal.startsWith("v3:gcm:")) {
-                continue;
-            }
-
-            eligibleFields++;
-            let decrypted;
-            try {
-                decrypted = decryptTokenForMigration(currentVal);
-            } catch {
-                failedFields++;
-                continue;
-            }
-
-            if (!decrypted?.plaintext || decrypted.needsMigration !== true) {
-                failedFields++;
-                continue;
-            }
-
-            if (dryRun) {
-                continue;
-            }
-
-            try {
-                const replacement = encryptToken(decrypted.plaintext);
-                const result = await model.updateOne(
-                    { _id: doc._id, [field]: currentVal },
-                    { $set: { [field]: replacement } }
-                );
-                const modified = Number(result?.modifiedCount ?? result?.nModified ?? 0);
-                if (modified === 1) {
-                    migratedFields++;
-                } else {
-                    failedFields++;
-                }
-            } catch {
-                failedFields++;
-            }
+            const outcome = await migrateSingleField(model, doc, field, dryRun);
+            if (outcome.eligible) eligibleFields++;
+            if (outcome.migrated) migratedFields++;
+            if (outcome.failed) failedFields++;
         }
     }
 

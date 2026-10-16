@@ -86,7 +86,7 @@ function parseOwnerIds(value) {
 function isTest(env = process.env) {
     return String(env.NODE_ENV || "").trim().toLowerCase() === "test" ||
         Boolean(process.env.NODE_TEST_CONTEXT) ||
-        Boolean(process.env.npm_lifecycle_event && process.env.npm_lifecycle_event.includes("test"));
+        Boolean(process.env.npm_lifecycle_event?.includes("test"));
 }
 
 function getConfiguredOwnerIds(config = {}) {

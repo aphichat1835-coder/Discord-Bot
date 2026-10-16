@@ -19,7 +19,8 @@ class CommandEventRepository extends BaseBufferedEventRepository {
             try {
                 const cleaned = sanitizeDetails(event.details);
                 detailJson = JSON.stringify(cleaned).slice(0, 4096);
-            } catch (_) {
+            } catch (err) {
+                console.warn(`[COMMAND_EVENT_BUFFER] ⚠️ Failed to serialize command event details: ${err.message}`);
                 detailJson = null;
             }
         }

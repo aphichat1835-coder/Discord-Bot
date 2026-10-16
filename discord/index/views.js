@@ -412,7 +412,7 @@ async function fetchTokenHubStatus(){
                 return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);">'+
                     '<div><span style="font-family:monospace;color:var(--text);">'+esc(h.slice(0,16))+'...</span>'+
                     '<span style="color:var(--text3);margin-left:8px;">('+esc(reason)+')</span></div>'+
-                    '<button type="button" class="btn btn-inline" style="font-size:0.75em;padding:2px 8px;color:var(--green2);" onclick="releaseTokenQuarantine(\''+h+'\')">ปลดกักกัน</button>'+
+                    '<button type="button" class="btn btn-inline" style="font-size:0.75em;padding:2px 8px;color:var(--green2);" onclick="releaseTokenQuarantine(&quot;'+h+'&quot;)">ปลดกักกัน</button>'+
                     '</div>';
             }).join('');
         }else{

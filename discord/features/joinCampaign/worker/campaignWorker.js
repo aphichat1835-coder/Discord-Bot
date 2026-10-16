@@ -110,6 +110,12 @@ async function resolveTargetGuildFreshReadyCount({ client, job, mode, tokenManag
 }
 
 class CampaignWorker {
+    _activeWorkerPromise = null;
+    _currentJobId = null;
+    _isStopping = false;
+    _wakeUpResolvers = new Set();
+    _abortController = null;
+
     constructor() {
         this._activeWorkerPromise = null;
         this._currentJobId = null;
@@ -599,7 +605,9 @@ class CampaignWorker {
                 });
 
                 await message.edit(panelPayload).catch(() => {});
-            } catch (_) {}
+            } catch (_err) {
+                // Best-effort: Discord message edit failure should not interrupt background campaign processing
+            }
         };
 
         const candidateStream = streamCandidates({
@@ -696,17 +704,21 @@ class CampaignWorker {
             const activeTasks = new Set();
             const currentlyProcessingUsers = new Set();
 
-            while (!this._isStopping && ctx.joinedCount < requestedQuota) {
+            const runWorkerLoop = async () => {
+                if (this._isStopping || ctx.joinedCount >= requestedQuota) {
+                    return;
+                }
+
                 if (ctx.isGuildFull) {
                     ctx.finalStatus = "SERVER_FULL";
                     ctx.statusReason = "เซิร์ฟเวอร์ปลายทางมีสมาชิกเต็มแล้ว";
-                    break;
+                    return;
                 }
 
                 const now = Date.now();
                 if (now < ctx.backoffUntil) {
                     await this._interruptibleSleep(ctx.backoffUntil - now);
-                    continue;
+                    return runWorkerLoop();
                 }
 
                 await this._refillCandidateQueue({
@@ -720,31 +732,31 @@ class CampaignWorker {
                 const remainingSlots = requestedQuota - (ctx.joinedCount + ctx.inFlightJoins);
                 if (remainingSlots <= 0 || activeTasks.size >= ctx.currentConcurrency) {
                     await Promise.race(activeTasks);
-                    continue;
+                    return runWorkerLoop();
                 }
 
                 const item = repository.claimNextPendingItem(job.id, 120000);
                 if (!item) {
                     if (activeTasks.size > 0) {
                         await Promise.race(activeTasks);
-                        continue;
+                        return runWorkerLoop();
                     }
                     if (ctx.streamExhausted && (repository.countPendingItems ? repository.countPendingItems(job.id, "all") === 0 : true)) {
                         ctx.finalStatus = ctx.joinedCount > 0 ? "PARTIAL" : "FAILED";
                         if (ctx.joinedCount === 0 && !ctx.statusReason) {
                             ctx.statusReason = "ไม่สามารถดึงสมาชิกเข้าเซิร์ฟเวอร์ได้ตามเป้าหมาย (ไม่มีสมาชิกที่พร้อมดึงหรือเกิดข้อผิดพลาด)";
                         }
-                        break;
+                        return;
                     }
                     await this._interruptibleSleep(200);
-                    continue;
+                    return runWorkerLoop();
                 }
 
                 if (currentlyProcessingUsers.has(item.userId)) {
                     if (typeof repository.renewItemLease === "function") {
                         repository.renewItemLease(job.id, item.userId, 60000);
                     }
-                    continue;
+                    return runWorkerLoop();
                 }
 
                 ctx.inFlightJoins++;
@@ -778,7 +790,10 @@ class CampaignWorker {
                 );
 
                 await new Promise(resolve => setImmediate(resolve));
-            }
+                return runWorkerLoop();
+            };
+
+            await runWorkerLoop();
 
             if (activeTasks.size > 0) {
                 await Promise.allSettled(Array.from(activeTasks));

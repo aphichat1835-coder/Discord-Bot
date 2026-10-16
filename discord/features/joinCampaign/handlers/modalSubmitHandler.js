@@ -89,7 +89,9 @@ async function handleModalSubmit(interaction, client) {
                         await message.edit(panelPayload).catch(() => {});
                     }
                 }
-            } catch (_) {}
+            } catch (editErr) {
+                // Best-effort: Discord message edit failure should not interrupt modal interaction acknowledgment
+            }
         }
 
         return interaction.editReply({

@@ -113,7 +113,7 @@ function summarizeTableRecordCounts(db) {
     return records;
 }
 
-function calculateManagedStorage({ db, dbPath, quota, storage }) {
+function computeStorageBreakdown({ db, dbPath, quota }) {
     const allBackups = listBackups(null, { includePreMigration: true });
     let backupBytes = allBackups.reduce((sum, b) => sum + (b.sizeBytes || 0), 0);
     try {
@@ -140,6 +140,12 @@ function calculateManagedStorage({ db, dbPath, quota, storage }) {
 
     const dbBytes = quota.footprint.totalBytes || 0;
     const totalManagedBytes = dbBytes + backupBytes + assetBytes;
+
+    return { dbBytes, backupBytes, assetBytes, totalManagedBytes };
+}
+
+function calculateManagedStorage({ db, dbPath, quota, storage }) {
+    const { dbBytes, backupBytes, assetBytes, totalManagedBytes } = computeStorageBreakdown({ db, dbPath, quota });
 
     return {
         databaseBytes: dbBytes,
@@ -378,45 +384,7 @@ async function getSqliteDetailedStatus(customDb = null) {
     // Backups
     const backups = listBackups();
     // Managed storage breakdown
-    const allBackups = listBackups(null, { includePreMigration: true });
-    let backupBytes = allBackups.reduce((sum, b) => sum + (b.sizeBytes || 0), 0);
-    try {
-        const dbDir = path.dirname(dbPath);
-        if (fs.existsSync(dbDir)) {
-            const baks = fs.readdirSync(dbDir).filter(f => f.endsWith(".bak"));
-            for (const f of baks) {
-                const stat = fs.statSync(path.join(dbDir, f));
-                backupBytes += stat.size;
-            }
-        }
-    } catch {
-        // ignore backup folder scan error
-    }
-
-    let assetBytes = 0;
-    try {
-        const assetMgr = getAssetCacheManager(db);
-        const assetStats = assetMgr.getStats();
-        assetBytes = assetStats.totalBytes || assetStats.totalSizeBytes || 0;
-    } catch {
-        // ignore asset cache stats error
-    }
-
-    const dbBytes = quota.footprint.totalBytes || 0;
-    const totalManagedBytes = dbBytes + backupBytes + assetBytes;
-
-    const managedStorage = {
-        databaseBytes: dbBytes,
-        databaseMb: Number.parseFloat((dbBytes / (1024 * 1024)).toFixed(2)),
-        backupBytes,
-        backupMb: Number.parseFloat((backupBytes / (1024 * 1024)).toFixed(2)),
-        assetBytes,
-        assetMb: Number.parseFloat((assetBytes / (1024 * 1024)).toFixed(2)),
-        totalManagedBytes,
-        totalManagedMb: Number.parseFloat((totalManagedBytes / (1024 * 1024)).toFixed(2)),
-        freeDiskBytes: storageCheck.freeSpace?.availableBytes ?? null,
-        freeDiskMb: storageCheck.freeSpace?.availableMb ?? null
-    };
+    const managedStorage = calculateManagedStorage({ db, dbPath, quota, storage: storageCheck });
 
     return {
         path: dbPath,
@@ -714,7 +682,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
             case "backup": {
                 const maxBackups = options.retention || Number.parseInt(process.env.SQLITE_BACKUP_RETENTION, 10) || 2;
                 const bkp = await createBackup(db, { maxBackups });
-                const ok = Boolean(bkp && bkp.ok);
+                const ok = Boolean(bkp?.ok);
                 result = {
                     ok,
                     action,
@@ -740,11 +708,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
                     ok: trim.ok,
                     action,
                     trimResult: trim,
-                    message: trim.isResolved
-                        ? `Emergency Trim สำเร็จ: คืนพื้นที่ได้ ${trim.freedMb} MB (ลบทั้งหมด ${trim.itemsPurged.totalItems} รายการ) สภาวะกลับสู่ปกติสมบูรณ์ (OK)`
-                        : trim.postStatus === "soft" || trim.isSoftWarning
-                            ? `Emergency Trim เสร็จสิ้น: คืนพื้นที่ได้ ${trim.freedMb} MB ระบบพ้นขีดวิกฤตแต่ยังอยู่ในเกณฑ์เฝ้าระวัง (Soft Warning)`
-                            : `Emergency Trim เสร็จสิ้น: คืนพื้นที่ได้ ${trim.freedMb} MB แต่ระบบยังอยู่ในเกณฑ์อันตราย (${trim.postStatus})`
+                    message: formatEmergencyTrimMessage(trim)
                 };
                 recordAudit(trim.ok ? "success" : "failure", result);
                 break;
@@ -765,7 +729,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
                 const integrityOk = intRows.length === 1 && (intRows[0].integrity_check === "ok" || intRows[0] === "ok");
                 const fkOk = fkRows.length === 0;
                 const pragmasOk = String(journalMode).toLowerCase() === "wal" && foreignKeys === 1;
-                const readOk = Boolean(readRow && readRow.probe === 1);
+                const readOk = Boolean(readRow?.probe === 1);
 
                 const hasErrors = !integrityOk || !fkOk || !pragmasOk || !readOk || !storage.ok || storage.filesystemCritical || quota.status === "hard";
                 const hasWarnings = !hasErrors && (storage.warnings.length > 0 || storage.filesystemWarning || storage.pathWarning || quota.status === "soft" || quota.status === "critical" || emergency.isEmergency);
@@ -801,7 +765,7 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
                     storage,
                     message
                 };
-                recordAudit(status === "ok" ? "success" : status === "warning" ? "warning" : "failure", result);
+                recordAudit(resolveAuditStatus(status), result);
                 break;
             }
 
@@ -817,9 +781,187 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
     return result;
 }
 
+function formatEmergencyTrimMessage(trim) {
+    if (trim.isResolved) {
+        return `Emergency Trim สำเร็จ: คืนพื้นที่ได้ ${trim.freedMb} MB (ลบทั้งหมด ${trim.itemsPurged.totalItems} รายการ) สภาวะกลับสู่ปกติสมบูรณ์ (OK)`;
+    }
+    if (trim.postStatus === "soft" || trim.isSoftWarning) {
+        return `Emergency Trim เสร็จสิ้น: คืนพื้นที่ได้ ${trim.freedMb} MB ระบบพ้นขีดวิกฤตแต่ยังอยู่ในเกณฑ์เฝ้าระวัง (Soft Warning)`;
+    }
+    return `Emergency Trim เสร็จสิ้น: คืนพื้นที่ได้ ${trim.freedMb} MB แต่ระบบยังอยู่ในเกณฑ์อันตราย (${trim.postStatus})`;
+}
+
+function resolveAuditStatus(status) {
+    if (status === "ok") return "success";
+    if (status === "warning") return "warning";
+    return "failure";
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  💻 4. DATABASE CONSOLE (STRICT ALLOWLIST - NO SHELL)
 // ════════════════════════════════════════════════════════════════════════════
+
+async function renderStatusOutput() {
+    const overview = await getDatabaseOverview();
+    const sq = overview.databases.sqlite;
+    const mg = overview.databases.mongodb;
+    return [
+        "════════════════════════════════════════════════════════════",
+        "                สถานะระบบฐานข้อมูล (Database Status)          ",
+        "════════════════════════════════════════════════════════════",
+        `[SQLite]  สถานะ: ${sq.statusLabel} | พื้นที่: ${sq.footprintMb} MB / ${sq.hardLimitMb} MB (${sq.usedPercent}%)`,
+        `          จำนวน Records รวม: ${sq.records.total.toLocaleString()} รายการ (Core: ${sq.records.core}, Cache: ${sq.records.cache}, History: ${sq.records.history}, Temp: ${sq.records.temp})`,
+        `          รายละเอียดสถานะ: ${sq.degradedReason}`,
+        "------------------------------------------------------------",
+        `[MongoDB] สถานะ: ${mg.statusLabel} | ฐานข้อมูล: ${mg.name || "-"} | Ping: ${mg.pingMs !== null ? `${mg.pingMs}ms` : "-"}`,
+        `          โมเดลทั้งหมด: ${mg.modelsCount} โมเดล | Connection Pool: max ${mg.pool.maxPoolSize}, min ${mg.pool.minPoolSize}`,
+        "════════════════════════════════════════════════════════════"
+    ].join("\n");
+}
+
+async function renderStatsOutput() {
+    const details = await getSqliteDetailedStatus();
+    return [
+        "════════════════════════════════════════════════════════════",
+        "                สถิติแยกหมวดหมู่ (SQLite Stats)             ",
+        "════════════════════════════════════════════════════════════",
+        `1. ข้อมูลหลัก (Core):      ${details.categories.core.count.toLocaleString()} รายการ`,
+        ...Object.entries(details.categories.core.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
+        `2. ข้อมูลชั่วคราว (Temp):    ${details.categories.temporary.count.toLocaleString()} รายการ`,
+        ...Object.entries(details.categories.temporary.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
+        `3. ข้อมูลประวัติ (History): ${details.categories.history.count.toLocaleString()} รายการ`,
+        ...Object.entries(details.categories.history.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
+        `4. แคชระบบ (Cache):        ${details.categories.cache.count.toLocaleString()} รายการ`,
+        ...Object.entries(details.categories.cache.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
+        "════════════════════════════════════════════════════════════"
+    ].join("\n");
+}
+
+function renderTablesOutput(db) {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(t => t.name);
+    return `ตารางทั้งหมดใน SQLite (${tables.length} ตาราง):\n` + tables.map(t => {
+        const cnt = db.prepare(`SELECT COUNT(*) AS c FROM "${t}"`).get()?.c || 0;
+        return `  - ${t.padEnd(28)} : ${cnt.toLocaleString()} แถว`;
+    }).join("\n");
+}
+
+function renderMigrationsOutput(db) {
+    const userVersion = db.pragma("user_version", { simple: true });
+    const rows = db.prepare("SELECT version, migration_id, applied_at FROM schema_migrations ORDER BY version").all();
+    return [
+        `PRAGMA user_version: ${userVersion}`,
+        "ประวัติ Schema Migrations:",
+        ...rows.map(r => `  [v${r.version}] ${(r.migration_id || "").padEnd(25)} (เมื่อ: ${new Date(r.applied_at).toISOString()})`)
+    ].join("\n");
+}
+
+function renderEmergencyTrimOutput(act) {
+    if (!act.ok) return `❌ ล้มเหลว: ${act.message || act.error}`;
+    const t = act.trimResult;
+    return [
+        `🚨 ผลการดำเนินการ Emergency Auto-Trim:`,
+        `  สถานะผลลัพธ์:         ${t.isResolved ? '✅ RESOLVED (ปกติ)' : '⚠️ DEGRADED (เฝ้าระวัง)'}`,
+        `  พื้นที่ที่คืนได้:        ${t.freedMb} MB`,
+        `  รายการที่ถูกลบ:       ${t.itemsPurged?.totalItems || 0} รายการ`,
+        `    - Asset หมดอายุ:    ${t.itemsPurged?.assetExpired || 0}`,
+        `    - Cache ชั่วคราว:    ${(t.itemsPurged?.nonces || 0) + (t.itemsPurged?.cacheEntries || 0)}`,
+        `    - ประวัติพ้น Retention: ${t.itemsPurged?.expiredHistory || 0}`,
+        `  ขนาดก่อน/หลัง:        ${t.preFootprint?.totalMb} MB ➔ ${t.postFootprint?.totalMb} MB`,
+        `  ระยะเวลา:             ${t.durationMs} ms`
+    ].join("\n");
+}
+
+function renderFullCheckOutput(act) {
+    if (!act.ok) return `❌ ตรวจพบปัญหา: ${act.message || act.error}`;
+    return [
+        `🔍 ผลการตรวจสอบความสมบูรณ์แบบละเอียด (Full Health Check):`,
+        `  สถานะ Integrity Check:    ${act.integrityOk ? '✅ PASS (สมบูรณ์ 100%)' : '❌ FAIL'}`,
+        `  Schema Migrations:        ✅ Version ${act.schemaVersion || 4}`,
+        `  Foreign Keys Check:       ✅ PASS (0 errors)`,
+        `  Storage Footprint:        ${act.quota?.footprint?.totalMb} MB / ${act.quota?.limits?.hardMb} MB (${act.quota?.status})`,
+        `  Emergency Alert Status:   ${act.emergency?.isEmergency ? '🚨 CRITICAL' : '🟢 NORMAL'}`
+    ].join("\n");
+}
+
+async function handleActionCommand(cmd, dispatchSqliteAction, invoker) {
+    switch (cmd) {
+        case "integrity": {
+            const act = await dispatchSqliteAction("integrity", {}, invoker);
+            return {
+                ok: act.ok,
+                output: act.ok ? "✅ ผ่านการตรวจสอบ Integrity และ Foreign Keys 100% ฐานข้อมูลสมบูรณ์ปกติ" : `❌ พบข้อผิดพลาด: ${JSON.stringify(act)}`
+            };
+        }
+        case "cleanup": {
+            const act = await dispatchSqliteAction("cleanup_all", {}, invoker);
+            return {
+                ok: act.ok,
+                output: act.ok
+                    ? `✅ ทำความสะอาดข้อมูลสำเร็จ: ลบข้อมูลชั่วคราวและประวัติเก่า ${act.stats?.totalDeleted || act.stats?.deletedRows || 0} รายการ`
+                    : `❌ ทำความสะอาดข้อมูลล้มเหลว: ${act.message || act.error || "Unknown error"}`
+            };
+        }
+        case "cleanup cache": {
+            const act = await dispatchSqliteAction("cleanup_cache", {}, invoker);
+            return {
+                ok: act.ok,
+                output: act.ok
+                    ? `✅ ล้างแคชทั้งหมดสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`
+                    : `❌ ล้างแคชล้มเหลว: ${act.message || act.error || "Unknown error"}`
+            };
+        }
+        case "cleanup history": {
+            const act = await dispatchSqliteAction("cleanup_history", {}, invoker);
+            let cleanupHistoryMsg = `ล้างประวัติสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`;
+            if (act.message) {
+                cleanupHistoryMsg = act.message.startsWith("✅") ? act.message : `✅ ${act.message}`;
+            } else {
+                cleanupHistoryMsg = `✅ ${cleanupHistoryMsg}`;
+            }
+            return {
+                ok: act.ok,
+                output: act.ok ? cleanupHistoryMsg : `❌ ล้างประวัติล้มเหลว: ${act.message || act.error || "Unknown error"}`
+            };
+        }
+        case "checkpoint": {
+            const act = await dispatchSqliteAction("checkpoint", {}, invoker);
+            return {
+                ok: act.ok,
+                output: act.ok
+                    ? `✅ ดำเนินการ Checkpoint WAL สำเร็จ: ${act.message || "เสร็จสิ้น"}`
+                    : `❌ ดำเนินการ Checkpoint WAL ล้มเหลว: ${act.message || act.error || act.checkpoint?.error || "Unknown error"}`
+            };
+        }
+        case "vacuum": {
+            const act = await dispatchSqliteAction("vacuum", {}, invoker);
+            return {
+                ok: act.ok,
+                output: act.ok
+                    ? `✅ ดำเนินการ Incremental Vacuum สำเร็จ: ${act.message || "เสร็จสิ้น"}`
+                    : `❌ ดำเนินการ Incremental Vacuum ล้มเหลว: ${act.message || act.error || act.vacuum?.error || "Unknown error"}`
+            };
+        }
+        case "backup": {
+            const act = await dispatchSqliteAction("backup", {}, invoker);
+            return {
+                ok: act.ok,
+                output: act.ok
+                    ? `✅ สร้างไฟล์สำรองข้อมูลสำเร็จ:\n   ไฟล์: ${act.backup?.filename}\n   ขนาด: ${act.backup?.sizeMb} MB\n   SHA-256: ${act.backup?.sha256 || 'N/A'}`
+                    : `❌ สำรองข้อมูลล้มเหลว: ${act.message || act.error || "Unknown error"}`
+            };
+        }
+        case "emergency-trim": {
+            const act = await dispatchSqliteAction("emergency_trim", {}, invoker);
+            return { ok: act.ok, output: renderEmergencyTrimOutput(act) };
+        }
+        case "full-check": {
+            const act = await dispatchSqliteAction("full_check", {}, invoker);
+            return { ok: act.ok, output: renderFullCheckOutput(act) };
+        }
+        default:
+            return { ok: false, output: `❌ ไม่รู้จักคำสั่ง '${cmd}'` };
+    }
+}
 
 async function executeDatabaseConsole(commandString, invoker = "owner") {
     const raw = String(commandString || "").trim();
@@ -870,172 +1012,18 @@ async function executeDatabaseConsole(commandString, invoker = "owner") {
             return executeSqliteAction(actName, actOpts, actInvoker);
         };
 
-        switch (cmd) {
-            case "status":
-            case "health": {
-                const overview = await getDatabaseOverview();
-                const sq = overview.databases.sqlite;
-                const mg = overview.databases.mongodb;
-                output = [
-                    "════════════════════════════════════════════════════════════",
-                    "                สถานะระบบฐานข้อมูล (Database Status)          ",
-                    "════════════════════════════════════════════════════════════",
-                    `[SQLite]  สถานะ: ${sq.statusLabel} | พื้นที่: ${sq.footprintMb} MB / ${sq.hardLimitMb} MB (${sq.usedPercent}%)`,
-                    `          จำนวน Records รวม: ${sq.records.total.toLocaleString()} รายการ (Core: ${sq.records.core}, Cache: ${sq.records.cache}, History: ${sq.records.history}, Temp: ${sq.records.temp})`,
-                    `          รายละเอียดสถานะ: ${sq.degradedReason}`,
-                    "------------------------------------------------------------",
-                    `[MongoDB] สถานะ: ${mg.statusLabel} | ฐานข้อมูล: ${mg.name || "-"} | Ping: ${mg.pingMs !== null ? `${mg.pingMs}ms` : "-"}`,
-                    `          โมเดลทั้งหมด: ${mg.modelsCount} โมเดล | Connection Pool: max ${mg.pool.maxPoolSize}, min ${mg.pool.minPoolSize}`,
-                    "════════════════════════════════════════════════════════════"
-                ].join("\n");
-                break;
-            }
-
-            case "stats": {
-                const details = await getSqliteDetailedStatus();
-                output = [
-                    "════════════════════════════════════════════════════════════",
-                    "                สถิติแยกหมวดหมู่ (SQLite Stats)             ",
-                    "════════════════════════════════════════════════════════════",
-                    `1. ข้อมูลหลัก (Core):      ${details.categories.core.count.toLocaleString()} รายการ`,
-                    ...Object.entries(details.categories.core.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
-                    `2. ข้อมูลชั่วคราว (Temp):    ${details.categories.temporary.count.toLocaleString()} รายการ`,
-                    ...Object.entries(details.categories.temporary.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
-                    `3. ข้อมูลประวัติ (History): ${details.categories.history.count.toLocaleString()} รายการ`,
-                    ...Object.entries(details.categories.history.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
-                    `4. แคชระบบ (Cache):        ${details.categories.cache.count.toLocaleString()} รายการ`,
-                    ...Object.entries(details.categories.cache.tables).map(([k, v]) => `   - ${k} (${v.label}): ${v.count.toLocaleString()}`),
-                    "════════════════════════════════════════════════════════════"
-                ].join("\n");
-                break;
-            }
-
-            case "tables": {
-                const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(t => t.name);
-                output = `ตารางทั้งหมดใน SQLite (${tables.length} ตาราง):\n` + tables.map(t => {
-                    const cnt = db.prepare(`SELECT COUNT(*) AS c FROM "${t}"`).get()?.c || 0;
-                    return `  - ${t.padEnd(28)} : ${cnt.toLocaleString()} แถว`;
-                }).join("\n");
-                break;
-            }
-
-            case "migrations": {
-                const userVersion = db.pragma("user_version", { simple: true });
-                const rows = db.prepare("SELECT version, migration_id, applied_at FROM schema_migrations ORDER BY version").all();
-                output = [
-                    `PRAGMA user_version: ${userVersion}`,
-                    "ประวัติ Schema Migrations:",
-                    ...rows.map(r => `  [v${r.version}] ${(r.migration_id || "").padEnd(25)} (เมื่อ: ${new Date(r.applied_at).toISOString()})`)
-                ].join("\n");
-                break;
-            }
-
-            case "integrity": {
-                const act = await dispatchSqliteAction("integrity", {}, invoker);
-                output = act.ok ? "✅ ผ่านการตรวจสอบ Integrity และ Foreign Keys 100% ฐานข้อมูลสมบูรณ์ปกติ" : `❌ พบข้อผิดพลาด: ${JSON.stringify(act)}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "cleanup": {
-                const act = await dispatchSqliteAction("cleanup_all", {}, invoker);
-                output = act.ok
-                    ? `✅ ทำความสะอาดข้อมูลสำเร็จ: ลบข้อมูลชั่วคราวและประวัติเก่า ${act.stats?.totalDeleted || act.stats?.deletedRows || 0} รายการ`
-                    : `❌ ทำความสะอาดข้อมูลล้มเหลว: ${act.message || act.error || "Unknown error"}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "cleanup cache": {
-                const act = await dispatchSqliteAction("cleanup_cache", {}, invoker);
-                output = act.ok
-                    ? `✅ ล้างแคชทั้งหมดสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`
-                    : `❌ ล้างแคชล้มเหลว: ${act.message || act.error || "Unknown error"}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "cleanup history": {
-                const act = await dispatchSqliteAction("cleanup_history", {}, invoker);
-                let cleanupHistoryMsg = `ล้างประวัติสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`;
-                if (act.message) {
-                    cleanupHistoryMsg = act.message.startsWith("✅") ? act.message : `✅ ${act.message}`;
-                } else {
-                    cleanupHistoryMsg = `✅ ${cleanupHistoryMsg}`;
-                }
-                output = act.ok
-                    ? cleanupHistoryMsg
-                    : `❌ ล้างประวัติล้มเหลว: ${act.message || act.error || "Unknown error"}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "checkpoint": {
-                const act = await dispatchSqliteAction("checkpoint", {}, invoker);
-                output = act.ok
-                    ? `✅ ดำเนินการ Checkpoint WAL สำเร็จ: ${act.message || "เสร็จสิ้น"}`
-                    : `❌ ดำเนินการ Checkpoint WAL ล้มเหลว: ${act.message || act.error || act.checkpoint?.error || "Unknown error"}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "vacuum": {
-                const act = await dispatchSqliteAction("vacuum", {}, invoker);
-                output = act.ok
-                    ? `✅ ดำเนินการ Incremental Vacuum สำเร็จ: ${act.message || "เสร็จสิ้น"}`
-                    : `❌ ดำเนินการ Incremental Vacuum ล้มเหลว: ${act.message || act.error || act.vacuum?.error || "Unknown error"}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "backup": {
-                const act = await dispatchSqliteAction("backup", {}, invoker);
-                output = act.ok
-                    ? `✅ สร้างไฟล์สำรองข้อมูลสำเร็จ:\n   ไฟล์: ${act.backup?.filename}\n   ขนาด: ${act.backup?.sizeMb} MB\n   SHA-256: ${act.backup?.sha256 || 'N/A'}`
-                    : `❌ สำรองข้อมูลล้มเหลว: ${act.message || act.error || "Unknown error"}`;
-                ok = act.ok;
-                break;
-            }
-
-            case "emergency-trim": {
-                const act = await dispatchSqliteAction("emergency_trim", {}, invoker);
-                if (act.ok) {
-                    const t = act.trimResult;
-                    output = [
-                        `🚨 ผลการดำเนินการ Emergency Auto-Trim:`,
-                        `  สถานะผลลัพธ์:         ${t.isResolved ? '✅ RESOLVED (ปกติ)' : '⚠️ DEGRADED (เฝ้าระวัง)'}`,
-                        `  พื้นที่ที่คืนได้:        ${t.freedMb} MB`,
-                        `  รายการที่ถูกลบ:       ${t.itemsPurged?.totalItems || 0} รายการ`,
-                        `    - Asset หมดอายุ:    ${t.itemsPurged?.assetExpired || 0}`,
-                        `    - Cache ชั่วคราว:    ${(t.itemsPurged?.nonces || 0) + (t.itemsPurged?.cacheEntries || 0)}`,
-                        `    - ประวัติพ้น Retention: ${t.itemsPurged?.expiredHistory || 0}`,
-                        `  ขนาดก่อน/หลัง:        ${t.preFootprint?.totalMb} MB ➔ ${t.postFootprint?.totalMb} MB`,
-                        `  ระยะเวลา:             ${t.durationMs} ms`
-                    ].join("\n");
-                } else {
-                    output = `❌ ล้มเหลว: ${act.message || act.error}`;
-                }
-                ok = act.ok;
-                break;
-            }
-
-            case "full-check": {
-                const act = await dispatchSqliteAction("full_check", {}, invoker);
-                if (act.ok) {
-                    output = [
-                        `🔍 ผลการตรวจสอบความสมบูรณ์แบบละเอียด (Full Health Check):`,
-                        `  สถานะ Integrity Check:    ${act.integrityOk ? '✅ PASS (สมบูรณ์ 100%)' : '❌ FAIL'}`,
-                        `  Schema Migrations:        ✅ Version ${act.schemaVersion || 4}`,
-                        `  Foreign Keys Check:       ✅ PASS (0 errors)`,
-                        `  Storage Footprint:        ${act.quota?.footprint?.totalMb} MB / ${act.quota?.limits?.hardMb} MB (${act.quota?.status})`,
-                        `  Emergency Alert Status:   ${act.emergency?.isEmergency ? '🚨 CRITICAL' : '🟢 NORMAL'}`
-                    ].join("\n");
-                } else {
-                    output = `❌ ตรวจพบปัญหา: ${act.message || act.error}`;
-                }
-                ok = act.ok;
-                break;
-            }
+        if (cmd === "status" || cmd === "health") {
+            output = await renderStatusOutput();
+        } else if (cmd === "stats") {
+            output = await renderStatsOutput();
+        } else if (cmd === "tables") {
+            output = renderTablesOutput(db);
+        } else if (cmd === "migrations") {
+            output = renderMigrationsOutput(db);
+        } else {
+            const res = await handleActionCommand(cmd, dispatchSqliteAction, invoker);
+            ok = res.ok;
+            output = res.output;
         }
     } catch (err) {
         ok = false;

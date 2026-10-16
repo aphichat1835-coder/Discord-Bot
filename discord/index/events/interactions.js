@@ -129,30 +129,36 @@ function isRoleButtonInteraction(interaction) {
 }
 
 async function handleRoleButtonInteractionSafe(interaction) {
-    return await roleButton.handleRoleInteraction(interaction).catch(async e => {
+    try {
+        return await roleButton.handleRoleInteraction(interaction);
+    } catch (e) {
         console.error('[ROLE_BTN] ❌', e.message);
-        sendWebhookEvent({
-            target: "ALERT",
-            severity: "ERROR",
-            category: "COMMAND",
-            code: "role_button.error",
-            state: "OPEN",
-            title: "ROLE BUTTON ERROR",
-            description: `เกิดข้อผิดพลาดในการจัดการยศผ่านปุ่มหรือเมนู: ${e?.message || "unknown"}`,
-            impact: "สมาชิกอาจไม่ได้รับหรือถอดยศตามที่เลือก",
-            action: "ตรวจสอบสิทธิ์ Manage Roles ของบอท และลำดับ Role Hierarchy ในเซิร์ฟเวอร์",
-            context: {
-                "Custom ID": interaction.customId || "unknown",
-                "User": interaction.user?.tag || interaction.user?.id || "unknown",
-                "Guild": interaction.guild?.name || interaction.guildId || "DM"
-            },
-            dedupeKey: `role-btn-err:${interaction.customId}:${e?.message || ""}`,
-            dedupeMs: 2 * 60 * 1000
-        }).catch(() => {});
+        try {
+            sendWebhookEvent({
+                target: "ALERT",
+                severity: "ERROR",
+                category: "COMMAND",
+                code: "role_button.error",
+                state: "OPEN",
+                title: "ROLE BUTTON ERROR",
+                description: `เกิดข้อผิดพลาดในการจัดการยศผ่านปุ่มหรือเมนู: ${e?.message || "unknown"}`,
+                impact: "สมาชิกอาจไม่ได้รับหรือถอดยศตามที่เลือก",
+                action: "ตรวจสอบสิทธิ์ Manage Roles ของบอท และลำดับ Role Hierarchy ในเซิร์ฟเวอร์",
+                context: {
+                    "Custom ID": interaction.customId || "unknown",
+                    "User": interaction.user?.tag || interaction.user?.id || "unknown",
+                    "Guild": interaction.guild?.name || interaction.guildId || "DM"
+                },
+                dedupeKey: `role-btn-err:${interaction.customId}:${e?.message || ""}`,
+                dedupeMs: 2 * 60 * 1000
+            }).catch(() => {});
+        } catch (_err) {
+            // Ignored: Alert webhook sending is best-effort
+        }
         const r = { content: `> ${appConfig.emojis?.error || '❌'} เกิดข้อผิดพลาดในการจัดการยศ กรุณาลองใหม่อีกครั้ง`, ephemeral: true };
-        if (interaction.deferred) return interaction.editReply(r);
-        if (!interaction.replied) return interaction.reply(r);
-    });
+        if (interaction.deferred) return await interaction.editReply(r);
+        if (!interaction.replied) return await interaction.reply(r);
+    }
 }
 
 function finalizeCommandInteraction({ commandKey, commandInFlight, commandCooldownContext, interaction }) {

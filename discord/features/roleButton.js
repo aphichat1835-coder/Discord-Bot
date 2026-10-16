@@ -220,6 +220,7 @@ async function toggleRole(interaction, member, guild, roleId) {
             return sendResponse({ embeds: [embed] });
         }
     } catch (err) {
+        console.error(`[ROLE_BUTTON] ❌ Failed to toggle role ${roleId}: ${err.message}`);
         return sendResponse({ content: `> ${config.emojis?.error || '❌'} ไม่สามารถจัดการยศได้ในขณะนี้ โปรดตรวจสอบสิทธิ์ของบอทหรือติดต่อผู้ดูแลระบบ` });
     }
 }

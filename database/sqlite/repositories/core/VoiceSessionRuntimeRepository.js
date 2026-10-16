@@ -8,7 +8,7 @@ class VoiceSessionRuntimeRepository {
     }
 
     upsertSessionRuntime(data) {
-        if (!data || !data.sessionId) throw new TypeError("sessionId is required");
+        if (!data?.sessionId) throw new TypeError("sessionId is required");
         const db = this.getDb();
         const now = Date.now();
 

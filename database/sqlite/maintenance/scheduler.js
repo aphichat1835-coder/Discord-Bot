@@ -247,6 +247,38 @@ async function runAutoBackup() {
     }
 }
 
+function sendEmergencyOutcomeWebhook(trim, initialReason, isResolved) {
+    try {
+        const severity = isResolved ? "SUCCESS" : "WARNING";
+        const code = isResolved ? "sqlite.emergency.resolved" : "sqlite.emergency.warning_cleared";
+        const title = isResolved
+            ? "🟢 ระบบฐานข้อมูล SQLite คืนสู่สภาวะปกติสมบูรณ์แล้ว"
+            : "🟡 ภาวะวิกฤตลดระดับสู่เกณฑ์เฝ้าระวัง (Soft Warning)";
+        const description = isResolved
+            ? "Emergency Auto-Trim ดำเนินการสำเร็จ และระดับพื้นที่จัดเก็บกลับเข้าสู่เกณฑ์ปลอดภัยสมบูรณ์ (Safe/OK)"
+            : "Emergency Auto-Trim สามารถคืนพื้นที่บางส่วนได้ แต่ระดับพื้นที่จัดเก็บยังอยู่ในเกณฑ์เฝ้าระวัง (Soft Quota) ยังไม่กลับสู่สถานะปกติสมบูรณ์";
+
+        sendWebhookEvent({
+            target: "ALERT",
+            severity,
+            category: "DATA",
+            code,
+            title,
+            description,
+            context: {
+                "สาเหตุที่เกิด": initialReason || "Storage critical",
+                "พื้นที่ที่คืนได้": `${trim.freedMb} MB`,
+                "จำนวนรายการที่ลบ": `${trim.itemsPurged?.totalItems || 0} รายการ`,
+                "ขนาดก่อน ➔ หลัง": `${trim.preFootprint?.totalMb} MB ➔ ${trim.postFootprint?.totalMb} MB`,
+                "สถานะล่าสุด": isResolved ? "OK" : "SOFT WARNING",
+                "ระยะเวลาดำเนินการ": `${trim.durationMs} ms`
+            }
+        }).catch(() => {});
+    } catch (_err) {
+        // Ignored: Alert webhook sending is best-effort
+    }
+}
+
 async function runEmergencyEvaluation() {
     if (isEmergencyRunning) return;
     isEmergencyRunning = true;
@@ -336,54 +368,14 @@ async function runEmergencyEvaluation() {
                     reason: evalResult.reasons.join("; ")
                 }, "system_auto_emergency");
 
-                if (trimResult && trimResult.ok) {
+                if (trimResult?.ok) {
                     const trim = trimResult.trimResult || {};
                     if (trim.isResolved) {
                         diagnostics.emergency.lastStatus = "resolved";
-                        // Send RESOLVED Webhook alert (strictly when post-quota is ok)
-                        try {
-                            sendWebhookEvent({
-                                target: "ALERT",
-                                severity: "SUCCESS",
-                                category: "DATA",
-                                code: "sqlite.emergency.resolved",
-                                title: "🟢 ระบบฐานข้อมูล SQLite คืนสู่สภาวะปกติสมบูรณ์แล้ว",
-                                description: "Emergency Auto-Trim ดำเนินการสำเร็จ และระดับพื้นที่จัดเก็บกลับเข้าสู่เกณฑ์ปลอดภัยสมบูรณ์ (Safe/OK)",
-                                context: {
-                                    "สาเหตุที่เกิด": evalResult.reasons[0] || "Storage critical",
-                                    "พื้นที่ที่คืนได้": `${trim.freedMb} MB`,
-                                    "จำนวนรายการที่ลบ": `${trim.itemsPurged?.totalItems || 0} รายการ`,
-                                    "ขนาดก่อน ➔ หลัง": `${trim.preFootprint?.totalMb} MB ➔ ${trim.postFootprint?.totalMb} MB`,
-                                    "สถานะล่าสุด": "OK",
-                                    "ระยะเวลาดำเนินการ": `${trim.durationMs} ms`
-                                }
-                            }).catch(() => {});
-                        } catch (_err) {
-                            // Ignored: Alert webhook sending is best-effort
-                        }
+                        sendEmergencyOutcomeWebhook(trim, evalResult.reasons[0], true);
                     } else if (trim.postStatus === "soft" || trim.isSoftWarning) {
                         diagnostics.emergency.lastStatus = "soft_warning";
-                        // Send WARNING alert: dropped out of critical but still in soft warning state
-                        try {
-                            sendWebhookEvent({
-                                target: "ALERT",
-                                severity: "WARNING",
-                                category: "DATA",
-                                code: "sqlite.emergency.warning_cleared",
-                                title: "🟡 ภาวะวิกฤตลดระดับสู่เกณฑ์เฝ้าระวัง (Soft Warning)",
-                                description: "Emergency Auto-Trim สามารถคืนพื้นที่บางส่วนได้ แต่ระดับพื้นที่จัดเก็บยังอยู่ในเกณฑ์เฝ้าระวัง (Soft Quota) ยังไม่กลับสู่สถานะปกติสมบูรณ์",
-                                context: {
-                                    "สาเหตุที่เกิด": evalResult.reasons[0] || "Storage critical",
-                                    "พื้นที่ที่คืนได้": `${trim.freedMb} MB`,
-                                    "จำนวนรายการที่ลบ": `${trim.itemsPurged?.totalItems || 0} รายการ`,
-                                    "ขนาดก่อน ➔ หลัง": `${trim.preFootprint?.totalMb} MB ➔ ${trim.postFootprint?.totalMb} MB`,
-                                    "สถานะล่าสุด": "SOFT WARNING",
-                                    "ระยะเวลาดำเนินการ": `${trim.durationMs} ms`
-                                }
-                            }).catch(() => {});
-                        } catch (_err) {
-                            // Ignored: Alert webhook sending is best-effort
-                        }
+                        sendEmergencyOutcomeWebhook(trim, evalResult.reasons[0], false);
                     } else {
                         diagnostics.emergency.lastStatus = "degraded";
                     }
@@ -441,6 +433,53 @@ async function runEmergencyEvaluation() {
     }
 }
 
+function calculateInitialBackupDelay(backups, intervalMs, now) {
+    // Baseline safety policy: Even if SQLITE_AUTO_BACKUP_INITIAL is not explicitly "true",
+    // if no previous backup exists at all (backups.length === 0), run an initial baseline backup
+    // after 5s to guarantee we always have a restore point before runtime mutations accumulate.
+    const shouldRunInitialBackup = process.env.SQLITE_AUTO_BACKUP_INITIAL === "true" || backups.length === 0;
+    if (shouldRunInitialBackup) {
+        return 5000;
+    }
+    if (backups.length > 0) {
+        const lastBackupTime = backups[0].mtime || now;
+        const elapsed = now - lastBackupTime;
+        if (elapsed >= intervalMs) {
+            return 5000;
+        }
+        return Math.max(5000, intervalMs - elapsed);
+    }
+    return intervalMs;
+}
+
+function scheduleAutoBackup(backupHours) {
+    const intervalMs = backupHours * 60 * 60 * 1000;
+    const backups = listBackups();
+    const now = Date.now();
+    const delayUntilFirstBackup = calculateInitialBackupDelay(backups, intervalMs, now);
+
+    nextScheduledBackupAt = now + delayUntilFirstBackup;
+    console.log(`[DB_SCHEDULER] 💾 Next auto-backup scheduled in ${Math.round(delayUntilFirstBackup / 1000)}s (${(delayUntilFirstBackup / (60 * 60 * 1000)).toFixed(1)}h)`);
+
+    initialBackupTimeoutId = setTimeout(async () => {
+        initialBackupTimeoutId = null;
+        try {
+            await runAutoBackup();
+        } catch (err) {
+            console.error(`[DB_SCHEDULER] ⚠️ Initial scheduled backup failed: ${err.message}`);
+        }
+        nextScheduledBackupAt = Date.now() + intervalMs;
+        backupIntervalId = setInterval(() => {
+            nextScheduledBackupAt = Date.now() + intervalMs;
+            runAutoBackup().catch(err => {
+                console.error(`[DB_SCHEDULER] ⚠️ Auto-backup failed: ${err.message}`);
+            });
+        }, intervalMs);
+        if (backupIntervalId?.unref) backupIntervalId.unref();
+    }, delayUntilFirstBackup);
+    if (initialBackupTimeoutId?.unref) initialBackupTimeoutId.unref();
+}
+
 function startScheduler() {
     if (walIntervalId || cleanupIntervalId || vacuumIntervalId || backupIntervalId || emergencyIntervalId) {
         return; // Already running
@@ -471,49 +510,7 @@ function startScheduler() {
     if (vacuumIntervalId.unref) vacuumIntervalId.unref();
 
     if (autoBackupEnabled) {
-        const intervalMs = backupHours * 60 * 60 * 1000;
-        const backups = listBackups();
-        const now = Date.now();
-        // Baseline safety policy: Even if SQLITE_AUTO_BACKUP_INITIAL is not explicitly "true",
-        // if no previous backup exists at all (backups.length === 0), run an initial baseline backup
-        // after 5s to guarantee we always have a restore point before runtime mutations accumulate.
-        const shouldRunInitialBackup = process.env.SQLITE_AUTO_BACKUP_INITIAL === "true" || backups.length === 0;
-
-        let delayUntilFirstBackup = intervalMs;
-        if (shouldRunInitialBackup) {
-            delayUntilFirstBackup = 5000;
-        } else if (backups.length > 0) {
-            const lastBackupTime = backups[0].mtime || now;
-            const elapsed = now - lastBackupTime;
-            if (elapsed >= intervalMs) {
-                // Past interval, run promptly
-                delayUntilFirstBackup = 5000;
-            } else {
-                // Schedule for the remaining time
-                delayUntilFirstBackup = Math.max(5000, intervalMs - elapsed);
-            }
-        }
-
-        nextScheduledBackupAt = now + delayUntilFirstBackup;
-        console.log(`[DB_SCHEDULER] 💾 Next auto-backup scheduled in ${Math.round(delayUntilFirstBackup / 1000)}s (${(delayUntilFirstBackup / (60 * 60 * 1000)).toFixed(1)}h)`);
-
-        initialBackupTimeoutId = setTimeout(async () => {
-            initialBackupTimeoutId = null;
-            try {
-                await runAutoBackup();
-            } catch (err) {
-                console.error(`[DB_SCHEDULER] ⚠️ Initial scheduled backup failed: ${err.message}`);
-            }
-            nextScheduledBackupAt = Date.now() + intervalMs;
-            backupIntervalId = setInterval(() => {
-                nextScheduledBackupAt = Date.now() + intervalMs;
-                runAutoBackup().catch(err => {
-                    console.error(`[DB_SCHEDULER] ⚠️ Auto-backup failed: ${err.message}`);
-                });
-            }, intervalMs);
-            if (backupIntervalId.unref) backupIntervalId.unref();
-        }, delayUntilFirstBackup);
-        if (initialBackupTimeoutId.unref) initialBackupTimeoutId.unref();
+        scheduleAutoBackup(backupHours);
     }
 
     emergencyIntervalId = setInterval(runEmergencyEvaluation, 2 * 60 * 1000);

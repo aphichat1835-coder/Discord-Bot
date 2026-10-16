@@ -109,7 +109,7 @@ async function handleJoinCampaignInteraction(interaction, client) {
         // Trigger immediate visual update on main panel in channel
         try {
             const panel = repository.findPanelByChannelId(interaction.channelId);
-            if (panel && panel.messageId) {
+            if (panel?.messageId) {
                 const channel = await client.channels.fetch(panel.channelId).catch(() => null);
                 if (channel) {
                     const message = await channel.messages.fetch(panel.messageId).catch(() => null);

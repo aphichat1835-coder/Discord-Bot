@@ -316,15 +316,8 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
     const endpointPath = normalizeDiscordApiPath(pathAndSearch);
     const attempts = Math.max(1, Number(retries || 3) || 3);
     const timeoutMs = Math.max(1000, Number(rawTimeoutMs || 10000) || 10000);
-    let lastError = null;
 
-    if (fetchOptions.signal?.aborted) {
-        const abortErr = new Error("This operation was aborted");
-        abortErr.name = "AbortError";
-        throw abortErr;
-    }
-
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+    const attemptRequest = async (attempt) => {
         if (fetchOptions.signal?.aborted) {
             const abortErr = new Error("This operation was aborted");
             abortErr.name = "AbortError";
@@ -349,24 +342,24 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
 
             if (shouldRetryResponse(res.status, attempt, attempts)) {
                 await sleep(calculateRetryDelay(res, attempt), fetchOptions.signal);
-                continue;
+                return attemptRequest(attempt + 1);
             }
 
             return res;
         } catch (err) {
-            lastError = err;
             if (fetchOptions.signal?.aborted || err?.name === "AbortError") throw err;
             if (err?.retryable === false || attempt >= attempts) throw err;
             await sleep(Math.min(250 * attempt, 1500), fetchOptions.signal);
+            return attemptRequest(attempt + 1);
         } finally {
             clearTimeout(timer);
             if (fetchOptions.signal && abortListener) {
                 fetchOptions.signal.removeEventListener("abort", abortListener);
             }
         }
-    }
+    };
 
-    throw lastError || new Error("Discord API request failed");
+    return attemptRequest(1);
 }
 
 function getDiscordApiDiagnostics() {
@@ -1264,6 +1257,25 @@ function buildMultipartFormData({ payloadJson, files = [] }) {
     return { body, contentType };
 }
 
+function prepareMessagePayload(payload) {
+    if (payload?.files && Array.isArray(payload.files) && payload.files.length > 0) {
+        const payloadJson = { ...payload };
+        delete payloadJson.files;
+        const multipart = buildMultipartFormData({
+            payloadJson: JSON.stringify(payloadJson),
+            files: payload.files
+        });
+        return {
+            requestBody: multipart.body,
+            contentType: multipart.contentType
+        };
+    }
+    return {
+        requestBody: JSON.stringify(payload),
+        contentType: "application/json"
+    };
+}
+
 async function createChannelMessage(channelId, payload) {
     const cid = snowflake(channelId);
 
@@ -1275,21 +1287,7 @@ async function createChannelMessage(channelId, payload) {
         };
     }
 
-    let requestBody;
-    let contentType = "application/json";
-
-    if (payload?.files && Array.isArray(payload.files) && payload.files.length > 0) {
-        const payloadJson = { ...payload };
-        delete payloadJson.files;
-        const multipart = buildMultipartFormData({
-            payloadJson: JSON.stringify(payloadJson),
-            files: payload.files
-        });
-        requestBody = multipart.body;
-        contentType = multipart.contentType;
-    } else {
-        requestBody = JSON.stringify(payload);
-    }
+    const { requestBody, contentType } = prepareMessagePayload(payload);
 
     const res = await fetchWithRetry(`/channels/${cid}/messages`, {
         method: "POST",
@@ -1328,21 +1326,7 @@ async function editChannelMessage(channelId, messageId, payload) {
         };
     }
 
-    let requestBody;
-    let contentType = "application/json";
-
-    if (payload?.files && Array.isArray(payload.files) && payload.files.length > 0) {
-        const payloadJson = { ...payload };
-        delete payloadJson.files;
-        const multipart = buildMultipartFormData({
-            payloadJson: JSON.stringify(payloadJson),
-            files: payload.files
-        });
-        requestBody = multipart.body;
-        contentType = multipart.contentType;
-    } else {
-        requestBody = JSON.stringify(payload);
-    }
+    const { requestBody, contentType } = prepareMessagePayload(payload);
 
     const res = await fetchWithRetry(`/channels/${cid}/messages/${mid}`, {
         method: "PATCH",

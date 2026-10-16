@@ -127,8 +127,7 @@ class ScheduledRunnerRepository {
         if (setClauses.length === 0) return this.findById(id);
 
         setClauses.push("updated_at = ?");
-        values.push(Date.now());
-        values.push(id);
+        values.push(Date.now(), id);
 
         this.db.prepare(`UPDATE scheduled_runners SET ${setClauses.join(", ")} WHERE id = ?`).run(...values);
         return this.findById(id);

@@ -114,9 +114,22 @@ function acquireProcessLock(dbPath) {
                 };
             }
             // Stale lock: PID is dead or invalid
-            try { fs.unlinkSync(lockPath); } catch (_) {}
-        } catch (_) {
-            try { fs.unlinkSync(lockPath); } catch (_) {}
+            try {
+                fs.unlinkSync(lockPath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale lock file: ${unlinkErr.message}`);
+                }
+            }
+        } catch (readErr) {
+            // Corrupt or unreadable lock file; remove it to allow reclamation
+            try {
+                fs.unlinkSync(lockPath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt lock file: ${unlinkErr.message}`);
+                }
+            }
         }
 
         // Retry atomic exclusive create once after clearing stale lock
@@ -203,9 +216,22 @@ function acquireRestoreLock(dbPath) {
                     reason: "active_restore"
                 };
             }
-            try { fs.unlinkSync(restorePath); } catch (_) {}
-        } catch (_) {
-            try { fs.unlinkSync(restorePath); } catch (_) {}
+            try {
+                fs.unlinkSync(restorePath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove stale restore lock file: ${unlinkErr.message}`);
+                }
+            }
+        } catch (readErr) {
+            // Corrupt or unreadable restore lock file; remove it to allow reclamation
+            try {
+                fs.unlinkSync(restorePath);
+            } catch (unlinkErr) {
+                if (unlinkErr.code !== "ENOENT") {
+                    console.warn(`[PROCESS_LOCK] ⚠️ Could not remove corrupt restore lock file: ${unlinkErr.message}`);
+                }
+            }
         }
 
         writeRes = tryWriteLockFile(restorePath, payload);

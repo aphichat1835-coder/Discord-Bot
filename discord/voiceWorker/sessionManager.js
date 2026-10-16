@@ -1276,7 +1276,9 @@ async function deleteSession(sessionId, options = {}) {
     try {
         const repo = getVoiceRuntimeRepository();
         if (repo) repo.deleteSessionRuntime(sessionId);
-    } catch (_) {}
+    } catch (err) {
+        // Voice runtime repository cleanup failure is non-fatal during session delete
+    }
 
     try {
         const db = require("../../database");
@@ -1285,7 +1287,9 @@ async function deleteSession(sessionId, options = {}) {
             eventType: "voice_session_deleted",
             metadata: { stoppedReason: session?.stoppedReason || "manual_or_error" }
         });
-    } catch (_) {}
+    } catch (err) {
+        // Best-effort telemetry recording should not crash session removal
+    }
 
     console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);
 

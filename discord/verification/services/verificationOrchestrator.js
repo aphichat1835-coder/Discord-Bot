@@ -139,6 +139,31 @@ function fitVerifyLogBudget(doc, payload) {
     }
 }
 
+function buildVerificationSnapshots(profile, connections = []) {
+    const discordSnapshot = {
+        username: profile.username,
+        globalName: profile.globalName,
+        discriminator: profile.discriminator || "0",
+        displayTag: displayTag(profile),
+        avatarUrl: getAvatarUrl(profile),
+        bannerUrl: getBannerUrl(profile),
+        accountCreatedAt: profile.accountCreatedAt,
+        accountAgeDays: profile.accountAgeDays,
+        email: profile.email,
+        emailVerified: profile.emailVerified,
+        locale: profile.locale || null,
+        mfaEnabled: profile.mfaEnabled === true,
+        premiumType: profile.premiumType || 0,
+        badgeFlags: profile.badgeFlags,
+        connectionsCount: connections.length
+    };
+    const connectionsSnapshot = connections.map(c => ({
+        type: String(c.type || ""),
+        verified: Boolean(c.verified)
+    }));
+    return { discordSnapshot, connectionsSnapshot };
+}
+
 async function saveVerifyLogSafe(payload) {
     return safeSideEffect("saveVerifyLog", async () => {
         let doc = {
@@ -472,7 +497,7 @@ async function executeVerification({
         let previousConnections = null;
         if (expectedUserId) {
             const prevOAuth = await OAuthUser.findOne({ "discord.userId": expectedUserId }).select("guildSummary connections").lean().catch(() => null);
-            if (prevOAuth?.guildSummary && prevOAuth.guildSummary.status === "success") {
+            if (prevOAuth?.guildSummary?.status === "success") {
                 previousSummary = prevOAuth.guildSummary;
             }
             if (Array.isArray(prevOAuth?.connections) && prevOAuth.connections.length > 0) {
@@ -614,7 +639,9 @@ async function executeVerification({
             attemptStartedAt: oauthAttemptStartedAt
         });
 
-        const verifyLog = await saveVerifyLogSafe({
+        const { discordSnapshot, connectionsSnapshot } = buildVerificationSnapshots(profile, connections);
+
+        await saveVerifyLogSafe({
             guildId,
             userId: profile.id,
             roleId: configuredRoleId,
@@ -624,27 +651,8 @@ async function executeVerification({
             oauthScope: tokenData.scope || "",
             stateMode: stateObj.mode || null,
             policySnapshot,
-            discordSnapshot: {
-                username: profile.username,
-                globalName: profile.globalName,
-                discriminator: profile.discriminator || "0",
-                displayTag: displayTag(profile),
-                avatarUrl: getAvatarUrl(profile),
-                bannerUrl: getBannerUrl(profile),
-                accountCreatedAt: profile.accountCreatedAt,
-                accountAgeDays: profile.accountAgeDays,
-                email: profile.email,
-                emailVerified: profile.emailVerified,
-                locale: profile.locale || null,
-                mfaEnabled: profile.mfaEnabled === true,
-                premiumType: profile.premiumType || 0,
-                badgeFlags: profile.badgeFlags,
-                connectionsCount: connections.length
-            },
-            connectionsSnapshot: connections.map(c => ({
-                type: String(c.type || ""),
-                verified: Boolean(c.verified)
-            })),
+            discordSnapshot,
+            connectionsSnapshot,
             guildSummary,
             joinResult: null,
             roleAssignResult: null,
@@ -747,6 +755,8 @@ async function executeVerification({
         attemptStartedAt: oauthAttemptStartedAt
     });
 
+    const { discordSnapshot, connectionsSnapshot } = buildVerificationSnapshots(profile, connections);
+
     const verifyLogSaved = await saveVerifyLogSafe({
         guildId,
         userId: profile.id,
@@ -757,27 +767,8 @@ async function executeVerification({
         oauthScope: tokenData.scope || "",
         stateMode: stateObj.mode || null,
         policySnapshot,
-        discordSnapshot: {
-            username: profile.username,
-            globalName: profile.globalName,
-            discriminator: profile.discriminator || "0",
-            displayTag: displayTag(profile),
-            avatarUrl: getAvatarUrl(profile),
-            bannerUrl: getBannerUrl(profile),
-            accountCreatedAt: profile.accountCreatedAt,
-            accountAgeDays: profile.accountAgeDays,
-            email: profile.email,
-            emailVerified: profile.emailVerified,
-            locale: profile.locale || null,
-            mfaEnabled: profile.mfaEnabled === true,
-            premiumType: profile.premiumType || 0,
-            badgeFlags: profile.badgeFlags,
-            connectionsCount: connections.length
-        },
-        connectionsSnapshot: connections.map(c => ({
-            type: String(c.type || ""),
-            verified: Boolean(c.verified)
-        })),
+        discordSnapshot,
+        connectionsSnapshot,
         guildSummary,
         joinResult,
         roleAssignResult,

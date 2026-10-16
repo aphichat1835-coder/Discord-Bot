@@ -248,8 +248,9 @@ test("Production Hardening Fixes Suite (Audit Resolution)", async (t) => {
         try {
             // Artificially trigger emergency evaluation with buffer count
             await scheduler.runEmergencyEvaluation();
-            // Scheduler runs emergency evaluation safely
-            assert.ok(true, "Emergency evaluation completes cleanly");
+            // Scheduler runs emergency evaluation safely and updates diagnostic state
+            const diag = scheduler.getSchedulerDiagnostics();
+            assert.ok(diag.diagnostics.emergency.lastRunAt > 0, "Emergency evaluation recorded lastRunAt");
         } finally {
             vRepo.flush = origVFlush;
             cRepo.flush = origCFlush;

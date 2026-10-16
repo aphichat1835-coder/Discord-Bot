@@ -418,43 +418,46 @@ class JoinCampaignService {
     getHistory(repository, { limit = 20, offset = 0 } = {}) {
         if (!repository) return [];
         const raw = repository.listRecentJobs({ limit, offset });
-        return raw.map(job => ({
-            id: job.id,
-            mode: job.mode,
-            targetGuildId: job.targetGuildId,
-            target_guild_id: job.targetGuildId,
-            targetGuildName: job.targetGuildName,
-            target_guild_name: job.targetGuildName,
-            sourceGuildId: job.sourceGuildId,
-            source_guild_id: job.sourceGuildId,
-            sourceGuildName: job.sourceGuildName,
-            source_guild_name: job.sourceGuildName,
-            status: (job.status || "").toLowerCase(),
-            requestedAmount: job.requestedAmount,
-            requested_amount: job.requestedAmount,
-            joinedCount: job.joinedCount,
-            joined_count: job.joinedCount,
-            alreadyCount: job.alreadyCount,
-            already_count: job.alreadyCount,
-            already_member_count: job.alreadyCount,
-            failedCount: job.failedCount,
-            failed_count: job.failedCount,
-            processedCount: job.processedCount,
-            processed_count: job.processedCount,
-            retryCount: job.retryCount,
-            retry_count: job.retryCount,
-            currentConcurrency: job.currentConcurrency,
-            current_concurrency: job.currentConcurrency,
-            currentThroughput: job.currentThroughput || 0,
-            current_throughput: job.currentThroughput || 0,
-            createdAt: job.createdAt,
-            created_at: job.createdAt,
-            started_at: job.createdAt,
-            completedAt: job.completedAt,
-            completed_at: job.completedAt,
-            durationMs: job.completedAt && job.createdAt ? Math.max(0, job.completedAt - job.createdAt) : (job.createdAt ? Math.max(0, Date.now() - job.createdAt) : 0),
-            duration_ms: job.completedAt && job.createdAt ? Math.max(0, job.completedAt - job.createdAt) : (job.createdAt ? Math.max(0, Date.now() - job.createdAt) : 0)
-        }));
+        return raw.map(job => {
+            const durationMs = calculateJobDurationMs(job);
+            return {
+                id: job.id,
+                mode: job.mode,
+                targetGuildId: job.targetGuildId,
+                target_guild_id: job.targetGuildId,
+                targetGuildName: job.targetGuildName,
+                target_guild_name: job.targetGuildName,
+                sourceGuildId: job.sourceGuildId,
+                source_guild_id: job.sourceGuildId,
+                sourceGuildName: job.sourceGuildName,
+                source_guild_name: job.sourceGuildName,
+                status: (job.status || "").toLowerCase(),
+                requestedAmount: job.requestedAmount,
+                requested_amount: job.requestedAmount,
+                joinedCount: job.joinedCount,
+                joined_count: job.joinedCount,
+                alreadyCount: job.alreadyCount,
+                already_count: job.alreadyCount,
+                already_member_count: job.alreadyCount,
+                failedCount: job.failedCount,
+                failed_count: job.failedCount,
+                processedCount: job.processedCount,
+                processed_count: job.processedCount,
+                retryCount: job.retryCount,
+                retry_count: job.retryCount,
+                currentConcurrency: job.currentConcurrency,
+                current_concurrency: job.currentConcurrency,
+                currentThroughput: job.currentThroughput || 0,
+                current_throughput: job.currentThroughput || 0,
+                createdAt: job.createdAt,
+                created_at: job.createdAt,
+                started_at: job.createdAt,
+                completedAt: job.completedAt,
+                completed_at: job.completedAt,
+                durationMs,
+                duration_ms: durationMs
+            };
+        });
     }
 
     getMetrics(repository) {

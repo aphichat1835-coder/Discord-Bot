@@ -30,7 +30,12 @@ async function* streamCandidates({
             seenUsers: tracker
         });
 
-        const candidates = page?.candidates !== undefined ? page.candidates : (Array.isArray(page) ? page : []);
+        let candidates = [];
+        if (page?.candidates !== undefined) {
+            candidates = page.candidates;
+        } else if (Array.isArray(page)) {
+            candidates = page;
+        }
         const nextCursor = page?.nextCursor ?? (candidates.length > 0 && (candidates[candidates.length - 1]?._id || candidates[candidates.length - 1]?.recordId) ? String(candidates[candidates.length - 1]._id || candidates[candidates.length - 1].recordId) : null);
 
         // Note: onPage is intended for telemetry/stats only; persistent job cursors must be

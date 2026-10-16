@@ -30,7 +30,7 @@ function getDeep(target, path) {
 }
 
 function applyDocUpdate(existing, updateData) {
-    const updated = JSON.parse(JSON.stringify(existing));
+    const updated = structuredClone(existing);
     if (updateData.$set && typeof updateData.$set === 'object') {
         for (const [key, value] of Object.entries(updateData.$set)) {
             setDeep(updated, key, value);

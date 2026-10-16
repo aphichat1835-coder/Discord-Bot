@@ -90,8 +90,8 @@ function resolveBackupDir(customDir = null) {
         if (!fs.existsSync(localDir)) fs.mkdirSync(localDir, { recursive: true });
         fs.accessSync(localDir, fs.constants.R_OK | fs.constants.W_OK);
         return localDir;
-    } catch (_err) {
-        // Ignored: Fallback to temporary backups directory when local directory is not writable
+    } catch (err) {
+        console.warn(`[MIGRATION_RUNNER] ⚠️ Local backups directory is not writable (${err.message}), falling back to tmpdir`);
         return path.resolve(os.tmpdir(), "backups");
     }
 }
