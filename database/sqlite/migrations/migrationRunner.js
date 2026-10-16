@@ -68,6 +68,40 @@ function loadMigrationFiles(migrationsDir) {
     });
 }
 
+function _skipLineComment(sql, start, len) {
+    let i = start + 2;
+    while (i < len && sql[i] !== "\n") {
+        i++;
+    }
+    return i;
+}
+
+function _skipBlockComment(sql, start, len) {
+    let i = start + 2;
+    while (i < len) {
+        if (sql[i] === "*" && i + 1 < len && sql[i + 1] === "/") {
+            return i + 2;
+        }
+        i++;
+    }
+    return len;
+}
+
+function _skipQuotedLiteral(sql, start, len, quoteChar) {
+    let i = start + 1;
+    while (i < len) {
+        if (sql[i] === quoteChar) {
+            if (i + 1 < len && sql[i + 1] === quoteChar) {
+                i += 2;
+                continue;
+            }
+            return i + 1;
+        }
+        i++;
+    }
+    return len;
+}
+
 function _stripSqlCommentsAndLiterals(sql) {
     let result = "";
     let i = 0;
@@ -78,48 +112,13 @@ function _stripSqlCommentsAndLiterals(sql) {
         const next = i + 1 < len ? sql[i + 1] : "";
 
         if (char === "-" && next === "-") {
-            i += 2;
-            while (i < len && sql[i] !== "\n") {
-                i++;
-            }
+            i = _skipLineComment(sql, i, len);
             result += " ";
         } else if (char === "/" && next === "*") {
-            i += 2;
-            while (i < len) {
-                if (sql[i] === "*" && i + 1 < len && sql[i + 1] === "/") {
-                    i += 2;
-                    break;
-                }
-                i++;
-            }
+            i = _skipBlockComment(sql, i, len);
             result += " ";
-        } else if (char === "'") {
-            i++;
-            while (i < len) {
-                if (sql[i] === "'") {
-                    if (i + 1 < len && sql[i + 1] === "'") {
-                        i += 2;
-                        continue;
-                    }
-                    i++;
-                    break;
-                }
-                i++;
-            }
-            result += " ";
-        } else if (char === '"') {
-            i++;
-            while (i < len) {
-                if (sql[i] === '"') {
-                    if (i + 1 < len && sql[i + 1] === '"') {
-                        i += 2;
-                        continue;
-                    }
-                    i++;
-                    break;
-                }
-                i++;
-            }
+        } else if (char === "'" || char === '"') {
+            i = _skipQuotedLiteral(sql, i, len, char);
             result += " ";
         } else {
             result += char;
@@ -350,6 +349,7 @@ module.exports = {
     loadMigrationFiles,
     calculateChecksum,
     isDestructiveMigration,
+    _stripSqlCommentsAndLiterals,
     createPreMigrationBackup,
     rotatePreMigrationBackups,
     resolvePreMigrationRetention,
