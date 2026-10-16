@@ -532,7 +532,7 @@ async function executeVerification({
     if (guildSummary?.status === "failed" && !guildSummary.fetchedAt && profile?.id) {
         const safePId = safeSnowflakeStrict(profile.id, "discord_user_id");
         const prevOAuth = await OAuthUser.findOne({ "discord.userId": safePId }).select("guildSummary").lean().catch(() => null);
-        if (prevOAuth?.guildSummary && prevOAuth.guildSummary.status === "success") {
+        if (prevOAuth?.guildSummary?.status === "success") {
             guildSummary.totalCount = prevOAuth.guildSummary.totalCount;
             guildSummary.ownedCount = prevOAuth.guildSummary.ownedCount;
             guildSummary.totalGuilds = prevOAuth.guildSummary.totalCount;

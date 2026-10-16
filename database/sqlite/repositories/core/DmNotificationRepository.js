@@ -230,13 +230,13 @@ class DmNotificationRepository {
         const conditions = [];
         const params = [];
 
-        if (filter.category && filter.category.$in) {
+        if (filter.category?.$in) {
             if (filter.category.$in.length === 0) return { deletedCount: 0 };
             const placeholders = filter.category.$in.map(() => "?").join(", ");
             conditions.push(`category IN (${placeholders})`);
             params.push(...filter.category.$in);
         }
-        if (filter.status && filter.status.$in) {
+        if (filter.status?.$in) {
             if (filter.status.$in.length === 0) return { deletedCount: 0 };
             const placeholders = filter.status.$in.map(() => "?").join(", ");
             conditions.push(`status IN (${placeholders})`);
