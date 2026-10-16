@@ -122,7 +122,10 @@ function acquireProcessLock(dbPath) {
                 }
             }
         } catch (readErr) {
-            // Corrupt or unreadable lock file; remove it to allow reclamation
+            // Corrupt or unreadable lock file; log diagnostic and remove it to allow reclamation
+            if (readErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Lock file unreadable (${readErr.message}), attempting reclamation`);
+            }
             try {
                 fs.unlinkSync(lockPath);
             } catch (unlinkErr) {
@@ -224,7 +227,10 @@ function acquireRestoreLock(dbPath) {
                 }
             }
         } catch (readErr) {
-            // Corrupt or unreadable restore lock file; remove it to allow reclamation
+            // Corrupt or unreadable restore lock file; log diagnostic and remove it to allow reclamation
+            if (readErr.code !== "ENOENT") {
+                console.warn(`[PROCESS_LOCK] ⚠️ Restore lock file unreadable (${readErr.message}), attempting reclamation`);
+            }
             try {
                 fs.unlinkSync(restorePath);
             } catch (unlinkErr) {
