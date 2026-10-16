@@ -181,7 +181,7 @@ async function createBackup(db, options = {}) {
         path: targetPath,
         filename,
         sizeBytes: stat.size,
-        sizeMb: parseFloat((stat.size / (1024 * 1024)).toFixed(2)),
+        sizeMb: Number.parseFloat((stat.size / (1024 * 1024)).toFixed(2)),
         sha256,
         durationMs,
         timestamp

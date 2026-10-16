@@ -883,44 +883,53 @@ function renderFullCheckOutput(act) {
     ].join("\n");
 }
 
+async function handleCleanupActionCommand(cmd, dispatchSqliteAction, invoker) {
+    if (cmd === "cleanup") {
+        const act = await dispatchSqliteAction("cleanup_all", {}, invoker);
+        return {
+            ok: act.ok,
+            output: act.ok
+                ? `✅ ทำความสะอาดข้อมูลสำเร็จ: ลบข้อมูลชั่วคราวและประวัติเก่า ${act.stats?.totalDeleted || act.stats?.deletedRows || 0} รายการ`
+                : `❌ ทำความสะอาดข้อมูลล้มเหลว: ${act.message || act.error || "Unknown error"}`
+        };
+    }
+    if (cmd === "cleanup cache") {
+        const act = await dispatchSqliteAction("cleanup_cache", {}, invoker);
+        return {
+            ok: act.ok,
+            output: act.ok
+                ? `✅ ล้างแคชทั้งหมดสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`
+                : `❌ ล้างแคชล้มเหลว: ${act.message || act.error || "Unknown error"}`
+        };
+    }
+    if (cmd === "cleanup history") {
+        const act = await dispatchSqliteAction("cleanup_history", {}, invoker);
+        let cleanupHistoryMsg = `ล้างประวัติสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`;
+        if (act.message) {
+            cleanupHistoryMsg = act.message.startsWith("✅") ? act.message : `✅ ${act.message}`;
+        } else {
+            cleanupHistoryMsg = `✅ ${cleanupHistoryMsg}`;
+        }
+        return {
+            ok: act.ok,
+            output: act.ok ? cleanupHistoryMsg : `❌ ล้างประวัติล้มเหลว: ${act.message || act.error || "Unknown error"}`
+        };
+    }
+    return null;
+}
+
 async function handleActionCommand(cmd, dispatchSqliteAction, invoker) {
+    if (cmd.startsWith("cleanup")) {
+        const cleanupRes = await handleCleanupActionCommand(cmd, dispatchSqliteAction, invoker);
+        if (cleanupRes) return cleanupRes;
+    }
+
     switch (cmd) {
         case "integrity": {
             const act = await dispatchSqliteAction("integrity", {}, invoker);
             return {
                 ok: act.ok,
                 output: act.ok ? "✅ ผ่านการตรวจสอบ Integrity และ Foreign Keys 100% ฐานข้อมูลสมบูรณ์ปกติ" : `❌ พบข้อผิดพลาด: ${JSON.stringify(act)}`
-            };
-        }
-        case "cleanup": {
-            const act = await dispatchSqliteAction("cleanup_all", {}, invoker);
-            return {
-                ok: act.ok,
-                output: act.ok
-                    ? `✅ ทำความสะอาดข้อมูลสำเร็จ: ลบข้อมูลชั่วคราวและประวัติเก่า ${act.stats?.totalDeleted || act.stats?.deletedRows || 0} รายการ`
-                    : `❌ ทำความสะอาดข้อมูลล้มเหลว: ${act.message || act.error || "Unknown error"}`
-            };
-        }
-        case "cleanup cache": {
-            const act = await dispatchSqliteAction("cleanup_cache", {}, invoker);
-            return {
-                ok: act.ok,
-                output: act.ok
-                    ? `✅ ล้างแคชทั้งหมดสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`
-                    : `❌ ล้างแคชล้มเหลว: ${act.message || act.error || "Unknown error"}`
-            };
-        }
-        case "cleanup history": {
-            const act = await dispatchSqliteAction("cleanup_history", {}, invoker);
-            let cleanupHistoryMsg = `ล้างประวัติสำเร็จ: ลบ ${act.deletedRows || 0} รายการ`;
-            if (act.message) {
-                cleanupHistoryMsg = act.message.startsWith("✅") ? act.message : `✅ ${act.message}`;
-            } else {
-                cleanupHistoryMsg = `✅ ${cleanupHistoryMsg}`;
-            }
-            return {
-                ok: act.ok,
-                output: act.ok ? cleanupHistoryMsg : `❌ ล้างประวัติล้มเหลว: ${act.message || act.error || "Unknown error"}`
             };
         }
         case "checkpoint": {

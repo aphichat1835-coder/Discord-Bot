@@ -138,7 +138,12 @@ function evaluateTrimSafety(dbPath, postQuota, postFootprint) {
 function recordMaintenanceRun(db, runData) {
     try {
         const detailsJson = JSON.stringify(runData.details);
-        const runStatus = runData.isResolved ? "success" : runData.isSoftWarning ? "warning" : "degraded";
+        let runStatus = "degraded";
+        if (runData.isResolved) {
+            runStatus = "success";
+        } else if (runData.isSoftWarning) {
+            runStatus = "warning";
+        }
 
         db.prepare(`
             INSERT INTO maintenance_runs (run_type, started_at, finished_at, status, details_json)
@@ -224,6 +229,13 @@ async function executeEmergencyTrim(dbInstance = null, options = {}) {
         }
     });
 
+    let finalStatus = "degraded";
+    if (isResolved) {
+        finalStatus = "resolved";
+    } else if (isSoftWarning) {
+        finalStatus = "soft_warning";
+    }
+
     return {
         ok: true,
         actor,
@@ -236,7 +248,7 @@ async function executeEmergencyTrim(dbInstance = null, options = {}) {
         freedMb,
         itemsPurged,
         durationMs,
-        status: isResolved ? "resolved" : isSoftWarning ? "soft_warning" : "degraded"
+        status: finalStatus
     };
 }
 

@@ -228,7 +228,7 @@ function formatExpires(expiresAt) {
 }
 
 function formatTouchscreen(touchPoints) {
-    if (touchPoints != null && !isNaN(Number(touchPoints))) {
+    if (touchPoints != null && !Number.isNaN(Number(touchPoints))) {
         const tp = Number(touchPoints);
         if (tp > 0) return `รองรับ ${tp} จุด`;
         if (tp === 0) return "ไม่รองรับ (PC/โน้ตบุ๊ก)";
@@ -395,7 +395,8 @@ function buildEmbedDescription({ guildName, guildId, profile, result, roleId, ro
     const resultLabel = result === "success" ? `สำเร็จ ${resultEmoji}` : `ถูกปฏิเสธ ${resultEmoji}`;
     let roleMention = "ไม่มี";
     if (roleId) {
-        roleMention = `<@&${roleId}>${roleName ? ` (${roleName})` : ""}`;
+        const roleSuffix = roleName ? ` (${roleName})` : "";
+        roleMention = `<@&${roleId}>${roleSuffix}`;
     } else if (roleName) {
         roleMention = `@${roleName}`;
     }
