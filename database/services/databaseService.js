@@ -734,8 +734,8 @@ async function executeSqliteAction(action, options = {}, invoker = "owner") {
                 const hasErrors = !integrityOk || !fkOk || !pragmasOk || !readOk || !storage.ok || storage.filesystemCritical || quota.status === "hard";
                 const hasWarnings = !hasErrors && (storage.warnings.length > 0 || storage.filesystemWarning || storage.pathWarning || quota.status === "soft" || quota.status === "critical" || emergency.isEmergency);
 
-                let status = "ok";
-                let message = "";
+                let status;
+                let message;
 
                 if (hasErrors) {
                     status = "error";

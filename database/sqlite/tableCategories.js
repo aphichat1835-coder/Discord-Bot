@@ -60,7 +60,7 @@ const TABLE_CATEGORIES = {
  */
 function getCategoryForTable(tableName) {
     for (const cat of Object.values(TABLE_CATEGORIES)) {
-        if (Object.prototype.hasOwnProperty.call(cat.tables, tableName)) {
+        if (Object.hasOwn(cat.tables, tableName)) {
             return cat.key;
         }
     }
