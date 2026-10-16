@@ -115,7 +115,6 @@ continuation payloads when one Discord message cannot hold the full event.
 │   ├── logging/                  moderation cases and reconciliation
 │   ├── sessions/                 voice session helpers
 │   ├── quest/                    Discord Quest automation subsystem (engine, crypto, DM throttler, logs)
-│   ├── voiceWorker.js
 │   ├── voiceWorker/              voice worker implementation (lean caching, AutoDeaf, Natural timers)
 │   ├── verification/
 │   │   ├── runtime.js            mounts routes/assets into the main Express app

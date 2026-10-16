@@ -35,7 +35,7 @@ function guild(id, targetChannelId, selfUserId) {
 }
 
 test("voice lean cleanup keeps only target guild/channel and self identity", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const voiceWorker = require("../voiceWorker");
+    const voiceWorker = require("../voiceWorker/index");
     const selfUserId = "self-user";
     const targetGuildId = "guild-target";
     const targetChannelId = "voice-target";

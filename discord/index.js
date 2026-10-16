@@ -26,7 +26,7 @@ const { isConfiguredOwner, resolveOwnerIds, validateRequiredEnv } = require("./c
 // observes the production OWNER_ID from its first use.
 resolveOwnerIds(process.env, config);
 const sessionManager = require("./voiceWorker/sessionManager");
-const voiceWorker    = require("./voiceWorker");
+const voiceWorker    = require("./voiceWorker/index");
 const commands       = require("./commands");
 const voiceAdmin     = require("./features/voiceAdmin");
 const memoryMonitor  = require("./index/memoryMonitor");

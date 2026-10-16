@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const voiceWorker = require("../voiceWorker");
+const voiceWorker = require("../voiceWorker/index");
 const { st } = require("../voiceWorker/state");
 const { isInvalidTokenError } = require("../voiceWorker/lifecycle");
 

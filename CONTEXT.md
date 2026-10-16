@@ -85,7 +85,7 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Owner verification bridge | `discord/index/verifyOwner.js` |
 | Persistence | `discord/voiceWorker/sessionManager.js` |
 | Commands | `discord/commands.js`, `discord/commands/` |
-| Voice/session | `discord/voiceWorker.js`, `discord/voiceWorker/`, `discord/sessions/` |
+| Voice/session | `discord/voiceWorker/`, `discord/sessions/` |
 | Moderation cases | `discord/logging/modCaseManager.js` |
 | Protection/role button | `discord/features/` |
 | Verification runtime | `discord/verification/runtime.js`, `discord/verification/lifecycle.js` |
