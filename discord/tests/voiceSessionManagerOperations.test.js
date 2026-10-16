@@ -203,5 +203,200 @@ test("Voice SessionManager Operations Suite", async (t) => { // NOSONAR -- node:
         assert.equal(deleted, true);
         assert.equal(sm.getAllSessions().has(sessionId), false);
     });
+
+    await t.test("9. System metrics tracking and aggregation", () => {
+        sm.systemMetrics.increment("requests");
+        sm.systemMetrics.increment("errors");
+        sm.systemMetrics.increment("reconnects");
+
+        const metrics = sm.getSystemMetrics();
+        assert.ok(metrics.requests >= 1);
+        assert.ok(metrics.errors >= 1);
+        assert.ok(metrics.reconnects >= 1);
+        assert.equal(typeof metrics.uptimeMs, "number");
+    });
+
+    await t.test("10. Bot settings offline/fallback contracts", async () => {
+        const fallback = await sm.getSetting("unconnected_key", "default_val");
+        assert.equal(fallback, "default_val");
+
+        await assert.rejects(async () => {
+            await sm.getSettingStrict("unconnected_key");
+        }, /DATABASE_NOT_CONNECTED/);
+
+        const res = await sm.setSetting("key", "val");
+        assert.equal(res, false);
+
+        const all = await sm.getAllSettings();
+        assert.deepEqual(all, {});
+    });
+
+    await t.test("11. Panel state offline behavior", async () => {
+        const state = await sm.getPanelState("g_offline");
+        assert.equal(state, null);
+
+        const states = await sm.getPanelStates();
+        assert.deepEqual(states, []);
+
+        const del = await sm.deletePanelState("g_offline");
+        assert.equal(del, false);
+
+        const save = await sm.savePanelState("g_offline", {});
+        assert.equal(save, false);
+    });
+
+    await t.test("12. hydrateLoadedSessionRecord and session load repairs", () => {
+        const rawRecord = {
+            _id: "rec_123",
+            sessionId: "sess_hydrate_1",
+            token: "plain_token_needs_migrated_xyz_12345",
+            serverId: "guild_hyd_1",
+            voiceId: "voice_hyd_1"
+        };
+
+        const hydrated = sm._test.hydrateLoadedSessionRecord(rawRecord);
+        assert.equal(hydrated.sessionData.sessionId, "sess_hydrate_1");
+        assert.equal(hydrated.sessionData.serverId, "guild_hyd_1");
+        assert.ok(hydrated.sessionData.token);
+        assert.ok(hydrated.sessionData.lifecycleGeneration);
+        assert.equal(hydrated.isActive, true);
+    });
+
+    await t.test("13. _processLoadedRecords and _reconcileOrphanVoiceRuntimes", () => {
+        const targetMap = new Map();
+        const records = [
+            { _id: "r1", sessionId: "s1", serverId: "g1", voiceId: "v1", state: "active" },
+            { _id: "r2", sessionId: "s2", serverId: "g2", voiceId: "v2", state: "stopped" }
+        ];
+
+        const res = sm._test._processLoadedRecords(records, targetMap);
+        assert.equal(res.activeLoaded, 1);
+        assert.equal(res.recoverableLoaded, 1);
+        assert.equal(targetMap.size, 2);
+
+        // _reconcileOrphanVoiceRuntimes does not throw when database is healthy or absent
+        assert.doesNotThrow(() => {
+            sm._test._reconcileOrphanVoiceRuntimes(targetMap);
+        });
+    });
+
+    await t.test("14. cleanupSessionMemory and _safeDeleteSessionRuntime", () => {
+        let destroyed = false;
+        const mockConn = {
+            state: { status: "ready" },
+            destroy: () => { destroyed = true; }
+        };
+
+        const dummySession = {
+            sessionId: "clean_1",
+            connection: mockConn,
+            client: { isReady: () => true },
+            state: "active"
+        };
+
+        sm._test.cleanupSessionMemory("clean_1", dummySession);
+        assert.equal(dummySession.connection, null);
+        assert.equal(destroyed, true);
+
+        // _safeDeleteSessionRuntime runs safely
+        assert.doesNotThrow(() => {
+            sm._test._safeDeleteSessionRuntime("clean_1", "test_cleanup");
+        });
+    });
+
+    await t.test("15. _recordSessionDeletedEvent and _handleDisconnectedOrFailedDelete", () => {
+        const session = {
+            sessionId: "rec_del_1",
+            serverId: "g_rec_1",
+            ownerId: "o_rec_1",
+            state: "active"
+        };
+
+        assert.doesNotThrow(() => {
+            sm._test._recordSessionDeletedEvent("rec_del_1", session);
+        });
+
+        assert.doesNotThrow(() => {
+            sm._test._handleDisconnectedOrFailedDelete("rec_del_1", session, new Error("disconnected_test"));
+        });
+    });
+
+    await t.test("16. buildVoiceSessionAccountSummary and buildVoiceSessionStateSummary", () => {
+        const fullSession = {
+            sessionId: "sum_1",
+            ownerId: "owner_999",
+            ownerTag: "Owner#0001",
+            ownerAvatar: "https://avatar.png",
+            accountId: "acc_999",
+            accountUsername: "accountUser",
+            accountGlobalName: "Account Global",
+            accountTag: "account#0001",
+            accountAvatar: "https://acc_avatar.png",
+            state: "active",
+            stoppedAt: null,
+            stoppedReason: null,
+            stoppedBy: null,
+            lastStopError: null,
+            client: { isReady: () => true },
+            connection: { state: { status: "ready" } }
+        };
+
+        const accountSummary = sm._test.buildVoiceSessionAccountSummary(fullSession);
+        assert.equal(accountSummary.ownerId, "owner_999");
+        assert.equal(accountSummary.accountUsername, "accountUser");
+
+        const stateSummary = sm._test.buildVoiceSessionStateSummary(fullSession);
+        assert.equal(stateSummary.state, "active");
+        assert.equal(stateSummary.clientReady, true);
+        assert.equal(stateSummary.connectionStatus, "ready");
+
+        // Stale and ghost suspicion
+        const ghostSession = {
+            state: "stopped",
+            stoppedReason: "stop_cleanup_failed"
+        };
+        const ghostSummary = sm._test.buildVoiceSessionStateSummary(ghostSession);
+        assert.equal(ghostSummary.ghostSuspected, true);
+    });
+
+    await t.test("17. isRetiredEnterpriseAuditSetting, boundedLimit, and numberEnv", () => {
+        assert.equal(sm._test.isRetiredEnterpriseAuditSetting("enterprise_audit_log"), true);
+        assert.equal(sm._test.isRetiredEnterpriseAuditSetting("normal_setting"), false);
+
+        assert.equal(sm._test.boundedLimit(50, 100), 50);
+        assert.equal(sm._test.boundedLimit(150, 100), 100);
+        assert.equal(sm._test.boundedLimit(-5, 100, 20), 20);
+
+        assert.equal(sm._test.numberEnv("TEST_NON_EXISTENT_ENV_12345", 42), 42);
+    });
+
+    await t.test("18. cleanStaleSessionsAndLegacyModels and applySessionLoadRepairs", async () => {
+        await sm._test.applySessionLoadRepairs([]);
+
+        const cleanupResult = await sm._test.cleanStaleSessionsAndLegacyModels(Date.now());
+        assert.ok(cleanupResult === null || typeof cleanupResult === "object");
+    });
+
+    await t.test("19. pauseSession safely transitions runnable session", async () => {
+        const sessionId = "pause_test_1";
+        const session = {
+            sessionId,
+            state: "active",
+            serverId: "g_pause_1",
+            tokenHash: "hash_pause"
+        };
+        sm.getAllSessions().set(sessionId, session);
+
+        const paused = await sm.pauseSession(sessionId);
+        assert.equal(paused, true);
+        assert.equal(session.state, "paused");
+
+        // Non-existent session
+        const notFound = await sm.pauseSession("non_existent_session");
+        assert.equal(notFound, false);
+
+        sm.getAllSessions().delete(sessionId);
+    });
 });
+
 

@@ -216,4 +216,132 @@ test("guildRoute resolveUrlFormatText and resolveWorkerReadyText readiness resol
   expect(resolveWorkerReadyText({ databaseReady: { ok: true }, queueReady: { ok: true }, urlValid: true, enabled: true, stats: {} })).toBe("ระบบพร้อมส่งข้อมูลตามเวลาจริง");
 });
 
+test("guildRoute input cleaners, pagination, and error status resolvers", () => {
+  const {
+    cleanText,
+    cleanHexColor,
+    cleanUrl,
+    parsePage,
+    parseLimit,
+    ipHistoryErrorStatus,
+    pagination,
+    sanitizeVerificationBasicFlags,
+    sanitizeSingleSecurityRule
+  } = guildRoute._test;
+
+  // cleanText
+  expect(cleanText(null)).toBeUndefined();
+  expect(cleanText(undefined)).toBeUndefined();
+  expect(cleanText("  hello world  ", 5)).toBe("hello");
+
+  // cleanHexColor
+  expect(cleanHexColor(null)).toBeUndefined();
+  expect(cleanHexColor("")).toBeUndefined();
+  expect(cleanHexColor("#FF00AA")).toBe("#FF00AA");
+  expect(cleanHexColor("00FF00")).toBe("#00FF00");
+  expect(cleanHexColor("invalid_hex")).toBeUndefined();
+
+  // cleanUrl
+  expect(cleanUrl(null)).toBeUndefined();
+  expect(cleanUrl("")).toBeUndefined();
+  expect(cleanUrl("not-a-url")).toBeUndefined();
+  expect(cleanUrl("javascript:alert(1)")).toBeUndefined();
+  expect(cleanUrl("https://example.com/webhook")).toBe("https://example.com/webhook");
+
+  // parsePage & parseLimit
+  expect(parsePage("-5")).toBe(0);
+  expect(parsePage("3")).toBe(3);
+  expect(parseLimit("0", 25, 100)).toBe(25);
+  expect(parseLimit("1", 25, 100)).toBe(1);
+  expect(parseLimit("200", 25, 100)).toBe(100);
+  expect(parseLimit(null, 50, 100)).toBe(50);
+
+  // ipHistoryErrorStatus
+  expect(ipHistoryErrorStatus("invalid_history_kind")).toBe(400);
+  expect(ipHistoryErrorStatus("ip_history_not_found")).toBe(404);
+  expect(ipHistoryErrorStatus("other_error")).toBe(500);
+
+  // pagination
+  const p1 = pagination(0, 10, 25);
+  expect(p1.hasMore).toBe(true);
+  expect(p1.nextPage).toBe(1);
+  expect(p1.prevPage).toBeNull();
+
+  const p2 = pagination(2, 10, 25);
+  expect(p2.hasMore).toBe(false);
+  expect(p2.nextPage).toBeNull();
+  expect(p2.prevPage).toBe(1);
+
+  // sanitizeVerificationBasicFlags
+  const flags = sanitizeVerificationBasicFlags({
+    enabled: true,
+    blockVPN: "true",
+    minAccountAgeDays: "14",
+    minConnections: "2",
+    roleId: "123456789012345678",
+    ignoredField: "skip"
+  });
+  expect(flags.enabled).toBe(true);
+  expect(flags.blockVPN).toBe(true);
+  expect(flags.minAccountAgeDays).toBe(14);
+  expect(flags.minConnections).toBe(2);
+  expect(flags.roleId).toBe("123456789012345678");
+  expect(flags.ignoredField).toBeUndefined();
+
+  // sanitizeSingleSecurityRule
+  expect(sanitizeSingleSecurityRule(null, "ipDuplicate")).toBeNull();
+  expect(sanitizeSingleSecurityRule([], "ipDuplicate")).toBeNull();
+  const rule = sanitizeSingleSecurityRule({
+    enabled: "true",
+    action: "kick",
+    timeoutMinutes: 120,
+    threshold: 5
+  }, "ipDuplicate");
+  expect(rule.enabled).toBe(true);
+  expect(rule.action).toBe("kick");
+  expect(rule.timeoutMinutes).toBe(120);
+  expect(rule.threshold).toBe(5);
+});
+
+test("guildRoute panelDifferences, comparablePanel, and safeRollbackEmbed", () => {
+  const {
+    comparablePanel,
+    panelDifferences,
+    safeRollbackEmbed,
+    panelRollbackPayload
+  } = guildRoute._test;
+
+  const p1 = {
+    title: "Verify",
+    description: "Click button to verify",
+    color: "#00FF00",
+    buttonLabel: "Verify"
+  };
+  const p2 = {
+    title: "Verify",
+    description: "Click button to verify",
+    color: "#FF0000",
+    buttonLabel: "Start"
+  };
+
+  const comp1 = comparablePanel(p1);
+  const comp2 = comparablePanel(p2);
+  expect(comp1.title).toBe("Verify");
+
+  const diffs = panelDifferences(p1, p2);
+  expect(diffs).toContain("color");
+  expect(diffs).toContain("buttonLabel");
+
+  const safeEmbed = safeRollbackEmbed({ title: "My Title", description: "My Desc", color: 0x00FF00 });
+  expect(safeEmbed.title).toBe("My Title");
+
+  const rollbackPayload = panelRollbackPayload({
+    embeds: [{ title: "Restored Title", description: "Restored Desc" }],
+    components: []
+  });
+  expect(rollbackPayload.embeds).toHaveLength(1);
+  expect(rollbackPayload.embeds[0].title).toBe("Restored Title");
+});
+
+
 

@@ -1258,5 +1258,13 @@ module.exports = {
     recordAudit: recordMaintenanceAudit,
     getSqliteDb: () => getDatabase(),
     CONSOLE_COMMANDS,
-    ALLOWED_MONGO_COLLECTIONS
+    ALLOWED_MONGO_COLLECTIONS,
+    _test: {
+        evaluateSqliteHealth,
+        summarizeTableRecordCounts,
+        computeStorageBreakdown,
+        calculateManagedStorage,
+        resolvePersistentLabel,
+        measureMongoOverview
+    }
 };

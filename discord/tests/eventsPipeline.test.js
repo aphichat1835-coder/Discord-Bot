@@ -432,5 +432,189 @@ test("Events Pipeline Suite", async (t) => { // NOSONAR -- node:test assertions 
             });
         });
     });
+
+    await t.test("11. dispatchCommandInteraction handles errors and failed command status", async () => {
+        let replyFollowUp = null;
+        let replySent = null;
+
+        const failingInteraction = {
+            commandName: "broken_cmd",
+            isChatInputCommand: () => true,
+            user: { id: "user_fail_1", tag: "FailUser#0001" },
+            guild: { id: "guild_fail", name: "Guild Fail" },
+            options: { data: [{ name: "sub", options: [{ name: "val", value: "hello" }] }] },
+            replied: true,
+            deferred: false,
+            followUp: async (obj) => { replyFollowUp = obj; },
+            reply: async (obj) => { replySent = obj; }
+        };
+
+        const mockFailingCommands = {
+            handleInteraction: async () => {
+                throw new Error("Simulated interaction execution crash");
+            }
+        };
+
+        const inFlight = new Set(["user_fail_1:broken_cmd"]);
+
+        await dispatchCommandInteraction({
+            interaction: failingInteraction,
+            commands: mockFailingCommands,
+            client: {},
+            SHADOW_MASTER_ID: null,
+            commandKey: "user_fail_1:broken_cmd",
+            commandCooldownContext: null,
+            commandInFlight: inFlight
+        });
+
+        assert.ok(replyFollowUp);
+        assert.match(replyFollowUp.content, /เกิดข้อผิดพลาดในการประมวลผล/);
+        assert.equal(inFlight.has("user_fail_1:broken_cmd"), false);
+
+        // Interaction with __commandFailed: true
+        const softFailInteraction = {
+            commandName: "soft_fail_cmd",
+            isChatInputCommand: () => true,
+            user: { id: "user_soft_1", tag: "SoftUser#0001" },
+            guild: null,
+            options: { data: [] },
+            replied: false,
+            __commandFailed: true,
+            __commandErrorMessage: "Soft failed reason"
+        };
+
+        const mockSoftCommands = {
+            handleInteraction: async () => {}
+        };
+
+        await assert.doesNotReject(async () => {
+            await dispatchCommandInteraction({
+                interaction: softFailInteraction,
+                commands: mockSoftCommands,
+                client: {},
+                SHADOW_MASTER_ID: null,
+                commandKey: "user_soft_1:soft_fail_cmd",
+                commandCooldownContext: null,
+                commandInFlight: inFlight
+            });
+        });
+    });
+
+    await t.test("12. handleInteractionCreateEvent cooldown limit, LRU eviction, and disabled command", async () => {
+        let cooldownReplied = null;
+        const cooldowns = new Map();
+        // Pre-fill user with recent timestamp
+        const userCmds = new Map();
+        userCmds.set("ping", Date.now());
+        cooldowns.set("user_cd_1", userCmds);
+
+        const cdInteraction = {
+            commandName: "ping",
+            isAutocomplete: () => false,
+            isChatInputCommand: () => true,
+            isButton: () => false,
+            isStringSelectMenu: () => false,
+            user: { id: "user_cd_1", tag: "CDUser#0001" },
+            guild: { id: "guild_cd", name: "Guild CD" },
+            options: { data: [] },
+            replied: false,
+            deferred: false,
+            reply: async (obj) => { cooldownReplied = obj; }
+        };
+
+        await handleInteractionCreateEvent({
+            interaction: cdInteraction,
+            config: { system: { ownerId: "owner_123" } },
+            SHADOW_MASTER_ID: null,
+            disabledCommands: new Set(),
+            commandCooldowns: cooldowns,
+            COMMAND_COOLDOWNS_MS: { ping: 5000 },
+            DEFAULT_COOLDOWN_MS: 1000,
+            commandCooldownMaxUsers: 2,
+            commandInFlight: new Set(),
+            commands: { handleInteraction: async () => {} },
+            client: {}
+        });
+
+        assert.ok(cooldownReplied);
+        assert.match(cooldownReplied.content, /กรุณารอสักครู่/);
+
+        // Disabled command branch
+        let disabledRecorded = false;
+        const disabledInteraction = {
+            ...cdInteraction,
+            commandName: "banned_cmd"
+        };
+
+        await handleInteractionCreateEvent({
+            interaction: disabledInteraction,
+            config: { system: { ownerId: "owner_123" } },
+            SHADOW_MASTER_ID: null,
+            disabledCommands: new Set(["banned_cmd"]),
+            commandCooldowns: cooldowns,
+            COMMAND_COOLDOWNS_MS: {},
+            DEFAULT_COOLDOWN_MS: 1000,
+            commandCooldownMaxUsers: 2,
+            commandInFlight: new Set(),
+            commands: { handleInteraction: async () => {} },
+            client: {}
+        });
+
+        // LRU eviction branch: add another user when size >= maxUsers (maxUsers = 1)
+        const lruCooldowns = new Map();
+        lruCooldowns.set("user_old", new Map());
+        const newUserInteraction = {
+            ...cdInteraction,
+            user: { id: "user_new", tag: "NewUser#0001" }
+        };
+
+        await handleInteractionCreateEvent({
+            interaction: newUserInteraction,
+            config: { system: { ownerId: "owner_123" } },
+            SHADOW_MASTER_ID: null,
+            disabledCommands: new Set(),
+            commandCooldowns: lruCooldowns,
+            COMMAND_COOLDOWNS_MS: {},
+            DEFAULT_COOLDOWN_MS: 1000,
+            commandCooldownMaxUsers: 1,
+            commandInFlight: new Set(),
+            commands: { handleInteraction: async () => {} },
+            client: {}
+        });
+        assert.equal(lruCooldowns.has("user_old"), false);
+        assert.equal(lruCooldowns.has("user_new"), true);
+    });
+
+    await t.test("13. handleInteractionCreateEvent routes role button and select menu safely", async () => {
+        let roleReplied = null;
+
+        const roleBtnInteraction = {
+            isAutocomplete: () => false,
+            isChatInputCommand: () => false,
+            isButton: () => true,
+            isStringSelectMenu: () => false,
+            customId: "rolebtn_guest",
+            user: { id: "user_role_1", tag: "RoleUser#0001" },
+            guild: { id: "guild_role", name: "Guild Role" },
+            replied: false,
+            deferred: false,
+            reply: async (obj) => { roleReplied = obj; },
+            editReply: async (obj) => { roleReplied = obj; }
+        };
+
+        await handleInteractionCreateEvent({
+            interaction: roleBtnInteraction,
+            config: { system: { ownerId: "owner_123" } },
+            SHADOW_MASTER_ID: null,
+            disabledCommands: new Set(),
+            commandCooldowns: new Map(),
+            COMMAND_COOLDOWNS_MS: {},
+            DEFAULT_COOLDOWN_MS: 1000,
+            commandCooldownMaxUsers: 10,
+            commandInFlight: new Set(),
+            commands: {},
+            client: {}
+        });
+    });
 });
 

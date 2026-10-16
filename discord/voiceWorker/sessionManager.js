@@ -2018,6 +2018,21 @@ module.exports = {
         queuePendingSessionDelete,
         buildPendingSessionDeleteFilter,
         flushPendingSessionDeletes,
+        hydrateLoadedSessionRecord,
+        cleanStaleSessionsAndLegacyModels,
+        applySessionLoadRepairs,
+        countActiveSessionsByTokenHash,
+        _processLoadedRecords,
+        _reconcileOrphanVoiceRuntimes,
+        cleanupSessionMemory,
+        _safeDeleteSessionRuntime,
+        _recordSessionDeletedEvent,
+        _handleDisconnectedOrFailedDelete,
+        buildVoiceSessionAccountSummary,
+        buildVoiceSessionStateSummary,
+        isRetiredEnterpriseAuditSetting,
+        boundedLimit,
+        numberEnv,
         resetDbAlertState: () => { lastConnectionLostAlertAt = 0; }
     }
 };

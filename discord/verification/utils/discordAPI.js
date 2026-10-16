@@ -1569,6 +1569,8 @@ module.exports = {
         normalizeRequestBody,
         validateRequestBodySize,
         prepareDiscordRequestHeaders,
-        DISCORD_API_BODY_MAX_BYTES
+        DISCORD_API_BODY_MAX_BYTES,
+        prepareMessagePayload,
+        buildMultipartFormData
     }
 };

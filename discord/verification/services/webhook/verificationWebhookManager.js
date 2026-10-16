@@ -1784,5 +1784,10 @@ module.exports = {
     isPermanentWebhookError,
     isEligibleVerifyLog,
     VerificationWebhookManager,
-    verificationWebhookManager
+    verificationWebhookManager,
+    _test: {
+        sendThrottledAlert,
+        _parseRetryAfterSeconds,
+        _handleWebhook429
+    }
 };

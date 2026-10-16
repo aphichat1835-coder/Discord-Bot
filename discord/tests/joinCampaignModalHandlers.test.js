@@ -313,4 +313,87 @@ test("Join Campaign: Interaction Router and Modal Submit Handlers Suite", async 
         assert.ok(interactionStart.deferred);
         assert.ok(interactionStart.editReplyPayload);
     });
+
+    await t.test("9. joinCampaignService getStatus and getRecentCampaigns format dashboard objects", () => {
+        // Null repository
+        const emptyStatus = joinCampaignService.getStatus(null);
+        assert.equal(emptyStatus.isRunning, false);
+        assert.equal(emptyStatus.active, null);
+
+        const mockJob = {
+            id: "job_active_1",
+            mode: "all_to_target",
+            targetGuildId: "123456789012345678",
+            targetGuildName: "Target Guild",
+            sourceGuildId: "234567890123456789",
+            sourceGuildName: "Source Guild",
+            status: "RUNNING",
+            requestedAmount: 50,
+            joinedCount: 10,
+            alreadyCount: 5,
+            failedCount: 1,
+            processedCount: 16,
+            retryCount: 2,
+            currentConcurrency: 3,
+            currentThroughput: 1.5,
+            createdAt: Date.now() - 60000,
+            completedAt: null
+        };
+
+        const mockRepo = {
+            findActiveRunningJob: () => mockJob,
+            listRecentJobs: () => [mockJob],
+            getMetrics: () => ({
+                totalJobs: 1,
+                totalCampaigns: 1,
+                totalJoined: 10,
+                totalProcessed: 16,
+                totalFailed: 1,
+                successRatePercent: 90
+            })
+        };
+
+        const status = joinCampaignService.getStatus(mockRepo);
+        assert.equal(status.isRunning, true);
+        assert.ok(status.active);
+        assert.equal(status.active.id, "job_active_1");
+        assert.equal(status.active.status, "running");
+        assert.equal(status.active.joinedCount, 10);
+        assert.equal(status.active.alreadyCount, 5);
+        assert.equal(status.active.failedCount, 1);
+        assert.equal(status.active.requestedAmount, 50);
+
+        const recent = joinCampaignService.getHistory(mockRepo);
+        assert.equal(recent.length, 1);
+        assert.equal(recent[0].id, "job_active_1");
+        assert.equal(recent[0].joinedCount, 10);
+    });
+
+    await t.test("10. joinCampaignService getMetrics handles null and repository delegation", () => {
+        const emptyMetrics = joinCampaignService.getMetrics(null);
+        assert.deepEqual(emptyMetrics, {
+            totalJobs: 0,
+            totalCampaigns: 0,
+            totalJoined: 0,
+            totalProcessed: 0,
+            totalFailed: 0,
+            successRatePercent: 0
+        });
+
+        const mockRepo = {
+            getMetrics: () => ({
+                totalJobs: 5,
+                totalCampaigns: 5,
+                totalJoined: 100,
+                totalProcessed: 120,
+                totalFailed: 20,
+                successRatePercent: 83.3
+            })
+        };
+
+        const metrics = joinCampaignService.getMetrics(mockRepo);
+        assert.equal(metrics.totalJobs, 5);
+        assert.equal(metrics.totalJoined, 100);
+        assert.equal(metrics.successRatePercent, 83.3);
+    });
 });

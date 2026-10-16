@@ -134,4 +134,20 @@ function main() {
     runFullAuditCheck();
 }
 
-main();
+if (require.main === module) { // NOSONAR -- Node.js CommonJS entry point pattern
+    main();
+}
+
+module.exports = {
+    resolveNpmBin,
+    getAuditEnv,
+    ALLOWED_DEV_EXCEPTIONS,
+    runProductionAudit,
+    runFullAuditCheck,
+    _parseAuditJsonOutput,
+    _matchesAdvisory,
+    _isVulnAllowed,
+    _classifyVulnerabilities,
+    _reportAuditResults,
+    main
+};

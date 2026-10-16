@@ -1936,7 +1936,16 @@ router._test = {
   persistedPanelMatches,
   rollbackDiscordPanel,
   resolveUrlFormatText,
-  resolveWorkerReadyText
+  resolveWorkerReadyText,
+  cleanText,
+  cleanHexColor,
+  cleanUrl,
+  parsePage,
+  parseLimit,
+  ipHistoryErrorStatus,
+  pagination,
+  sanitizeVerificationBasicFlags,
+  sanitizeSingleSecurityRule
 };
 
 module.exports = router;

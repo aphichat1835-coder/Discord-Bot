@@ -234,4 +234,73 @@ describe("Discord API Permissions and Channel Validation Helpers Suite", () => {
             expect(copy.tone).toBe("danger");
         });
     });
+
+    describe("Discord API Requests and Payload Preparation", () => {
+        test("addMemberToGuild validates parameters and bot token", async () => {
+            const res1 = await discordAPI.addMemberToGuild(null, "123", "token");
+            expect(res1.ok).toBe(false);
+            expect(res1.status).toBe(400);
+
+            const res2 = await discordAPI.addMemberToGuild("123", null, "token");
+            expect(res2.ok).toBe(false);
+            expect(res2.status).toBe(400);
+
+            const res3 = await discordAPI.addMemberToGuild("123", "456", null);
+            expect(res3.ok).toBe(false);
+            expect(res3.status).toBe(400);
+        });
+
+        test("addRoleToMember and removeRoleFromMember validate parameters", async () => {
+            const resAdd = await discordAPI.addRoleToMember(null, "123", "456");
+            expect(resAdd.ok).toBe(false);
+            expect(resAdd.status).toBe(400);
+
+            const resRem = await discordAPI.removeRoleFromMember("invalid_guild", "123", "456");
+            expect(resRem.ok).toBe(false);
+            expect(resRem.status).toBe(400);
+        });
+
+        test("moderateVerificationMember validates action and snowflake IDs", async () => {
+            const resBadAction = await discordAPI.moderateVerificationMember("123456789012345678", "987654321098765432", "promote");
+            expect(resBadAction.ok).toBe(false);
+            expect(resBadAction.status).toBe(400);
+
+            const resBadGid = await discordAPI.moderateVerificationMember("bad_id", "987654321098765432", "kick");
+            expect(resBadGid.ok).toBe(false);
+            expect(resBadGid.status).toBe(400);
+        });
+
+        test("fetchChannelMessage and getChannel validate snowflake IDs", async () => {
+            const resMsg = await discordAPI.fetchChannelMessage("bad_cid", "bad_mid");
+            expect(resMsg.ok).toBe(false);
+            expect(resMsg.status).toBe(400);
+
+            const resChan = await discordAPI.getChannel("invalid_cid");
+            expect(resChan).toBeNull();
+        });
+
+        test("prepareMessagePayload builds application/json for standard payloads", () => {
+            const { prepareMessagePayload } = discordAPI._test;
+            const payload = { content: "Hello Discord!", embeds: [{ title: "Welcome" }] };
+            const prepared = prepareMessagePayload(payload);
+
+            expect(prepared.contentType).toBe("application/json");
+            expect(JSON.parse(prepared.requestBody)).toEqual(payload);
+        });
+
+        test("prepareMessagePayload and buildMultipartFormData construct multipart body when files are provided", () => {
+            const { prepareMessagePayload } = discordAPI._test;
+            const payload = {
+                content: "Message with attachments",
+                files: [
+                    { name: "test.webp", path: "/tmp/nonexistent_sample.webp" }
+                ]
+            };
+            const prepared = prepareMessagePayload(payload);
+
+            expect(prepared.contentType).toMatch(/^multipart\/form-data; boundary=/);
+            expect(Buffer.isBuffer(prepared.requestBody)).toBe(true);
+            expect(prepared.requestBody.toString()).toContain("Content-Disposition: form-data; name=\"payload_json\"");
+        });
+    });
 });
