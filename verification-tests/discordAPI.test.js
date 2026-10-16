@@ -161,4 +161,63 @@ describe('Discord API memory guards', () => {
         expect(checks.embed_links).toBe(false);
         expect(result.ok).toBe(false);
     });
+
+    test('validates bot can manage target role hierarchy and permissions', () => {
+        const roles = [
+            { id: 'everyone', name: '@everyone', position: 0, permissions: '0' },
+            { id: 'member-role', name: 'Member', position: 2, permissions: '0', managed: false },
+            { id: 'managed-role', name: 'BotRole', position: 3, permissions: '0', managed: true },
+            { id: 'high-role', name: 'Admin', position: 10, permissions: '0', managed: false },
+            { id: 'bot-role', name: 'MyBot', position: 8, permissions: '268435456' } // ManageRoles = 268435456
+        ];
+        const botMember = {
+            user: { id: 'bot-user' },
+            roles: ['bot-role']
+        };
+
+        // 1. Target role not found
+        const notFound = discordAPI.validateBotCanManageRole({
+            botMember,
+            roles,
+            targetRoleId: 'non-existent'
+        });
+        expect(notFound.ok).toBe(false);
+        expect(notFound.errors).toContain('ไม่พบ role เป้าหมายในเซิร์ฟเวอร์');
+
+        // 2. Target role is managed
+        const managedRes = discordAPI.validateBotCanManageRole({
+            botMember,
+            roles,
+            targetRoleId: 'managed-role'
+        });
+        expect(managedRes.ok).toBe(false);
+        expect(managedRes.errors[0]).toMatch(/managed role/);
+
+        // 3. Target role is higher than bot role
+        const tooHighRes = discordAPI.validateBotCanManageRole({
+            botMember,
+            roles,
+            targetRoleId: 'high-role'
+        });
+        expect(tooHighRes.ok).toBe(false);
+        expect(tooHighRes.errors).toContain('ยศบอทต้องอยู่สูงกว่า role ที่จะให้');
+
+        // 4. Valid role lower than bot role
+        const validRes = discordAPI.validateBotCanManageRole({
+            botMember,
+            roles,
+            targetRoleId: 'member-role'
+        });
+        expect(validRes.ok).toBe(true);
+        expect(validRes.errors).toHaveLength(0);
+    });
+
+    test('toBigIntPermission safely parses permission values', () => {
+        expect(discordAPI.toBigIntPermission('8')).toBe(8n);
+        expect(discordAPI.toBigIntPermission(0)).toBe(0n);
+        expect(discordAPI.toBigIntPermission(null)).toBe(0n);
+        expect(discordAPI.toBigIntPermission(undefined)).toBe(0n);
+        expect(discordAPI.toBigIntPermission('invalid')).toBe(0n);
+    });
 });
+

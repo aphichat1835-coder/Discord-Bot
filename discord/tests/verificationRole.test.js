@@ -314,4 +314,42 @@ test("buildVerificationSetupResultEmbed formats confirmation embed properly", ()
     assert.match(embed.data.title, /ติดตั้งแผงยืนยันเรียบร้อย/);
 });
 
+test("verification handle rejects non-owners for setup-verify", async () => {
+    const { handle } = require("../commands/verification");
+    let replyPayload = null;
+    const interaction = {
+        commandName: "setup-verify",
+        user: { id: "not_owner_id" },
+        reply: async (payload) => { replyPayload = payload; return payload; }
+    };
+    await handle(interaction);
+    assert.ok(replyPayload);
+    assert.equal(replyPayload.ephemeral, true);
+    assert.match(replyPayload.content, /เจ้าของบอท/);
+});
+
+test("verification handle rejects missing guild or role", async () => {
+    const { handle } = require("../commands/verification");
+    const ownerId = "661415152146710558";
+
+    let editPayload = null;
+    const interaction = {
+        commandName: "setup-verify",
+        user: { id: ownerId },
+        guild: { id: "12345678901234567" },
+        options: {
+            getChannel: () => ({ id: "ch1" }),
+            getRole: () => null // missing role
+        },
+        reply: async () => {},
+        deferReply: async () => {},
+        editReply: async (payload) => { editPayload = payload; return payload; }
+    };
+    await handle(interaction);
+    assert.ok(editPayload);
+    assert.match(editPayload.content, /ไม่พบเซิร์ฟเวอร์หรือยศ/);
+});
+
+
+
 
