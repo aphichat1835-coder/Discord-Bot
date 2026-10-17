@@ -196,8 +196,8 @@ class TokenCoordinator extends EventEmitter {
 
         state.voiceSessions?.clear();
         state.voice = null;
-        const deleted = Boolean(state.activities?.delete('voice'));
-        return { handled: false, deleted: true || deleted };
+        state.activities?.delete('voice');
+        return { handled: false, deleted: true };
     }
 
     _handleVoiceRelease(hash, state, options) {
