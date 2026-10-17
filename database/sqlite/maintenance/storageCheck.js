@@ -85,43 +85,50 @@ function resolveStoragePaths(options, repoRoot) {
     };
 }
 
-function classifyPersistence(pathsInfo, isProduction) {
-    const {
-        hasPhysicalMount,
-        hasInSource,
-        resolvedDbPath,
-        resolvedBackupDir,
-        resolvedAssetDir,
-        explicitDbPath,
-        explicitBackupDir,
-        explicitAssetDir
-    } = pathsInfo;
+function checkAutoDetectedPersistent(pathsInfo) {
+    if (!pathsInfo.hasPhysicalMount || pathsInfo.hasInSource) {
+        return false;
+    }
+    const { resolvedDbPath, resolvedBackupDir, resolvedAssetDir } = pathsInfo;
+    return isUnderPath(resolvedDbPath, "/persistent") &&
+           isUnderPath(resolvedBackupDir, "/persistent") &&
+           isUnderPath(resolvedAssetDir, "/persistent");
+}
 
-    const isAutoDetectedPersistent = hasPhysicalMount && !hasInSource && (
-        isUnderPath(resolvedDbPath, "/persistent") &&
-        isUnderPath(resolvedBackupDir, "/persistent") &&
-        isUnderPath(resolvedAssetDir, "/persistent")
-    );
+function getMissingExplicitEnvs(pathsInfo, isAutoDetected) {
+    if (isAutoDetected) return [];
+    const missing = [];
+    if (!pathsInfo.explicitDbPath) missing.push("SQLITE_DB_PATH");
+    if (!pathsInfo.explicitBackupDir) missing.push("SQLITE_BACKUP_DIR");
+    if (!pathsInfo.explicitAssetDir) missing.push("SQLITE_ASSET_DIR");
+    return missing;
+}
 
-    const missingExplicitEnvs = [];
-    if (!explicitDbPath && !isAutoDetectedPersistent) missingExplicitEnvs.push("SQLITE_DB_PATH");
-    if (!explicitBackupDir && !isAutoDetectedPersistent) missingExplicitEnvs.push("SQLITE_BACKUP_DIR");
-    if (!explicitAssetDir && !isAutoDetectedPersistent) missingExplicitEnvs.push("SQLITE_ASSET_DIR");
-
-    const configuredPersistentPath = !hasInSource && (missingExplicitEnvs.length === 0 || isAutoDetectedPersistent || !isProduction);
-    const persistenceConfirmed = Boolean(
-        isAutoDetectedPersistent ||
+function isPersistenceConfirmed(isAutoDetected) {
+    return Boolean(
+        isAutoDetected ||
         process.env.SQLITE_PERSISTENCE_CONFIRMED === "true" ||
         process.env.PERSISTENT_STORAGE_CONFIRMED === "true"
     );
-    const persistentMountVerified = isAutoDetectedPersistent || (configuredPersistentPath && persistenceConfirmed);
+}
 
-    let persistenceStatus = "unverified";
-    if (isAutoDetectedPersistent) {
-        persistenceStatus = "verified";
-    } else if (configuredPersistentPath && persistenceConfirmed) {
-        persistenceStatus = "operator_attested";
-    }
+function getPersistenceStatus(isAutoDetected, operatorConfirmed) {
+    if (isAutoDetected) return "verified";
+    if (operatorConfirmed) return "operator_attested";
+    return "unverified";
+}
+
+function classifyPersistence(pathsInfo, isProduction) {
+    const isAutoDetectedPersistent = checkAutoDetectedPersistent(pathsInfo);
+    const missingExplicitEnvs = getMissingExplicitEnvs(pathsInfo, isAutoDetectedPersistent);
+
+    const configuredPersistentPath = !pathsInfo.hasInSource &&
+        (missingExplicitEnvs.length === 0 || isAutoDetectedPersistent || !isProduction);
+
+    const persistenceConfirmed = isPersistenceConfirmed(isAutoDetectedPersistent);
+    const operatorConfirmed = configuredPersistentPath && persistenceConfirmed;
+    const persistentMountVerified = isAutoDetectedPersistent || operatorConfirmed;
+    const persistenceStatus = getPersistenceStatus(isAutoDetectedPersistent, operatorConfirmed);
 
     return {
         isAutoDetectedPersistent,

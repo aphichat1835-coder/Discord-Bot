@@ -1709,114 +1709,144 @@ class VerificationWebhookManager {
         }
     }
 
+    async _verifyAndPrepareLog(item, guildId) {
+        // P1-2: Strict lookup by exact event_id
+        const log = await this._findVerifyLogByEventId(item.event_id);
+
+        if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
+            this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch", item.destination_version);
+            return null;
+        }
+
+        // P0-1 / P1-1: Strict eligibility check before sending
+        if (!isEligibleVerifyLog(log)) {
+            this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)", item.destination_version);
+            return null;
+        }
+
+        return log;
+    }
+
+    async _verifyDestinationBeforeSend(item, guildId) {
+        // P1-5: Check destination version immediately before transmission
+        const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+        const prePostVersion = Number(prePostConfig?.verification?.webhookLog?.destinationVersion) || 1;
+        const prePostUrl = prePostConfig?.verification?.webhookLog?.url;
+
+        if (item.job_id && prePostConfig?.verification?.webhookLog?.mode === "live") {
+            this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode_before_send", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
+            return null;
+        }
+
+        if (!prePostUrl || item.destination_version !== prePostVersion) {
+            this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Webhook URL or version changed before transmission", item.destination_version);
+            sendThrottledAlert({
+                key: `dest_version_changed_${guildId}_${item.destination_version}`,
+                severity: "WARN",
+                code: "verification.webhook_destination_version_changed",
+                title: "WEBHOOK DESTINATION VERSION CHANGED",
+                description: `Webhook URL หรือเวอร์ชันปลายทางเปลี่ยนระหว่างส่งข้อมูล (delivery=${item.delivery_id}, itemVersion=${item.destination_version}, activeVersion=${prePostVersion})`,
+                guildId
+            });
+            return null;
+        }
+
+        return { prePostUrl, prePostVersion };
+    }
+
+    async _checkDestinationStillValid(item, guildId, prePostUrl, prePostVersion) {
+        const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
+        const currentVer = Number(latestCheck?.verification?.webhookLog?.destinationVersion) || 1;
+        const currentUrl = latestCheck?.verification?.webhookLog?.url;
+        const currentMode = latestCheck?.verification?.webhookLog?.mode;
+
+        if (item.job_id && currentMode !== "backfill_live") {
+            return false;
+        }
+        if (currentUrl !== prePostUrl || currentVer !== prePostVersion) {
+            return false;
+        }
+        if (typeof this.repo.getDeliveryById === "function") {
+            const freshDelivery = this.repo.getDeliveryById(item.delivery_id);
+            if (freshDelivery && freshDelivery.status !== "SENDING") {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    async _executeWebhookTransmission(item, guildId, destInfo, embeds) {
+        const { prePostUrl, prePostVersion } = destInfo;
+        await deliverWebhookEvent(prePostUrl, embeds, {
+            startPart: Number(item.sent_parts) || 0,
+            onPartSent: async (partIndex) => {
+                const updRes = this.repo.updateDeliverySentParts(item.delivery_id, partIndex, item.destination_version);
+                if (updRes?.changes === 0) {
+                    const cancelErr = new Error("delivery_cancelled_or_version_changed_during_send");
+                    cancelErr.code = "destination_changed_during_delivery";
+                    throw cancelErr;
+                }
+            },
+            checkDestinationValid: async () => {
+                return this._checkDestinationStillValid(item, guildId, prePostUrl, prePostVersion);
+            }
+        });
+    }
+
+    async _handleDeliverySuccess(item, guildId) {
+        if (item.job_id) {
+            const j = this.repo.getJobById(item.job_id);
+            if (j) {
+                this.repo.updateJobProgress(item.job_id, {
+                    successCount: (j.success_count || 0) + 1
+                });
+            }
+            await this.checkAndCompleteJobIfDone(item.job_id, guildId);
+        }
+
+        await GuildConfig.updateOne({ guildId }, {
+            $set: {
+                "verification.webhookLog.lastDeliveryAt": Date.now(),
+                "verification.webhookLog.lastStatus": "success",
+                "verification.webhookLog.lastError": null
+            }
+        });
+
+        if (item.event_id && mongoose.connection?.readyState === 1) {
+            try {
+                await VerifyLog.updateOne(
+                    { _id: item.event_id },
+                    {
+                        $set: {
+                            "webhookDelivery.status": "delivered",
+                            "webhookDelivery.deliveredAt": Date.now()
+                        }
+                    }
+                );
+            } catch (_) {}
+        }
+    }
+
     async _deliverSingleItem(item, guildId, context) {
         if (!this._validateDeliveryPrerequisites(item, guildId, context)) {
             return;
         }
 
         try {
-            // P1-2: Strict lookup by exact event_id
-            const log = await this._findVerifyLogByEventId(item.event_id);
-
-            if (!log || String(log.guildId) !== String(guildId) || String(log.userId) !== String(item.user_id)) {
-                this.repo.markDeliveryFailed(item.delivery_id, "log_not_found", "VerifyLog not found or guild/user mismatch", item.destination_version);
-                return;
-            }
-
-            // P0-1 / P1-1: Strict eligibility check before sending
-            if (!isEligibleVerifyLog(log)) {
-                this.repo.markDeliveryFailed(item.delivery_id, "event_not_eligible", "VerifyLog is not eligible for delivery (not success or missing role assignment)", item.destination_version);
-                return;
-            }
+            const log = await this._verifyAndPrepareLog(item, guildId);
+            if (!log) return;
 
             const oauthUser = await OAuthUser.findOne({ "discord.userId": item.user_id }).lean();
             const embeds = this._buildDeliveryEmbeds(log, oauthUser, item, context.config);
 
-            // P1-5: Check destination version immediately before transmission
-            const prePostConfig = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-            const prePostVersion = Number(prePostConfig?.verification?.webhookLog?.destinationVersion) || 1;
-            const prePostUrl = prePostConfig?.verification?.webhookLog?.url;
-            if (item.job_id && prePostConfig?.verification?.webhookLog?.mode === "live") {
-                this.repo.markDeliveryFailed(item.delivery_id, "cancelled_by_live_mode_before_send", "Backfill delivery cancelled because guild switched to live-only mode", item.destination_version);
-                return;
-            }
-            if (!prePostUrl || item.destination_version !== prePostVersion) {
-                this.repo.markDeliveryFailed(item.delivery_id, "destination_version_obsolete", "Webhook URL or version changed before transmission", item.destination_version);
-                sendThrottledAlert({
-                    key: `dest_version_changed_${guildId}_${item.destination_version}`,
-                    severity: "WARN",
-                    code: "verification.webhook_destination_version_changed",
-                    title: "WEBHOOK DESTINATION VERSION CHANGED",
-                    description: `Webhook URL หรือเวอร์ชันปลายทางเปลี่ยนระหว่างส่งข้อมูล (delivery=${item.delivery_id}, itemVersion=${item.destination_version}, activeVersion=${prePostVersion})`,
-                    guildId
-                });
-                return;
-            }
+            const destInfo = await this._verifyDestinationBeforeSend(item, guildId);
+            if (!destInfo) return;
 
-            await deliverWebhookEvent(prePostUrl, embeds, {
-                startPart: Number(item.sent_parts) || 0,
-                onPartSent: async (partIndex) => {
-                    const updRes = this.repo.updateDeliverySentParts(item.delivery_id, partIndex, item.destination_version);
-                    if (updRes?.changes === 0) {
-                        const cancelErr = new Error("delivery_cancelled_or_version_changed_during_send");
-                        cancelErr.code = "destination_changed_during_delivery";
-                        throw cancelErr;
-                    }
-                },
-                checkDestinationValid: async () => {
-                    const latestCheck = await GuildConfig.findOne().where("guildId").equals(guildId).lean();
-                    const currentVer = Number(latestCheck?.verification?.webhookLog?.destinationVersion) || 1;
-                    const currentUrl = latestCheck?.verification?.webhookLog?.url;
-                    const currentMode = latestCheck?.verification?.webhookLog?.mode;
-                    if (item.job_id && currentMode !== "backfill_live") {
-                        return false;
-                    }
-                    if (currentUrl !== prePostUrl || currentVer !== prePostVersion) {
-                        return false;
-                    }
-                    if (typeof this.repo.getDeliveryById === "function") {
-                        const freshDelivery = this.repo.getDeliveryById(item.delivery_id);
-                        if (freshDelivery && freshDelivery.status !== "SENDING") {
-                            return false;
-                        }
-                    }
-                    return true;
-                }
-            });
+            await this._executeWebhookTransmission(item, guildId, destInfo, embeds);
             const sentResult = this.repo.markDeliverySent(item.delivery_id, item.destination_version);
 
             if (sentResult?.changes > 0) {
-                if (item.job_id) {
-                    const j = this.repo.getJobById(item.job_id);
-                    if (j) {
-                        this.repo.updateJobProgress(item.job_id, {
-                            successCount: (j.success_count || 0) + 1
-                        });
-                    }
-                    await this.checkAndCompleteJobIfDone(item.job_id, guildId);
-                }
-
-                await GuildConfig.updateOne({ guildId }, {
-                    $set: {
-                        "verification.webhookLog.lastDeliveryAt": Date.now(),
-                        "verification.webhookLog.lastStatus": "success",
-                        "verification.webhookLog.lastError": null
-                    }
-                });
-
-                if (item.event_id && mongoose.connection?.readyState === 1) {
-                    try {
-                        await VerifyLog.updateOne(
-                            { _id: item.event_id },
-                            {
-                                $set: {
-                                    "webhookDelivery.status": "delivered",
-                                    "webhookDelivery.deliveredAt": Date.now()
-                                }
-                            }
-                        );
-                    } catch (_) {}
-                }
+                await this._handleDeliverySuccess(item, guildId);
             }
 
         } catch (sendErr) {

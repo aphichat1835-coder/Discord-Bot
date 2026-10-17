@@ -166,6 +166,55 @@ class TokenCoordinator extends EventEmitter {
         return true;
     }
 
+    _releaseSpecificVoiceSession(hash, state, targetSessionId, options) {
+        if (!state.voiceSessions?.has(targetSessionId)) {
+            // Stale or already unregistered session cleanup is safe and idempotent
+            return { handled: true, success: true };
+        }
+
+        const wasDeleted = state.voiceSessions.delete(targetSessionId);
+        if (state.voiceSessions.size > 0) {
+            // Pick the most recently active remaining session
+            const remaining = Array.from(state.voiceSessions.values());
+            remaining.sort((a, b) => (b.activeAt || 0) - (a.activeAt || 0));
+            state.voice = remaining[0];
+            state.lastActivity = Date.now();
+            this.emit('token:activity_end', { tokenHash: hash, subsystem: 'voice', options });
+            return { handled: true, success: true };
+        }
+
+        state.voice = null;
+        const deleted = Boolean(state.activities?.delete('voice')) || wasDeleted;
+        return { handled: false, deleted };
+    }
+
+    _releaseLegacyVoiceSession(state) {
+        if (state.voiceSessions && state.voiceSessions.size > 1) {
+            // Ambiguous unregister when multiple voice sessions active
+            return { handled: true, success: false };
+        }
+
+        state.voiceSessions?.clear();
+        state.voice = null;
+        const deleted = Boolean(state.activities?.delete('voice'));
+        return { handled: false, deleted: true || deleted };
+    }
+
+    _handleVoiceRelease(hash, state, options) {
+        const targetSessionId = typeof options === 'string' ? options : (options?.sessionId || null);
+        if (targetSessionId) {
+            return this._releaseSpecificVoiceSession(hash, state, targetSessionId, options);
+        }
+        return this._releaseLegacyVoiceSession(state);
+    }
+
+    _cleanupInactiveTokenState(hash, state) {
+        const hasVoice = Boolean(state.voiceSessions && state.voiceSessions.size > 0);
+        if ((!state.activities || state.activities.size === 0) && !hasVoice && !state.voice && !state.quest && !state.quarantine) {
+            this.tokenStates.delete(hash);
+        }
+    }
+
     /**
      * Dynamic Activity Registry: Release an activity slot for a token
      * @param {string} token
@@ -182,50 +231,16 @@ class TokenCoordinator extends EventEmitter {
 
         let deleted = false;
         if (subsystem === 'voice') {
-            const targetSessionId = typeof options === 'string' ? options : (options?.sessionId || null);
-            if (targetSessionId && state.voiceSessions?.has(targetSessionId)) {
-                deleted = state.voiceSessions.delete(targetSessionId);
-                if (state.voiceSessions.size > 0) {
-                    // Pick the most recently active remaining session
-                    const remaining = Array.from(state.voiceSessions.values());
-                    remaining.sort((a, b) => (b.activeAt || 0) - (a.activeAt || 0));
-                    state.voice = remaining[0];
-                    state.lastActivity = Date.now();
-                    this.emit('token:activity_end', { tokenHash: hash, subsystem, options });
-                    return true;
-                }
-                state.voice = null;
-            } else if (!targetSessionId) {
-                // Legacy caller without specific sessionId
-                if (state.voiceSessions?.size <= 1) {
-                    state.voiceSessions?.clear();
-                    state.voice = null;
-                    deleted = true;
-                } else {
-                    // Ambiguous unregister when multiple voice sessions active
-                    return false;
-                }
-            } else {
-                // Stale or already unregistered session cleanup is safe and idempotent
-                return true;
-            }
-            if (!state.voiceSessions || state.voiceSessions.size === 0) {
-                state.voice = null;
-                deleted = state.activities?.delete('voice') || deleted;
-            }
-        } else if (subsystem === 'quest') {
-            state.quest = null;
-            deleted = state.activities?.delete(String(subsystem));
+            const voiceRes = this._handleVoiceRelease(hash, state, options);
+            if (voiceRes.handled) return voiceRes.success;
+            deleted = voiceRes.deleted;
         } else {
-            deleted = state.activities?.delete(String(subsystem));
+            if (subsystem === 'quest') state.quest = null;
+            deleted = Boolean(state.activities?.delete(String(subsystem)));
         }
 
         state.lastActivity = Date.now();
-
-        const hasVoice = Boolean(state.voiceSessions && state.voiceSessions.size > 0);
-        if ((!state.activities || state.activities.size === 0) && !hasVoice && !state.voice && !state.quest && !state.quarantine) {
-            this.tokenStates.delete(hash);
-        }
+        this._cleanupInactiveTokenState(hash, state);
 
         this.emit('token:activity_end', { tokenHash: hash, subsystem, options });
         return Boolean(deleted);
