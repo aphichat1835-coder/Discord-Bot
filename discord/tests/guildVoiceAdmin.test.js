@@ -1216,5 +1216,432 @@ test("secret command executes stealth lifecycle: deletes trigger, shows and dele
     assert.equal(replies[1].deleted, false);
 });
 
+test("classifyVoiceAdminError and formatFailureReasons categorize errors safely and group reasons", () => {
+    assert.equal(_test.classifyVoiceAdminError(null).category, "UNKNOWN");
+    assert.equal(_test.classifyVoiceAdminError({ code: "VOICE_ADMIN_MEMBER_TIMEOUT" }).category, "TIMEOUT");
+    assert.equal(_test.classifyVoiceAdminError({ code: "VOICE_ADMIN_OWNER_LOCKED" }).category, "PERMISSION");
+    assert.equal(_test.classifyVoiceAdminError({ code: "VOICE_ADMIN_PERSISTENCE_FAILED" }).category, "DATABASE");
+    assert.equal(_test.classifyVoiceAdminError({ code: "VOICE_ADMIN_LOCK_CONFLICT" }).category, "LOCK");
+    assert.equal(_test.classifyVoiceAdminError({ code: "VOICE_ADMIN_BOT_PERMISSION_MISSING" }).category, "PERMISSION");
+    assert.equal(_test.classifyVoiceAdminError({ code: 50013 }).category, "PERMISSION");
+    assert.equal(_test.classifyVoiceAdminError({ status: 403 }).category, "PERMISSION");
+    assert.equal(_test.classifyVoiceAdminError({ code: 10007 }).category, "MEMBER");
+    assert.equal(_test.classifyVoiceAdminError({ status: 429 }).category, "RATE_LIMIT");
+    assert.equal(_test.classifyVoiceAdminError({ code: "ECONNRESET" }).category, "NETWORK");
+    assert.equal(_test.classifyVoiceAdminError({ status: 502 }).category, "NETWORK");
+    assert.equal(_test.classifyVoiceAdminError({ code: "OTHER" }).category, "GENERAL");
+
+    assert.deepEqual(_test.formatFailureReasons([]), []);
+    assert.deepEqual(_test.formatFailureReasons(null), []);
+    const details = [
+        { reason: "บอตไม่มีสิทธิ์ที่จำเป็น" },
+        { reason: "บอตไม่มีสิทธิ์ที่จำเป็น" },
+        { reason: "ติด Rate Limit จาก Discord API" }
+    ];
+    const formatted = _test.formatFailureReasons(details);
+    assert.equal(formatted.length, 2);
+    assert.match(formatted[0], /บอตไม่มีสิทธิ์ที่จำเป็น.*2/);
+    assert.match(formatted[1], /ติด Rate Limit จาก Discord API.*1/);
+});
+
+test("isPermanentDiscordError detects non-retryable discord errors and distinguishes transient errors", () => {
+    assert.equal(_test.isPermanentDiscordError({ code: 50013 }), true);
+    assert.equal(_test.isPermanentDiscordError({ code: 10007 }), true);
+    assert.equal(_test.isPermanentDiscordError({ status: 403 }), true);
+    assert.equal(_test.isPermanentDiscordError({ status: 404 }), true);
+    assert.equal(_test.isPermanentDiscordError({ status: 500 }), false);
+    assert.equal(_test.isPermanentDiscordError({ code: "ECONNRESET" }), false);
+    assert.equal(_test.isPermanentDiscordError(null), false);
+});
+
+test("Root Cause 1: clearBothLocks succeeds when target only had muteLocked without forcing null filter on deafVersion", async () => {
+    const targetId = "target-rc1";
+    const guildId = "guild-rc1";
+    let capturedFilter = null;
+    VoiceAdminLock.updateOne = async (filter, _update) => {
+        capturedFilter = filter;
+        return acknowledged();
+    };
+
+    // Cached state: only mute is locked, deaf is false
+    _test.setCachedLock({
+        guildId,
+        userId: targetId,
+        muteLocked: true,
+        muteVersion: "mute-v1",
+        deafLocked: false,
+        deafVersion: "stale-mongo-deaf-v0"
+    });
+
+    const result = await _test.clearBothLocks(guildId, targetId);
+    assert.ok(result);
+    assert.equal(result.lock.muteLocked, false);
+    assert.equal(result.lock.deafLocked, false);
+    // Filter must check muteVersion because muteLocked was true, but MUST NOT enforce deafVersion: null
+    assert.equal(capturedFilter.muteVersion, "mute-v1");
+    assert.equal(capturedFilter.deafVersion, undefined);
+});
+
+test("fallback setVoiceBoth sets error.muteCompleted when setMute succeeds but setDeaf fails", async () => {
+    const target = {
+        id: "target-fb1",
+        voice: {
+            calls: [],
+            async setMute(enabled, reason) { this.calls.push(["mute", enabled, reason]); },
+            async setDeaf() { throw new Error("deaf failed"); }
+        }
+    };
+
+    await assert.rejects(async () => {
+        await _test.setVoiceBoth(target, false, "unlock");
+    }, err => {
+        assert.equal(err.muteCompleted, true);
+        assert.equal(err.message, "deaf failed");
+        return true;
+    });
+    assert.equal(target.voice.calls.length, 1);
+    assert.deepEqual(target.voice.calls[0], ["mute", false, "unlock"]);
+});
+
+test("unlockBoth restores only deaf lock when fallback setMute succeeded but setDeaf failed", async () => {
+    const target = {
+        id: "target-fb2",
+        voice: {
+            channel: null,
+            calls: [],
+            async setMute(enabled, reason) { this.calls.push(["mute", enabled, reason]); },
+            async setDeaf() { throw new Error("deaf forbidden"); }
+        }
+    };
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    target.voice.channel = source;
+
+    const restoredTypes = [];
+    VoiceAdminLock.updateOne = async (_filter, update) => {
+        if (update.$set?.muteLocked) restoredTypes.push("mute");
+        if (update.$set?.deafLocked) restoredTypes.push("deaf");
+        return acknowledged();
+    };
+
+    _test.setCachedLock({
+        guildId: guild.id,
+        userId: target.id,
+        muteLocked: true,
+        muteVersion: "m1",
+        deafLocked: true,
+        deafVersion: "d1"
+    });
+
+    await _test.unlockBoth(guild, [target], { source });
+
+    // Since setMute succeeded, mute was completed. Only deaf should have been restored!
+    assert.deepEqual(restoredTypes, ["deaf"]);
+});
+
+test("unlockBoth restores both locks when fallback setMute fails initially", async () => {
+    const target = {
+        id: "target-fb3",
+        voice: {
+            channel: null,
+            calls: [],
+            async setMute() { throw new Error("mute forbidden"); },
+            async setDeaf(enabled, reason) { this.calls.push(["deaf", enabled, reason]); }
+        }
+    };
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    target.voice.channel = source;
+
+    const restoredTypes = [];
+    VoiceAdminLock.updateOne = async (_filter, update) => {
+        if (update.$set?.muteLocked) restoredTypes.push("mute");
+        if (update.$set?.deafLocked) restoredTypes.push("deaf");
+        return acknowledged();
+    };
+
+    _test.setCachedLock({
+        guildId: guild.id,
+        userId: target.id,
+        muteLocked: true,
+        muteVersion: "m1",
+        deafLocked: true,
+        deafVersion: "d1"
+    });
+
+    await _test.unlockBoth(guild, [target], { source });
+
+    // setMute failed from the start, so setDeaf was never called, and both locks should be restored
+    assert.equal(target.voice.calls.length, 0);
+    assert.ok(restoredTypes.includes("mute"));
+    assert.ok(restoredTypes.includes("deaf"));
+});
+
+test("enforceLock stops immediately on permanent Discord errors without retrying delays", async () => {
+    let callCount = 0;
+    const target = member("target-perm");
+    target.voice.setMute = async () => {
+        callCount++;
+        const err = new Error("Missing Permissions");
+        err.code = 50013;
+        throw err;
+    };
+    const guild = guildFixture([target]);
+    const source = voiceChannel(guild, [target]);
+    target.voice.channel = source;
+
+    _test.setCachedLock({
+        guildId: guild.id,
+        userId: target.id,
+        muteLocked: true,
+        muteVersion: "v1"
+    });
+
+    await assert.rejects(async () => {
+        await _test.enforceLock(guild, target.id, "mute", "v1", { retryDelaysMs: [10, 20, 30] });
+    }, /VOICE_ADMIN_ENFORCEMENT_FAILED/);
+
+    // Because error 50013 is permanent, it must break immediately on the first attempt
+    assert.equal(callCount, 1);
+});
+
+test("handleMemberUpdate does not clear locks if member was already administrator before update", async () => {
+    let deleteCalls = 0;
+    VoiceAdminLock.deleteOne = async () => {
+        deleteCalls++;
+        return { acknowledged: true, deletedCount: 1 };
+    };
+
+    const oldAdmin = member("admin-user", true);
+    const newAdmin = member("admin-user", true);
+    const guild = guildFixture([newAdmin]);
+    oldAdmin.guild = guild;
+    newAdmin.guild = guild;
+
+    _test.setCachedLock({
+        guildId: guild.id,
+        userId: "admin-user",
+        muteLocked: true,
+        muteVersion: "v1"
+    });
+
+    // Routine update for an existing admin (e.g. nickname/avatar change)
+    voiceAdmin.handleMemberUpdate(oldAdmin, newAdmin);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(deleteCalls, 0);
+
+    // Promotion from regular user to admin should clear non-owner-forced locks
+    const regularUser = member("admin-user", false);
+    regularUser.guild = guild;
+    voiceAdmin.handleMemberUpdate(regularUser, newAdmin);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(deleteCalls, 1);
+});
+
+test("runBulkUnsafe records failedDetails and buildSecretResultEmbed renders failure breakdown", async () => {
+    const target1 = member("target-f1");
+    target1.voice.setMute = async () => {
+        const err = new Error("Missing Permissions");
+        err.code = 50013;
+        throw err;
+    };
+    const target2 = member("target-f2");
+    target2.voice.setMute = async () => {
+        const err = new Error("Connection reset");
+        err.code = "ECONNRESET";
+        throw err;
+    };
+    const guild = guildFixture([target1, target2]);
+    const source = voiceChannel(guild, [target1, target2]);
+
+    const result = await _test.lockVoiceState(guild, [target1, target2], "mute", "owner", { source });
+    assert.equal(result.failed, 2);
+    assert.equal(result.failedDetails.length, 2);
+    assert.equal(result.failedDetails[0].category, "PERMISSION");
+    assert.equal(result.failedDetails[1].category, "NETWORK");
+
+    // Test secret result embed contains failure reasons
+    const embed = _test.buildSecretResultEmbed("ปิดไมค์หมด", result, guild);
+    assert.ok(embed);
+    assert.match(embed.data.description, /สาเหตุข้อผิดพลาด/);
+    assert.match(embed.data.description, /บอตไม่มีสิทธิ์ที่จำเป็น/);
+    assert.match(embed.data.description, /ข้อผิดพลาดเครือข่ายชั่วคราว/);
+});
+
+test("defaultLockAdapter and defaultNoticeAdapter correctly bridge to repository methods", async () => {
+    let writeLockParams = null;
+    let clearBothParams = null;
+    let clearFieldParams = null;
+    let deleteLockParams = null;
+    let deleteGuildLocksGuildId = null;
+    let upsertNoticeParams = null;
+    let deleteMemberNoticesParams = null;
+    let deleteGuildNoticesGuildId = null;
+    let listRecentCutoff = null;
+
+    const fakeRepo = {
+        writeLock: params => { writeLockParams = params; return { acknowledged: true, matchedCount: 1, changes: 1 }; },
+        clearBothLocks: (guildId, userId, expected, versions, now) => { clearBothParams = { guildId, userId, expected, versions, now }; return { acknowledged: true, matchedCount: 1, changes: 1 }; },
+        clearLockField: (guildId, userId, type, expectedVersion, newVersion, now) => { clearFieldParams = { guildId, userId, type, expectedVersion, newVersion, now }; return { acknowledged: true, matchedCount: 1, changes: 1 }; },
+        deleteLock: (guildId, userId, expectedVersion, type) => { deleteLockParams = { guildId, userId, expectedVersion, type }; return { acknowledged: true, deletedCount: 1 }; },
+        deleteGuildLocks: guildId => { deleteGuildLocksGuildId = guildId; return { acknowledged: true, deletedCount: 1 }; },
+        listActiveLocks: () => [{ guildId: "g1", userId: "u1", muteLocked: true }],
+        upsertNotice: notice => { upsertNoticeParams = notice; return { acknowledged: true, changes: 1 }; },
+        deleteMemberNotices: (guildId, userId) => { deleteMemberNoticesParams = { guildId, userId }; return { acknowledged: true, deletedCount: 1 }; },
+        deleteGuildNotices: guildId => { deleteGuildNoticesGuildId = guildId; return { acknowledged: true, deletedCount: 1 }; },
+        listRecentNotices: cutoff => { listRecentCutoff = cutoff; return [{ guildId: "g1", actorId: "a1", targetId: "u1" }]; }
+    };
+
+    const prevRepo = _test.getRepository();
+    _test.setRepository(fakeRepo);
+
+    try {
+        const { defaultLockAdapter, defaultNoticeAdapter } = _test;
+
+        // 1. Lock updateOne: mute lock
+        const resMute = await defaultLockAdapter.updateOne(
+            { guildId: "g1", userId: "u1", muteVersion: "v0" },
+            { $set: { muteLocked: true, muteLockedBy: "actor1", muteLockedAt: 100, muteVersion: "v1", muteOwnerForced: true, updatedAt: 200 } }
+        );
+        assert.equal(resMute.acknowledged, true);
+        assert.equal(writeLockParams.type, "mute");
+        assert.equal(writeLockParams.expectedVersion, "v0");
+        assert.equal(writeLockParams.ownerForced, true);
+
+        // 2. Lock updateOne: deaf lock
+        const resDeaf = await defaultLockAdapter.updateOne(
+            { guildId: "g1", userId: "u1", deafVersion: "d0" },
+            { $set: { deafLocked: true, deafLockedBy: "actor2", deafLockedAt: 300, deafVersion: "d1", updatedAt: 400 } }
+        );
+        assert.equal(resDeaf.acknowledged, true);
+        assert.equal(writeLockParams.type, "deaf");
+        assert.equal(writeLockParams.expectedVersion, "d0");
+
+        // 3. Lock updateOne: clear both locks
+        const resBoth = await defaultLockAdapter.updateOne(
+            { guildId: "g1", userId: "u1", muteVersion: "m1", deafVersion: "d1" },
+            { $set: { muteLocked: false, deafLocked: false, muteVersion: "m2", deafVersion: "d2", updatedAt: 500 } }
+        );
+        assert.equal(resBoth.acknowledged, true);
+        assert.deepEqual(clearBothParams.expected, { mute: "m1", deaf: "d1" });
+        assert.deepEqual(clearBothParams.versions, { mute: "m2", deaf: "d2" });
+
+        // Clear both without expected version
+        await defaultLockAdapter.updateOne(
+            { guildId: "g1", userId: "u1" },
+            { $set: { muteLocked: false, deafLocked: false, muteVersion: "m3", deafVersion: "d3" } }
+        );
+        assert.equal(clearBothParams.expected, undefined);
+
+        // 4. Lock updateOne: clear mute lock field
+        const resClearMute = await defaultLockAdapter.updateOne(
+            { guildId: "g1", userId: "u1", muteVersion: "m2" },
+            { $set: { muteLocked: false, muteVersion: "m3", updatedAt: 600 } }
+        );
+        assert.equal(resClearMute.acknowledged, true);
+        assert.equal(clearFieldParams.type, "mute");
+        assert.equal(clearFieldParams.expectedVersion, "m2");
+
+        // 5. Lock updateOne: clear deaf lock field
+        const resClearDeaf = await defaultLockAdapter.updateOne(
+            { guildId: "g1", userId: "u1", deafVersion: "d2" },
+            { $set: { deafLocked: false, deafVersion: "d3", updatedAt: 700 } }
+        );
+        assert.equal(resClearDeaf.acknowledged, true);
+        assert.equal(clearFieldParams.type, "deaf");
+        assert.equal(clearFieldParams.expectedVersion, "d2");
+
+        // 6. Lock updateOne: neither (no-op)
+        const resNoop = await defaultLockAdapter.updateOne({ guildId: "g1", userId: "u1" }, {});
+        assert.equal(resNoop.acknowledged, true);
+        assert.equal(resNoop.matchedCount, 0);
+
+        // 7. Lock deleteOne: with muteVersion
+        const resDelMute = await defaultLockAdapter.deleteOne({ guildId: "g1", userId: "u1", muteVersion: "m1" });
+        assert.equal(resDelMute.acknowledged, true);
+        assert.equal(deleteLockParams.type, "mute");
+        assert.equal(deleteLockParams.expectedVersion, "m1");
+
+        // Lock deleteOne: with deafVersion
+        const resDelDeaf = await defaultLockAdapter.deleteOne({ guildId: "g1", userId: "u1", deafVersion: "d1" });
+        assert.equal(resDelDeaf.acknowledged, true);
+        assert.equal(deleteLockParams.type, "deaf");
+        assert.equal(deleteLockParams.expectedVersion, "d1");
+
+        // Lock deleteOne: without version
+        await defaultLockAdapter.deleteOne({ guildId: "g1", userId: "u1" });
+        assert.equal(deleteLockParams.expectedVersion, null);
+
+        // 8. Lock deleteMany
+        const resDelMany = await defaultLockAdapter.deleteMany({ guildId: "g1" });
+        assert.equal(resDelMany.acknowledged, true);
+        assert.equal(deleteGuildLocksGuildId, "g1");
+
+        // 9. Lock find
+        const locks = await defaultLockAdapter.find().lean();
+        assert.equal(locks.length, 1);
+        assert.equal(locks[0].userId, "u1");
+
+        // 10. Notice updateOne
+        const resNotice = await defaultNoticeAdapter.updateOne(
+            { guildId: "g1", actorId: "a1", targetId: "t1" },
+            { $set: { channelId: "c1", messageId: "msg1" } }
+        );
+        assert.equal(resNotice.acknowledged, true);
+        assert.equal(upsertNoticeParams.channelId, "c1");
+
+        // 11. Notice deleteMany with $or (member notices)
+        const resDelMemberNotice = await defaultNoticeAdapter.deleteMany({
+            guildId: "g1",
+            $or: [{ actorId: "u_target" }, { targetId: "u_target" }]
+        });
+        assert.equal(resDelMemberNotice.acknowledged, true);
+        assert.deepEqual(deleteMemberNoticesParams, { guildId: "g1", userId: "u_target" });
+
+        // 12. Notice deleteMany without $or (guild notices)
+        const resDelGuildNotice = await defaultNoticeAdapter.deleteMany({ guildId: "g1" });
+        assert.equal(resDelGuildNotice.acknowledged, true);
+        assert.equal(deleteGuildNoticesGuildId, "g1");
+
+        // 13. Notice find
+        const notices = await defaultNoticeAdapter.find().lean();
+        assert.equal(notices.length, 1);
+        assert.ok(listRecentCutoff > 0);
+
+        // 14. getRepository lazy initialize
+        _test.setRepository(null);
+        const repoInstance = _test.getRepository();
+        assert.ok(repoInstance instanceof _test.VoiceAdminRepository);
+    } finally {
+        _test.setRepository(prevRepo);
+    }
+});
+
+test("countActiveGuildLocks and reconcileConnectedLocks handle timeout countdown branch", async () => {
+    const { countActiveGuildLocks } = _test;
+    const testLocks = new Map();
+    testLocks.set("u1", { muteLocked: true, deafLocked: false });
+    testLocks.set("u2", { muteLocked: false, deafLocked: true });
+    testLocks.set("u3", { muteLocked: false, deafLocked: false });
+    assert.equal(countActiveGuildLocks(testLocks), 2);
+
+    // Test reconcileConnectedLocks with maxDurationMs already expired
+    _test.setInitialized(true);
+    _test.setCachedLock({ guildId: "g_timeout", userId: "u1", muteLocked: true });
+
+    const client = {
+        guilds: {
+            cache: new Map([["g_timeout", { id: "g_timeout" }]])
+        }
+    };
+
+    const summary = await voiceAdmin.reconcileConnectedLocks(client, {
+        startedAt: Date.now() - 20 * 60 * 1000
+    });
+    assert.ok(summary.timedOut >= 1);
+});
+
+
+
 
 

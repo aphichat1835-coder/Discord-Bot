@@ -9,12 +9,15 @@ const { runMigrations } = require("../../database/sqlite/migrations/migrationRun
 const DmNotificationRepository = require("../../database/sqlite/repositories/core/DmNotificationRepository");
 const VerificationRecoveryRepository = require("../../database/sqlite/repositories/core/VerificationRecoveryRepository");
 const JoinCampaignRepository = require("../../database/sqlite/repositories/core/JoinCampaignRepository");
+const VoiceAdminRepository = require("../../database/sqlite/repositories/core/VoiceAdminRepository");
 const { getHealthStatus, incrementErrorCounter } = require("../../database/sqlite/maintenance/health");
+const { cleanExpiredVoiceAdminNotices } = require("../../database/sqlite/maintenance/cleanup");
 
 describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     let db;
     let dmRepo;
     let recoveryRepo;
+    let voiceAdminRepo;
 
     before(() => {
         db = new Database(":memory:");
@@ -23,6 +26,7 @@ describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test asser
 
         dmRepo = new DmNotificationRepository(db);
         recoveryRepo = new VerificationRecoveryRepository(db);
+        voiceAdminRepo = new VoiceAdminRepository(db);
     });
 
     after(() => {
@@ -341,6 +345,177 @@ describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test asser
             incrementErrorCounter();
             const afterErr = getHealthStatus(db, null);
             assert.ok(afterErr.errorCount >= 1);
+        });
+    });
+
+    describe("5. VoiceAdminRepository & Notices Lifecycle", () => {
+        test("writeLock performs upsert, retrieves lock, and respects ownerForced", () => {
+            const guildId = "guild_va_1";
+            const userId = "user_va_1";
+
+            const res = voiceAdminRepo.writeLock({
+                guildId,
+                userId,
+                type: "mute",
+                actorId: "owner_123",
+                expectedVersion: undefined,
+                ownerForced: true,
+                lockedAt: 1000,
+                version: "v_mute_1",
+                now: 1000
+            });
+
+            assert.equal(res.acknowledged, true);
+            assert.equal(res.changes, 1);
+
+            const lock = voiceAdminRepo.getLock(guildId, userId);
+            assert.ok(lock);
+            assert.equal(lock.guildId, guildId);
+            assert.equal(lock.userId, userId);
+            assert.equal(lock.muteLocked, true);
+            assert.equal(lock.deafLocked, false);
+            assert.equal(lock.muteOwnerForced, true);
+            assert.equal(lock.muteVersion, "v_mute_1");
+            assert.equal(lock.muteLockedBy, "owner_123");
+
+            const active = voiceAdminRepo.listActiveLocks();
+            assert.ok(active.some(l => l.guildId === guildId && l.userId === userId));
+        });
+
+        test("writeLock version-bound update succeeds on matching version and fails on conflict", () => {
+            const guildId = "guild_va_1";
+            const userId = "user_va_1";
+
+            // Conflict update with mismatched version
+            const conflict = voiceAdminRepo.writeLock({
+                guildId,
+                userId,
+                type: "mute",
+                actorId: "admin_456",
+                expectedVersion: "stale_version",
+                ownerForced: false,
+                lockedAt: 2000,
+                version: "v_mute_conflict",
+                now: 2000
+            });
+            assert.equal(conflict.matchedCount, 0);
+
+            // Matching update
+            const matched = voiceAdminRepo.writeLock({
+                guildId,
+                userId,
+                type: "mute",
+                actorId: "admin_456",
+                expectedVersion: "v_mute_1",
+                ownerForced: false,
+                lockedAt: 2000,
+                version: "v_mute_2",
+                now: 2000
+            });
+            assert.equal(matched.matchedCount, 1);
+
+            const lock = voiceAdminRepo.getLock(guildId, userId);
+            assert.equal(lock.muteVersion, "v_mute_2");
+            assert.equal(lock.muteOwnerForced, false);
+        });
+
+        test("clearLockField and clearBothLocks clear lock fields and owner forced flags", () => {
+            const guildId = "guild_va_2";
+            const userId = "user_va_2";
+
+            // Lock deaf
+            voiceAdminRepo.writeLock({
+                guildId,
+                userId,
+                type: "deaf",
+                actorId: "admin_1",
+                version: "deaf_v1",
+                now: 1000
+            });
+
+            const lockBefore = voiceAdminRepo.getLock(guildId, userId);
+            assert.equal(lockBefore.deafLocked, true);
+
+            // Clear deaf
+            const clearRes = voiceAdminRepo.clearLockField(guildId, userId, "deaf", "deaf_v1", "deaf_v2", 2000);
+            assert.equal(clearRes.matchedCount, 1);
+
+            const lockAfter = voiceAdminRepo.getLock(guildId, userId);
+            assert.equal(lockAfter.deafLocked, false);
+            assert.equal(lockAfter.deafVersion, "deaf_v2");
+
+            // Lock both
+            voiceAdminRepo.writeLock({ guildId, userId, type: "mute", actorId: "a", version: "m_v1", now: 3000 });
+            voiceAdminRepo.writeLock({ guildId, userId, type: "deaf", actorId: "a", version: "d_v1", now: 3000 });
+
+            const bothRes = voiceAdminRepo.clearBothLocks(
+                guildId,
+                userId,
+                { mute: "m_v1", deaf: "d_v1" },
+                { mute: "m_v2", deaf: "d_v2" },
+                4000
+            );
+            assert.equal(bothRes.matchedCount, 1);
+
+            const lockCleared = voiceAdminRepo.getLock(guildId, userId);
+            assert.equal(lockCleared.muteLocked, false);
+            assert.equal(lockCleared.deafLocked, false);
+            assert.equal(lockCleared.muteVersion, "m_v2");
+            assert.equal(lockCleared.deafVersion, "d_v2");
+        });
+
+        test("deleteLock and deleteGuildLocks remove locks cleanly", () => {
+            const guildId = "guild_va_del";
+            voiceAdminRepo.writeLock({ guildId, userId: "u1", type: "mute", actorId: "a", version: "v1", now: 1000 });
+            voiceAdminRepo.writeLock({ guildId, userId: "u2", type: "mute", actorId: "a", version: "v1", now: 1000 });
+
+            const delSingle = voiceAdminRepo.deleteLock(guildId, "u1");
+            assert.equal(delSingle.deletedCount, 1);
+            assert.equal(voiceAdminRepo.getLock(guildId, "u1"), null);
+
+            const delGuild = voiceAdminRepo.deleteGuildLocks(guildId);
+            assert.equal(delGuild.deletedCount, 1);
+            assert.equal(voiceAdminRepo.getLock(guildId, "u2"), null);
+        });
+
+        test("upsertNotice, listRecentNotices, cleanup and member notice deletion", () => {
+            const guildId = "guild_va_notices";
+            const now = Date.now();
+
+            const res = voiceAdminRepo.upsertNotice({
+                guildId,
+                actorId: "actor_1",
+                targetId: "target_1",
+                channelId: "chan_1",
+                messageId: "msg_1",
+                notifiedAt: now
+            });
+            assert.equal(res.acknowledged, true);
+
+            const recent = voiceAdminRepo.listRecentNotices(now - 1000);
+            assert.ok(recent.some(n => n.guildId === guildId && n.actorId === "actor_1"));
+
+            // Insert expired notice (>24h ago)
+            voiceAdminRepo.upsertNotice({
+                guildId,
+                actorId: "actor_old",
+                targetId: "target_old",
+                channelId: "chan_1",
+                messageId: "msg_old",
+                notifiedAt: now - 30 * 60 * 60 * 1000
+            });
+
+            const deletedExpired = cleanExpiredVoiceAdminNotices(db, now);
+            assert.ok(deletedExpired >= 1);
+
+            // Delete member notices
+            const delMember = voiceAdminRepo.deleteMemberNotices(guildId, "target_1");
+            assert.equal(delMember.deletedCount, 1);
+
+            // Delete guild notices
+            voiceAdminRepo.upsertNotice({ guildId, actorId: "a2", targetId: "t2", channelId: "c", messageId: "m", notifiedAt: now });
+            const delGuild = voiceAdminRepo.deleteGuildNotices(guildId);
+            assert.equal(delGuild.deletedCount, 1);
         });
     });
 });

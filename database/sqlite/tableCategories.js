@@ -22,6 +22,7 @@ const TABLE_CATEGORIES = {
             verification_webhook_jobs: "คิวงานส่ง Verification Webhook",
             verification_webhook_deliveries: "ประวัติการส่ง Verification Webhook",
             p0_journal_receipts: "ใบเสร็จ Replay บันทึก P0 Journal",
+            voice_admin_locks: "สถานะการล็อกห้องเสียง (Voice Admin Locks)",
             database_meta: "ค่าสถานะระบบภายใน",
             schema_migrations: "ประวัติการ Migration โครงสร้าง",
             maintenance_runs: "บันทึกการบำรุงรักษาระบบ"
@@ -41,7 +42,8 @@ const TABLE_CATEGORIES = {
         key: "temporary",
         label: "ข้อมูลชั่วคราว (Temporary / Nonces)",
         tables: {
-            verification_state_nonce: "OAuth State Nonces (มีอายุ)"
+            verification_state_nonce: "OAuth State Nonces (มีอายุ)",
+            voice_admin_notices: "ประวัติการแจ้งเตือนล็อกเสียง (Voice Admin Notices - 24 ชม.)"
         }
     },
     CACHE: {

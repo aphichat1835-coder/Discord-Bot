@@ -87,6 +87,29 @@ function cleanStaleQuestLogs(db, now = Date.now(), retentionMs = THIRTY_DAYS_MS,
     }
 }
 
+function cleanExpiredVoiceAdminNotices(db, now = Date.now(), maxBatches = 5) {
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    try {
+        let totalDeleted = 0;
+        const stmt = db.prepare(`
+            DELETE FROM voice_admin_notices
+            WHERE (guild_id, actor_id, target_id) IN (
+                SELECT guild_id, actor_id, target_id FROM voice_admin_notices
+                WHERE notified_at <= ?
+                LIMIT ${BATCH_SIZE}
+            )
+        `);
+        for (let i = 0; i < maxBatches; i++) {
+            const info = stmt.run(cutoff);
+            totalDeleted += info.changes;
+            if (info.changes < BATCH_SIZE) break;
+        }
+        return totalDeleted;
+    } catch (_err) {
+        return 0;
+    }
+}
+
 function runBoundedCleanup(db, options = {}) {
     if (!db) throw new TypeError("runBoundedCleanup requires an active database");
     const now = options.now || Date.now();
@@ -96,6 +119,7 @@ function runBoundedCleanup(db, options = {}) {
     const cache = cleanExpiredCacheEntries(db, now, options.maxBatches);
     const history = cleanExpiredHistory(db, now, options.maxBatches);
     const questLogs = cleanStaleQuestLogs(db, now, options.questRetentionMs, options.maxBatches);
+    const notices = cleanExpiredVoiceAdminNotices(db, now, options.maxBatches);
 
     return {
         now,
@@ -104,7 +128,8 @@ function runBoundedCleanup(db, options = {}) {
         cacheDeleted: cache,
         historyDeleted: history,
         questLogsDeleted: questLogs,
-        totalDeleted: nonces + dms + cache + history + questLogs
+        noticesDeleted: notices,
+        totalDeleted: nonces + dms + cache + history + questLogs + notices
     };
 }
 
@@ -114,5 +139,6 @@ module.exports = {
     cleanExpiredCacheEntries,
     cleanExpiredHistory,
     cleanStaleQuestLogs,
+    cleanExpiredVoiceAdminNotices,
     runBoundedCleanup
 };

@@ -376,13 +376,13 @@ function startHttpServer() {
 
 async function connectDatabaseForBoot() {
     await sessionManager.connectDB();
-    await voiceAdmin.initialize();
     return { connected: true };
 }
 
 async function connectSqliteForBoot() {
     const database = require("../database/index");
     const result = await database.initialize({ connectMongo: false, startScheduler: true });
+    await voiceAdmin.initialize();
     return {
         schemaVersion: result.sqlite?.stats?.migration?.currentVersion || 1,
         tablesCount: result.sqlite?.stats?.tablesCount || 0,
