@@ -2,3 +2,8 @@
 # Keep every file under analysis. The validated smoke HTTP sink carries a
 # line-level false-positive suppression instead of excluding the whole script.
 exclude_paths: []
+
+engines:
+  tsqllint:
+    exclude_paths:
+      - "database/sqlite/migrations/**"

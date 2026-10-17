@@ -136,7 +136,7 @@ class VoiceAdminRepository {
                 locked_by = ?, updated_at = ? 
                WHERE guild_id = ? AND user_id = ? AND ${verCol} IS ?`;
 
-        const expectedParam = expectedVersion === null ? null : String(expectedVersion);
+        const expectedParam = expectedVersion === null || expectedVersion === undefined ? null : String(expectedVersion);
         const versionParam = version === null || version === undefined ? null : String(version);
         const stmt = db.prepare(sql);
         const result = isMute
@@ -193,7 +193,7 @@ class VoiceAdminRepository {
             ${isMute ? ", mute_owner_forced = 0" : ""}
             WHERE guild_id = ? AND user_id = ? AND ${verCol} IS ?`;
 
-        const expectedParam = expectedVersion === null ? null : String(expectedVersion);
+        const expectedParam = expectedVersion === null || expectedVersion === undefined ? null : String(expectedVersion);
         const result = db.prepare(sql).run(
             String(newVersion), now,
             String(guildId), String(userId), expectedParam

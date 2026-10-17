@@ -479,6 +479,11 @@ describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test asser
             const clearNullRes = voiceAdminRepo.clearLockField(guildId, "u_null_ver", "deaf", null, "deaf_v_cleared", 4700);
             assert.equal(clearNullRes.matchedCount, 1);
 
+            // Clear lock field when expectedVersion is undefined (treated as NULL match)
+            voiceAdminRepo.writeLock({ guildId, userId: "u_undef_ver", type: "deaf", actorId: "a", version: null, now: 4750 });
+            const clearUndefRes = voiceAdminRepo.clearLockField(guildId, "u_undef_ver", "deaf", undefined, "deaf_v_undef", 4760);
+            assert.equal(clearUndefRes.matchedCount, 1);
+
             // Version-bound update when expectedVersion is NULL
             voiceAdminRepo.writeLock({ guildId, userId: "u_null_update", type: "mute", actorId: "a", version: null, now: 4800 });
             const updateNullRes = voiceAdminRepo.writeLock({
