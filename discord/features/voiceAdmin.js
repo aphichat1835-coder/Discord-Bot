@@ -726,10 +726,22 @@ async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
     state.result.durationMs = Math.max(0, Date.now() - state.startedAt);
     return state.result;
 }
+function formatDuration(durationMs) {
+    const ms = Math.max(0, Number(durationMs || 0));
+    const totalSeconds = ms / 1000;
+    if (totalSeconds < 60) {
+        return `${totalSeconds.toFixed(1)} วินาที`;
+    }
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = (totalSeconds % 60).toFixed(1);
+    return `${mins} นาที ${secs} วินาที`;
+}
+
 function buildResult(action, result) {
     const skipped = result.skipped ? ` | ออกจากห้องก่อนถึงคิว ${result.skipped} คน` : "";
     const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
-    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}`;
+    const duration = typeof result?.durationMs === "number" ? ` | ใช้เวลา ${formatDuration(result.durationMs)}` : "";
+    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}${duration}`;
 }
 function _isOperationCompleteSuccess(targeted, succeeded, incomplete) {
     return targeted > 0 && succeeded === targeted && incomplete === 0;
@@ -1109,6 +1121,9 @@ function buildSecretResultEmbed(command, result, guild = null) {
     if (result.failed > 0) lines.push(`• ${errorEmoji} ไม่สำเร็จ: **${result.failed}** คน`);
     if (result.skipped > 0) lines.push(`• ออกจากห้องก่อนถึงคิว: **${result.skipped}** คน`);
     if (result.timedOut > 0) lines.push(`• ${loadingEmoji} หมดเวลา: **${result.timedOut}** คน`);
+    if (typeof result?.durationMs === "number") {
+        lines.push(`• ⏱️ ใช้เวลาดำเนินการ: **${formatDuration(result.durationMs)}**`);
+    }
 
     const failureReasons = formatFailureReasons(result.failedDetails);
     if (failureReasons.length > 0) {
@@ -1606,7 +1621,7 @@ module.exports = {
         operationWasAcknowledged, writeLock, clearLockField, clearBothLocks, clearAllLocksForMember, lockVoiceState,
         unlockVoiceState, unlockBoth, disconnectMembers, moveMembers, ensureBotPermission, runPanelAction, setVoiceBoth,
         isPermanentDiscordError, classifyVoiceAdminError, formatFailureReasons, buildSecretResultEmbed,
-        getRepository, setRepository, VoiceAdminRepository, defaultLockAdapter, defaultNoticeAdapter, countActiveGuildLocks,
+        getRepository, setRepository, VoiceAdminRepository, defaultLockAdapter, defaultNoticeAdapter, countActiveGuildLocks, formatDuration,
         sendUnauthorizedNotice, deletePreviousNotice, findRecentAuditUnlock, resolveExecutorMember, scheduleFallback, clearPending, enforceLock, reconcileConnectedLocks,
         pendingEnforcement, cachedAuditUnlocks, processedAuditEntries, auditWatermarks, enforcementActions, activeGuildActions, notices, noticeQueues, retiredGuilds, retiredMembers, globalActionWaiters, pruneRuntimeCaches,
         getGlobalMemberOperationCount() { return activeGlobalMemberOperations; },

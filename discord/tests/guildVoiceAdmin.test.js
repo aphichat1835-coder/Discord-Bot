@@ -1641,6 +1641,29 @@ test("countActiveGuildLocks and reconcileConnectedLocks handle timeout countdown
     assert.ok(summary.timedOut >= 1);
 });
 
+test("formatDuration formats milliseconds into seconds and minutes correctly", () => {
+    const { formatDuration, buildResult, buildSecretResultEmbed } = _test;
+
+    assert.equal(formatDuration(0), "0.0 วินาที");
+    assert.equal(formatDuration(null), "0.0 วินาที");
+    assert.equal(formatDuration(1500), "1.5 วินาที");
+    assert.equal(formatDuration(59900), "59.9 วินาที");
+    assert.equal(formatDuration(65400), "1 นาที 5.4 วินาที");
+    assert.equal(formatDuration(125000), "2 นาที 5.0 วินาที");
+
+    // Test buildResult includes duration
+    const resWithDuration = buildResult("ตัดสาย", { targeted: 2, succeeded: 2, failed: 0, durationMs: 1200 });
+    assert.match(resWithDuration, /ใช้เวลา 1\.2 วินาที/);
+
+    const resWithoutDuration = buildResult("ตัดสาย", { targeted: 2, succeeded: 2, failed: 0 });
+    assert.equal(resWithoutDuration.includes("ใช้เวลา"), false);
+
+    // Test buildSecretResultEmbed includes duration
+    const embed = buildSecretResultEmbed("ตัดหมด", { targeted: 2, succeeded: 2, failed: 0, durationMs: 2300 });
+    assert.match(embed.data.description, /⏱️ ใช้เวลาดำเนินการ: \*\*2\.3 วินาที\*\*/);
+});
+
+
 
 
 
