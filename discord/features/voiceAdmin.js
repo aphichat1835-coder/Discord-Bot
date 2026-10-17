@@ -113,7 +113,7 @@ const defaultLockAdapter = {
 const defaultNoticeAdapter = {
     updateOne(filter, update, _options) {
         const repo = getRepository();
-        const notice = { ...filter, ...(update?.$set || update || {}) };
+        const notice = { ...filter, ...(update?.$set || update) };
         return Promise.resolve(repo.upsertNotice(notice));
     },
     deleteMany(filter) {
@@ -223,24 +223,23 @@ function isPermanentDiscordError(error) {
     if (status === 400 && code !== 40002) return true;
     return false;
 }
+const KNOWN_VOICE_ADMIN_ERRORS = Object.freeze({
+    VOICE_ADMIN_MEMBER_TIMEOUT: { category: "TIMEOUT", code: "MEMBER_TIMEOUT", reason: "การประมวลผลสมาชิกหมดเวลา", stage: "bulk_execution" },
+    VOICE_ADMIN_SQLITE_PERSISTENCE_FAILED: { category: "DATABASE", code: "SQLITE_PERSISTENCE_FAILED", reason: "บันทึกฐานข้อมูล SQLite ล้มเหลว", stage: "persistence" },
+    VOICE_ADMIN_PERSISTENCE_FAILED: { category: "DATABASE", code: "SQLITE_PERSISTENCE_FAILED", reason: "บันทึกฐานข้อมูล SQLite ล้มเหลว", stage: "persistence" },
+    VOICE_ADMIN_SQLITE_LOCK_CONFLICT: { category: "LOCK", code: "SQLITE_LOCK_CONFLICT", reason: "สถานะถูกเปลี่ยนโดยงานอื่น", stage: "lock" },
+    VOICE_ADMIN_LOCK_CONFLICT: { category: "LOCK", code: "SQLITE_LOCK_CONFLICT", reason: "สถานะถูกเปลี่ยนโดยงานอื่น", stage: "lock" },
+    VOICE_ADMIN_OWNER_LOCKED: { category: "PERMISSION", code: "OWNER_LOCKED", reason: "ติดสถานะล็อกระดับสูงสุด (Owner Locked)", stage: "authorization" }
+});
+
 function classifyVoiceAdminError(error) {
     if (!error) return { category: "UNKNOWN", code: "UNKNOWN_ERROR", reason: "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ", stage: "unknown" };
     const code = String(error.code || error.name || "");
+    if (KNOWN_VOICE_ADMIN_ERRORS[code]) return KNOWN_VOICE_ADMIN_ERRORS[code];
+
     const status = Number(error.status || error.httpStatus || 0);
     const discordCode = Number(error.code);
 
-    if (code === "VOICE_ADMIN_MEMBER_TIMEOUT") {
-        return { category: "TIMEOUT", code: "MEMBER_TIMEOUT", reason: "การประมวลผลสมาชิกหมดเวลา", stage: "bulk_execution" };
-    }
-    if (code === "VOICE_ADMIN_SQLITE_PERSISTENCE_FAILED" || code === "VOICE_ADMIN_PERSISTENCE_FAILED") {
-        return { category: "DATABASE", code: "SQLITE_PERSISTENCE_FAILED", reason: "บันทึกฐานข้อมูล SQLite ล้มเหลว", stage: "persistence" };
-    }
-    if (code === "VOICE_ADMIN_SQLITE_LOCK_CONFLICT" || code === "VOICE_ADMIN_LOCK_CONFLICT") {
-        return { category: "LOCK", code: "SQLITE_LOCK_CONFLICT", reason: "สถานะถูกเปลี่ยนโดยงานอื่น", stage: "lock" };
-    }
-    if (code === "VOICE_ADMIN_OWNER_LOCKED") {
-        return { category: "PERMISSION", code: "OWNER_LOCKED", reason: "ติดสถานะล็อกระดับสูงสุด (Owner Locked)", stage: "authorization" };
-    }
     if (code === "VOICE_ADMIN_BOT_PERMISSION_MISSING" || discordCode === 50013 || status === 403) {
         return { category: "PERMISSION", code: "PERMISSION_MISSING", reason: "บอตไม่มีสิทธิ์ที่จำเป็น", stage: "discord_api" };
     }
@@ -437,21 +436,34 @@ async function clearLockField(guildId, userId, type, expectedVersion = undefined
         })
     };
 }
+function _resolveExpectedClearBoth(previous, expectedVersions) {
+    if (expectedVersions !== undefined || !previous) return expectedVersions;
+    return {
+        mute: previous.muteLocked ? previous.muteVersion : undefined,
+        deaf: previous.deafLocked ? previous.deafVersion : undefined
+    };
+}
+
+function _buildClearBothFilter(guildId, userId, expected) {
+    const filter = { guildId: String(guildId), userId: String(userId) };
+    if (expected?.mute !== undefined) filter.muteVersion = expected.mute;
+    if (expected?.deaf !== undefined) filter.deafVersion = expected.deaf;
+    return filter;
+}
+
+function _hasClearBothConflict(previous, expected, current) {
+    if (!expected) return false;
+    const muteConflict = (previous ? previous.muteLocked : expected.mute !== undefined) && current?.muteVersion !== expected.mute;
+    const deafConflict = (previous ? previous.deafLocked : expected.deaf !== undefined) && current?.deafVersion !== expected.deaf;
+    return Boolean(muteConflict || deafConflict);
+}
+
 async function clearBothLocks(guildId, userId, expectedVersions = undefined) {
     const previous = getLock(guildId, userId);
-    const expected = expectedVersions === undefined && previous
-        ? {
-            mute: previous.muteLocked ? previous.muteVersion : undefined,
-            deaf: previous.deafLocked ? previous.deafVersion : undefined
-        }
-        : expectedVersions;
+    const expected = _resolveExpectedClearBoth(previous, expectedVersions);
     const now = Date.now();
     const versions = { mute: createVersion(), deaf: createVersion() };
-    const filter = { guildId: String(guildId), userId: String(userId) };
-    if (expected) {
-        if (expected.mute !== undefined) filter.muteVersion = expected.mute;
-        if (expected.deaf !== undefined) filter.deafVersion = expected.deaf;
-    }
+    const filter = _buildClearBothFilter(guildId, userId, expected);
     const update = {
         $set: {
             muteLocked: false,
@@ -479,12 +491,8 @@ async function clearBothLocks(guildId, userId, expectedVersions = undefined) {
         throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_both");
     }
     const current = getLock(guildId, userId);
-    if (expected) {
-        const muteConflict = (previous ? previous.muteLocked : expected.mute !== undefined) && current?.muteVersion !== expected.mute;
-        const deafConflict = (previous ? previous.deafLocked : expected.deaf !== undefined) && current?.deafVersion !== expected.deaf;
-        if (muteConflict || deafConflict) {
-            throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "clear_both");
-        }
+    if (_hasClearBothConflict(previous, expected, current)) {
+        throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "clear_both");
     }
     return {
         versions,
@@ -1138,8 +1146,7 @@ function buildSecretResultEmbed(command, result, guild = null) {
 
     const failureReasons = formatFailureReasons(result.failedDetails);
     if (failureReasons.length > 0) {
-        lines.push("\n**สาเหตุข้อผิดพลาด:**");
-        lines.push(...failureReasons);
+        lines.push("\n**สาเหตุข้อผิดพลาด:**", ...failureReasons);
     }
 
     const embed = new EmbedBuilder()

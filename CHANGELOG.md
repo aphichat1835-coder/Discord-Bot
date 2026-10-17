@@ -8,6 +8,7 @@
   - **Central Table Categories & Cleanup:** Registered `voice_admin_locks` in CORE and `voice_admin_notices` in TEMP categories. Integrated 24-hour notice purge into `database/sqlite/maintenance/cleanup.js`.
   - **Feature Layer Adaptation:** Updated `discord/features/voiceAdmin.js` with full backward compatibility: secret commands (`//`, `///`), control panel interactions, permanent error classification (stopping retries immediately on HTTP 403 / 50013), and detailed failure breakdown in secret result embeds.
   - **Boot Lifecycle Alignment:** Initialized Voice Admin directly during SQLite boot in `discord/index.js`.
+  - **Deployment & State Reconciliation:** Migration 013 initializes fresh SQLite tables. Because Voice Admin locks represent transient live voice room state, legacy MongoDB documents are discarded on upgrade, and active guild voice channels are cleanly reconciled on startup via `reconcileConnectedLocks`.
   - **Full Test & Release Coverage:** Updated test suites with 69 Voice Admin tests, 100% passing; all coverage thresholds met (`voiceAdmin.js` at 94.83% lines, 88.99% functions, 75.03% branches).
 
 - **Verification Architecture Renovation & Webhook Log System (Phase 0–20):**

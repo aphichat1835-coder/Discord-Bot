@@ -462,6 +462,17 @@ describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test asser
             assert.equal(lockCleared.deafLocked, false);
             assert.equal(lockCleared.muteVersion, "m_v2");
             assert.equal(lockCleared.deafVersion, "d_v2");
+
+            // Clear both when deaf was never locked (deaf_version is NULL in SQLite)
+            voiceAdminRepo.writeLock({ guildId, userId: "u_mute_only", type: "mute", actorId: "a", version: "m_only_1", now: 3500 });
+            const muteOnlyRes = voiceAdminRepo.clearBothLocks(
+                guildId,
+                "u_mute_only",
+                { mute: "m_only_1", deaf: null },
+                { mute: "m_only_2", deaf: "d_new_2" },
+                4500
+            );
+            assert.equal(muteOnlyRes.matchedCount, 1);
         });
 
         test("deleteLock and deleteGuildLocks remove locks cleanly", () => {

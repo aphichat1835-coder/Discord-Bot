@@ -57,84 +57,69 @@ class VoiceAdminRepository {
         return mapLockRow(row);
     }
 
-    writeLock(params) {
-        const {
-            guildId,
-            userId,
-            type,
-            actorId,
-            expectedVersion,
-            ownerForced = false,
-            lockedAt = Date.now(),
-            version,
-            now = Date.now()
-        } = params;
-
-        const db = this.getDb();
-        const isMute = type === "mute";
-
-        if (expectedVersion === undefined) {
-            // Upsert write
-            const stmt = isMute
-                ? db.prepare(`
-                    INSERT INTO voice_admin_locks (
-                        guild_id, user_id, mute_locked, deaf_locked,
-                        mute_locked_by, deaf_locked_by, mute_locked_at, deaf_locked_at,
-                        mute_version, deaf_version, mute_owner_forced, locked_by, updated_at
-                    ) VALUES (
-                        ?, ?, 1, 0,
-                        ?, NULL, ?, NULL,
-                        ?, NULL, ?, ?, ?
-                    )
-                    ON CONFLICT(guild_id, user_id) DO UPDATE SET
-                        mute_locked = 1,
-                        mute_locked_by = excluded.mute_locked_by,
-                        mute_locked_at = excluded.mute_locked_at,
-                        mute_version = excluded.mute_version,
-                        mute_owner_forced = excluded.mute_owner_forced,
-                        locked_by = excluded.locked_by,
-                        updated_at = excluded.updated_at
-                `)
-                : db.prepare(`
-                    INSERT INTO voice_admin_locks (
-                        guild_id, user_id, mute_locked, deaf_locked,
-                        mute_locked_by, deaf_locked_by, mute_locked_at, deaf_locked_at,
-                        mute_version, deaf_version, mute_owner_forced, locked_by, updated_at
-                    ) VALUES (
-                        ?, ?, 0, 1,
-                        NULL, ?, NULL, ?,
-                        NULL, ?, 0, ?, ?
-                    )
-                    ON CONFLICT(guild_id, user_id) DO UPDATE SET
-                        deaf_locked = 1,
-                        deaf_locked_by = excluded.deaf_locked_by,
-                        deaf_locked_at = excluded.deaf_locked_at,
-                        deaf_version = excluded.deaf_version,
-                        locked_by = excluded.locked_by,
-                        updated_at = excluded.updated_at
-                `);
-
-            const result = isMute
-                ? stmt.run(
-                    String(guildId), String(userId),
-                    String(actorId), lockedAt,
-                    String(version), ownerForced ? 1 : 0, String(actorId), now
+    _writeLockUpsert(db, isMute, params, ownerForcedVal) {
+        const { guildId, userId, actorId, lockedAt, version, now } = params;
+        const stmt = isMute
+            ? db.prepare(`
+                INSERT INTO voice_admin_locks (
+                    guild_id, user_id, mute_locked, deaf_locked,
+                    mute_locked_by, deaf_locked_by, mute_locked_at, deaf_locked_at,
+                    mute_version, deaf_version, mute_owner_forced, locked_by, updated_at
+                ) VALUES (
+                    ?, ?, 1, 0,
+                    ?, NULL, ?, NULL,
+                    ?, NULL, ?, ?, ?
                 )
-                : stmt.run(
-                    String(guildId), String(userId),
-                    String(actorId), lockedAt,
-                    String(version), String(actorId), now
-                );
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    mute_locked = 1,
+                    mute_locked_by = excluded.mute_locked_by,
+                    mute_locked_at = excluded.mute_locked_at,
+                    mute_version = excluded.mute_version,
+                    mute_owner_forced = excluded.mute_owner_forced,
+                    locked_by = excluded.locked_by,
+                    updated_at = excluded.updated_at
+            `)
+            : db.prepare(`
+                INSERT INTO voice_admin_locks (
+                    guild_id, user_id, mute_locked, deaf_locked,
+                    mute_locked_by, deaf_locked_by, mute_locked_at, deaf_locked_at,
+                    mute_version, deaf_version, mute_owner_forced, locked_by, updated_at
+                ) VALUES (
+                    ?, ?, 0, 1,
+                    NULL, ?, NULL, ?,
+                    NULL, ?, 0, ?, ?
+                )
+                ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                    deaf_locked = 1,
+                    deaf_locked_by = excluded.deaf_locked_by,
+                    deaf_locked_at = excluded.deaf_locked_at,
+                    deaf_version = excluded.deaf_version,
+                    locked_by = excluded.locked_by,
+                    updated_at = excluded.updated_at
+            `);
 
-            return {
-                acknowledged: true,
-                matchedCount: result.changes > 0 ? 1 : 0,
-                upsertedCount: result.changes > 0 ? 1 : 0,
-                changes: result.changes
-            };
-        }
+        const result = isMute
+            ? stmt.run(
+                String(guildId), String(userId),
+                String(actorId), lockedAt,
+                String(version), ownerForcedVal, String(actorId), now
+            )
+            : stmt.run(
+                String(guildId), String(userId),
+                String(actorId), lockedAt,
+                String(version), String(actorId), now
+            );
 
-        // Version-bound update
+        return {
+            acknowledged: true,
+            matchedCount: result.changes > 0 ? 1 : 0,
+            upsertedCount: result.changes > 0 ? 1 : 0,
+            changes: result.changes
+        };
+    }
+
+    _writeLockUpdate(db, isMute, params, ownerForcedVal) {
+        const { guildId, userId, actorId, expectedVersion, lockedAt, version, now } = params;
         const verCol = isMute ? "mute_version" : "deaf_version";
         const lockCol = isMute ? "mute_locked" : "deaf_locked";
         const byCol = isMute ? "mute_locked_by" : "deaf_locked_by";
@@ -154,7 +139,7 @@ class VoiceAdminRepository {
         const result = isMute
             ? stmt.run(
                 String(actorId), lockedAt, String(version),
-                ownerForced ? 1 : 0, String(actorId), now,
+                ownerForcedVal, String(actorId), now,
                 String(guildId), String(userId), String(expectedVersion)
             )
             : stmt.run(
@@ -169,6 +154,26 @@ class VoiceAdminRepository {
             upsertedCount: 0,
             changes: result.changes
         };
+    }
+
+    writeLock(params) {
+        const {
+            type,
+            expectedVersion,
+            ownerForced = false,
+            lockedAt = Date.now(),
+            now = Date.now()
+        } = params;
+
+        const db = this.getDb();
+        const isMute = type === "mute";
+        const ownerForcedVal = ownerForced ? 1 : 0;
+        const normalizedParams = { ...params, lockedAt, now };
+
+        if (expectedVersion === undefined) {
+            return this._writeLockUpsert(db, isMute, normalizedParams, ownerForcedVal);
+        }
+        return this._writeLockUpdate(db, isMute, normalizedParams, ownerForcedVal);
     }
 
     clearLockField(guildId, userId, type, expectedVersion, newVersion, now = Date.now()) {
@@ -210,12 +215,12 @@ class VoiceAdminRepository {
         const params = [String(versions.mute), String(versions.deaf), now, String(guildId), String(userId)];
 
         if (expected?.mute !== undefined) {
-            sql += " AND mute_version = ?";
-            params.push(String(expected.mute));
+            sql += " AND mute_version IS ?";
+            params.push(expected.mute === null ? null : String(expected.mute));
         }
         if (expected?.deaf !== undefined) {
-            sql += " AND deaf_version = ?";
-            params.push(String(expected.deaf));
+            sql += " AND deaf_version IS ?";
+            params.push(expected.deaf === null ? null : String(expected.deaf));
         }
 
         const result = db.prepare(sql).run(...params);
