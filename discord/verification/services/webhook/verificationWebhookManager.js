@@ -834,6 +834,78 @@ class VerificationWebhookManager {
     }
 
     /**
+     * Reconciles a single verify log that was marked successful in MongoDB but whose
+     * webhook delivery was not yet enqueued into SQLite.
+     * @private
+     */
+    async _reconcileSingleLog(log) {
+        try {
+            if (!isEligibleVerifyLog(log)) {
+                await VerifyLog.updateOne(
+                    { _id: log._id },
+                    { $set: { "webhookDelivery.status": "skipped", "webhookDelivery.lastError": "not_eligible" } }
+                ).catch(() => {});
+                return false;
+            }
+
+            const config = await GuildConfig.findOne().where("guildId").equals(String(log.guildId)).lean();
+            const webhookConfig = config?.verification?.webhookLog;
+            if (!webhookConfig?.enabled || !webhookConfig?.url) {
+                await VerifyLog.updateOne(
+                    { _id: log._id },
+                    { $set: { "webhookDelivery.status": "skipped", "webhookDelivery.lastError": "webhook_disabled" } }
+                ).catch(() => {});
+                return false;
+            }
+
+            const destinationVersion = Number(webhookConfig.destinationVersion) || 1;
+            const eventId = String(log._id);
+            const deliveryId = `del_${log.guildId}_v${destinationVersion}_${eventId}`;
+
+            // Check if already present in SQLite delivery queue
+            let existingDelivery = null;
+            if (typeof this.repo.getDeliveryById === "function") {
+                existingDelivery = this.repo.getDeliveryById(deliveryId);
+            }
+            if (existingDelivery) {
+                const status = (existingDelivery.status === "SENT" || existingDelivery.status === "DELIVERED") ? "delivered" : "enqueued";
+                await VerifyLog.updateOne(
+                    { _id: log._id },
+                    { $set: { "webhookDelivery.status": status, "webhookDelivery.deliveryId": deliveryId } }
+                ).catch(() => {});
+                return false;
+            }
+
+            // Enqueue via dispatchLiveEvent
+            const enqueuedId = await this.dispatchLiveEvent({
+                guildId: log.guildId,
+                userId: log.userId,
+                logId: String(log._id),
+                eventData: log
+            });
+
+            if (enqueuedId) {
+                await VerifyLog.updateOne(
+                    { _id: log._id },
+                    {
+                        $set: {
+                            "webhookDelivery.status": "enqueued",
+                            "webhookDelivery.deliveryId": enqueuedId,
+                            "webhookDelivery.enqueuedAt": Date.now()
+                        }
+                    }
+                ).catch(() => {});
+                return true;
+            }
+
+            return false;
+        } catch (itemErr) {
+            console.error(`[VerificationWebhook] Error reconciling log ${log?._id}:`, itemErr?.message || itemErr);
+            return false;
+        }
+    }
+
+    /**
      * Reconciles verify logs that were marked successful in MongoDB but whose webhook
      * delivery was never enqueued into SQLite (e.g. process crash between log save and dispatch,
      * or temporary database contention).
@@ -856,68 +928,11 @@ class VerificationWebhookManager {
 
             if (!pendingLogs || pendingLogs.length === 0) return 0;
 
-            let enqueuedCount = 0;
-            for (const log of pendingLogs) {
-                if (!isEligibleVerifyLog(log)) {
-                    await VerifyLog.updateOne(
-                        { _id: log._id },
-                        { $set: { "webhookDelivery.status": "skipped", "webhookDelivery.lastError": "not_eligible" } }
-                    ).catch(() => {});
-                    continue;
-                }
+            const results = await Promise.all(
+                pendingLogs.map((log) => this._reconcileSingleLog(log))
+            );
 
-                const config = await GuildConfig.findOne().where("guildId").equals(String(log.guildId)).lean();
-                const webhookConfig = config?.verification?.webhookLog;
-                if (!webhookConfig?.enabled || !webhookConfig?.url) {
-                    await VerifyLog.updateOne(
-                        { _id: log._id },
-                        { $set: { "webhookDelivery.status": "skipped", "webhookDelivery.lastError": "webhook_disabled" } }
-                    ).catch(() => {});
-                    continue;
-                }
-
-                const destinationVersion = Number(webhookConfig.destinationVersion) || 1;
-                const eventId = String(log._id);
-                const deliveryId = `del_${log.guildId}_v${destinationVersion}_${eventId}`;
-
-                // Check if already present in SQLite delivery queue
-                let existingDelivery = null;
-                if (typeof this.repo.getDeliveryById === "function") {
-                    existingDelivery = this.repo.getDeliveryById(deliveryId);
-                }
-                if (existingDelivery) {
-                    const status = (existingDelivery.status === "SENT" || existingDelivery.status === "DELIVERED") ? "delivered" : "enqueued";
-                    await VerifyLog.updateOne(
-                        { _id: log._id },
-                        { $set: { "webhookDelivery.status": status, "webhookDelivery.deliveryId": deliveryId } }
-                    ).catch(() => {});
-                    continue;
-                }
-
-                // Enqueue via dispatchLiveEvent
-                const enqueuedId = await this.dispatchLiveEvent({
-                    guildId: log.guildId,
-                    userId: log.userId,
-                    logId: String(log._id),
-                    eventData: log
-                });
-
-                if (enqueuedId) {
-                    enqueuedCount++;
-                    await VerifyLog.updateOne(
-                        { _id: log._id },
-                        {
-                            $set: {
-                                "webhookDelivery.status": "enqueued",
-                                "webhookDelivery.deliveryId": enqueuedId,
-                                "webhookDelivery.enqueuedAt": Date.now()
-                            }
-                        }
-                    ).catch(() => {});
-                }
-            }
-
-            return enqueuedCount;
+            return results.filter(Boolean).length;
         } catch (err) {
             console.error("[VerificationWebhook] reconcilePendingVerifyLogs failed:", err?.message || err);
             return 0;

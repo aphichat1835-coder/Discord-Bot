@@ -293,4 +293,79 @@ const mongoose = require("mongoose");
             GuildConfig.findOne = origFindOne;
         }
     });
+
+    await t.test("5. reconcilePendingVerifyLogs skips non-eligible logs or disabled webhooks cleanly", async () => {
+        const guildId = "999888777666555444";
+        const origReadyState = mongoose.connection.readyState;
+        Object.defineProperty(mongoose.connection, "readyState", { value: 1, configurable: true, writable: true });
+
+        const origFind = VerifyLog.find;
+        const origUpdateOne = VerifyLog.updateOne;
+        const origFindOne = GuildConfig.findOne;
+
+        const updatedStatuses = [];
+
+        VerifyLog.find = () => ({
+            sort: () => ({
+                limit: () => ({
+                    lean: async () => [
+                        // Ineligible log (result !== success)
+                        {
+                            _id: "ineligible_1",
+                            guildId,
+                            userId: "u1",
+                            result: "failed"
+                        },
+                        // Webhook disabled for this guild
+                        {
+                            _id: "disabled_2",
+                            guildId,
+                            userId: "u2",
+                            result: "success",
+                            roleAssignResult: { ok: true }
+                        }
+                    ]
+                })
+            })
+        });
+
+        VerifyLog.updateOne = async (filter, update) => {
+            updatedStatuses.push({ filter, update });
+            return { acknowledged: true, modifiedCount: 1 };
+        };
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: async () => ({
+                        verification: {
+                            webhookLog: {
+                                enabled: false,
+                                url: ""
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        try {
+            const count = await manager.reconcilePendingVerifyLogs();
+            assert.equal(count, 0);
+
+            const notEligible = updatedStatuses.find(u => u.filter._id === "ineligible_1");
+            assert.equal(notEligible?.update?.$set?.["webhookDelivery.status"], "skipped");
+            assert.equal(notEligible?.update?.$set?.["webhookDelivery.lastError"], "not_eligible");
+
+            const disabled = updatedStatuses.find(u => u.filter._id === "disabled_2");
+            assert.equal(disabled?.update?.$set?.["webhookDelivery.status"], "skipped");
+            assert.equal(disabled?.update?.$set?.["webhookDelivery.lastError"], "webhook_disabled");
+        } finally {
+            Object.defineProperty(mongoose.connection, "readyState", { value: origReadyState, configurable: true, writable: true });
+            VerifyLog.find = origFind;
+            VerifyLog.updateOne = origUpdateOne;
+            GuildConfig.findOne = origFindOne;
+        }
+    });
 });
+

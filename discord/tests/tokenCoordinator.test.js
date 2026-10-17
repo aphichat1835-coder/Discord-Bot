@@ -408,3 +408,16 @@ test('withTokenLock does not chain-poison or crash subsequent operations when a 
     });
     assert.equal(result, 'recovered-lock');
 });
+
+test('_acquireRateLimitSlot rejects immediately when signal is already aborted', async () => {
+    const token = 'token-abort-signal-test';
+    const hash = tokenCoordinator.hashToken(token);
+    const controller = new AbortController();
+    controller.abort(new Error('User aborted slot'));
+
+    await assert.rejects(
+        () => tokenCoordinator._acquireRateLimitSlot(hash, { signal: controller.signal }),
+        /User aborted slot/
+    );
+});
+

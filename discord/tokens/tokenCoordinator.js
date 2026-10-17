@@ -580,9 +580,33 @@ class TokenCoordinator extends EventEmitter {
         }
     }
 
+    _processQueueHead(limiter) {
+        const head = limiter.queue[0];
+        if (head.cancelled) {
+            limiter.queue.shift();
+            return { processed: true };
+        }
+
+        const isCritical = head.priority === 'CRITICAL';
+        const cost = 1;
+        const canAcquire = isCritical ? limiter.tokens >= 0.5 : limiter.tokens >= cost;
+
+        if (canAcquire) {
+            limiter.queue.shift();
+            if (head.timer) clearTimeout(head.timer);
+            limiter.tokens = Math.max(0, limiter.tokens - cost);
+            head.resolve();
+            return { processed: true };
+        }
+
+        const needed = (isCritical ? 0.5 : 1) - limiter.tokens;
+        const waitMs = Math.max(10, Math.ceil((needed / this.rateLimitConfig.refillRatePerSec) * 1000));
+        return { processed: false, waitMs };
+    }
+
     _pumpRateLimitQueue(tokenHash) {
         const state = this.tokenStates.get(tokenHash);
-        if (!state || !state.rateLimiter) return;
+        if (!state?.rateLimiter) return;
         const limiter = state.rateLimiter;
         if (limiter.pumpTimer) {
             clearTimeout(limiter.pumpTimer);
@@ -599,24 +623,8 @@ class TokenCoordinator extends EventEmitter {
         this._refillTokens(limiter);
 
         while (limiter.queue && limiter.queue.length > 0) {
-            const head = limiter.queue[0];
-            if (head.cancelled) {
-                limiter.queue.shift();
-                continue;
-            }
-
-            const isCritical = head.priority === 'CRITICAL';
-            const cost = 1;
-            const canAcquire = isCritical ? limiter.tokens >= 0.5 : limiter.tokens >= cost;
-
-            if (canAcquire) {
-                limiter.queue.shift();
-                if (head.timer) clearTimeout(head.timer);
-                limiter.tokens = Math.max(0, limiter.tokens - cost);
-                head.resolve();
-            } else {
-                const needed = (isCritical ? 0.5 : 1) - limiter.tokens;
-                const waitMs = Math.max(10, Math.ceil((needed / this.rateLimitConfig.refillRatePerSec) * 1000));
+            const { processed, waitMs } = this._processQueueHead(limiter);
+            if (!processed) {
                 limiter.pumpTimer = setTimeout(() => this._pumpRateLimitQueue(tokenHash), waitMs);
                 break;
             }
@@ -649,7 +657,7 @@ class TokenCoordinator extends EventEmitter {
 
         if (options?.signal?.aborted) {
             const abortErr = options.signal.reason || new Error('This operation was aborted');
-            return Promise.reject(abortErr);
+            throw abortErr;
         }
 
         const inBackoff = Boolean(state.backoffUntil && state.backoffUntil > now);
