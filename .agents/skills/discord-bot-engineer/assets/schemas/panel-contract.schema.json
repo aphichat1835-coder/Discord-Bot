@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"panel-contract","type":"object","required":["archetype","surface","title","sections","actions"],"properties":{"archetype":{"type":"string"},"surface":{"type":"string"},"title":{"type":"string"},"accent":{"type":"string"},"sections":{"type":"array"},"actions":{"type":"array"}},"additionalProperties":true}

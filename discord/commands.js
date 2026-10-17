@@ -1,16 +1,13 @@
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-This file is the ROUTER and compatibility layer.
-Command logic lives in: commands/moderation.js, information.js, utility.js, verification.js
-Panel rendering and panel interactions live in commands/panelViews.js and commands/panelInteractions.js.
-DO NOT REMOVE: panelMessages, restorePanels, cleanupGuild exports.
-DO NOT REMOVE: handleMessage — used by index.js messageCreate event.
-================================================================================
-*/
+/**
+ * Commands Router & Compatibility Layer
+ * - Routes command executions to respective modules (moderation, information, utility, verification).
+ * - Panel rendering and panel interactions live in commands/panelViews.js and commands/panelInteractions.js.
+ * - Manages panelMessages state, restorePanels, cleanupGuild, and legacy handleMessage for messageCreate event.
+ */
 
 const config = require("./config.json");
-const sessionManager = require("./sessionManager");
+const sessionManager = require("./voiceWorker/sessionManager");
+const webhooks = require("./core/webhooks");
 
 const moderation   = require("./commands/moderation");
 const information  = require("./commands/information");
@@ -21,6 +18,7 @@ const roleSweep = require("./commands/roleSweep");
 const questCommand = require("./commands/quest");
 const tokenCheckCommand = require("./commands/tokenCheck");
 const dmPanelCommand = require("./commands/dmPanel");
+const joinCampaign = require("./features/joinCampaign/index");
 
 const { slashCommandsData, validateSlashCommandsData } = require("./commands/registry");
 const {
@@ -51,9 +49,9 @@ const {
 // ════════════════════════════════════════════════════════════════════════════
 const panelMessages = new Map();
 const activePanelCreates = new Set();
-const INFORMATION_COMMANDS = new Set(["userinfo", "serverinfo", "ping"]);
+const INFORMATION_COMMANDS = new Set(["user", "userinfo", "serverinfo", "ping"]);
 const MODERATION_COMMANDS = new Set(["ban", "kick", "timeout", "clear"]);
-const UTILITY_COMMANDS = new Set(["say", "announce", "copy-emojis", "backup", "restore"]);
+const UTILITY_COMMANDS = new Set(["say", "embed", "copy-emojis"]);
 
 function getPanelMessages() {
     return panelMessages;
@@ -250,11 +248,15 @@ async function handleVoiceOnlineCommand(interaction) {
         markCommandAccepted(interaction);
         const previousPanel = panelMessages.get(guildId) || null;
         const message = await interaction.reply({
-            embeds: [buildControlPanelEmbed()],
-            components: [buildControlPanelRow()],
+            content: `${config.emojis.loading || "⏳"} กำลังโหลด...`,
             fetchReply: true
         });
         panelMessages.set(guildId, message);
+        await message.edit({
+            content: null,
+            embeds: [buildControlPanelEmbed()],
+            components: [buildControlPanelRow()]
+        });
         if (!await updatePanel(guildId)) {
             return reportPanelPersistenceFailure(interaction, message, previousPanel);
         }
@@ -267,15 +269,16 @@ async function handleVoiceOnlineCommand(interaction) {
 
 async function handleSlashCommand(interaction, client) {
     const commandName = interaction.commandName;
-    if (commandName === "rerole") return roleSweep.handleSlashCommand(interaction);
+    if (commandName === "re-role") return roleSweep.handleSlashCommand(interaction);
     const handler = delegatedCommandHandler(commandName);
     if (handler) return handler(interaction, client, sessionManager);
-    if (commandName === "voiceadmin") return voiceAdmin.handleVoiceAdminCommand(interaction);
+    if (commandName === "voice-admin") return voiceAdmin.handleVoiceAdminCommand(interaction);
     if (commandName === "setup-verify") return verification.handle(interaction, client);
     if (commandName === "voice-online") return handleVoiceOnlineCommand(interaction);
     if (commandName === "quest") return questCommand.handleQuestCommand(interaction);
     if (commandName === "token-check") return tokenCheckCommand.handleTokenCheckCommand(interaction);
     if (commandName === "dm-panel") return dmPanelCommand.handleDmPanelCommand(interaction);
+    if (commandName === "join-panel") return joinCampaign.handleJoinPanelCommand(interaction, client);
     return null;
 }
 
@@ -333,6 +336,10 @@ async function handleInteraction(interaction, client, shadowMasterId) {
             return await voiceAdmin.handleVoiceAdminInteraction(interaction);
         }
 
+        if (joinCampaign.isJoinCampaignInteraction(interaction)) {
+            return await joinCampaign.handleJoinCampaignInteraction(interaction, client);
+        }
+
         if (interaction.isButton()) {
             return await routeButtonInteraction(interaction, client, shadowMasterId);
         }
@@ -346,8 +353,33 @@ async function handleInteraction(interaction, client, shadowMasterId) {
         }
 
     } catch (err) {
-        console.error(`[SLASH] ❌ Error in /${interaction.commandName || "interaction"}:`, err.message);
+        const cmdName = interaction.commandName || interaction.customId || "interaction";
+        console.error(`[SLASH] ❌ Error in /${cmdName}:`, err.message);
         sessionManager.systemMetrics.increment("errors");
+        if (interaction) {
+            interaction.__commandFailed = true;
+            interaction.__commandError = err.message || String(err);
+        }
+
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "ERROR",
+            category: "COMMAND",
+            code: "command.unhandled_error",
+            state: "OPEN",
+            title: "COMMAND EXECUTION ERROR",
+            description: `เกิดข้อผิดพลาดในการประมวลผลคำสั่ง /${cmdName}: ${err?.message || "unknown"}`,
+            impact: "ผู้ใช้ไม่สามารถใช้งานคำสั่งหรือปุ่มนี้ได้จนกว่าจะแก้ไข",
+            action: "ตรวจสอบข้อผิดพลาดและ stack trace ใน Runtime Log",
+            context: {
+                "คำสั่ง / ID": cmdName,
+                "ผู้ใช้งาน": interaction.user?.tag || interaction.user?.id || "unknown",
+                "เซิร์ฟเวอร์": interaction.guild?.name || interaction.guildId || "DM",
+                "รหัสข้อผิดพลาด": String(err?.code || err?.name || "command_error")
+            },
+            dedupeKey: `command-error:${cmdName}:${err?.message || ""}`,
+            dedupeMs: 2 * 60 * 1000
+        }).catch(() => {});
 
         const reply = {
             content: `> ${config.emojis.warning} เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง`,

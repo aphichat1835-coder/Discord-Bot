@@ -265,8 +265,13 @@ async function writeLock(guildId, userId, type, actorId, expectedVersion = undef
         throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "write_lock", error);
     }
     if (!operationWasAcknowledged(result, { allowUpsert: write.upsert })) {
+        try {
+            result = await VoiceAdminLock.updateOne(write.filter, write.update, write.databaseOptions);
+        } catch {}
+    }
+    if (!operationWasAcknowledged(result, { allowUpsert: write.upsert })) {
         if (expectedVersion !== undefined) throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "write_lock");
-        await reportPersistenceFailure("write_lock", { guildId, userId, type });
+        await reportPersistenceFailure("write_lock", { guildId, userId, type, code: "unacknowledged_write" });
         throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "write_lock");
     }
     if (isRetiredTarget(guildId, userId)) {
@@ -539,19 +544,35 @@ async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
     return state.result;
 }
 function buildResult(action, result) {
-    const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
-    const persistence = result.persistenceFailed ? ` | บันทึกสถานะไม่สำเร็จ ${result.persistenceFailed} คน` : "";
     const skipped = result.skipped ? ` | ออกจากห้องก่อนถึงคิว ${result.skipped} คน` : "";
-    const duration = Number.isFinite(result.durationMs) && result.durationMs > 0 ? ` | ใช้เวลา ${(result.durationMs / 1000).toFixed(1)} วินาที` : "";
-    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ล้มเหลว ${result.failed} คน${skipped}${timeout}${persistence}${duration}`;
+    const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
+    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}`;
 }
-function resultEmoji(result) {
-    const targeted = Number(result?.targeted || 0);
-    const succeeded = Number(result?.succeeded || 0);
-    const incomplete = Number(result?.failed || 0) + Number(result?.skipped || 0) + Number(result?.timedOut || 0) + Number(result?.persistenceFailed || 0);
-    if (targeted > 0 && succeeded === targeted && incomplete === 0) return "✅";
-    if (succeeded > 0 || targeted === 0 || Number(result?.skipped || 0) || Number(result?.timedOut || 0)) return "⚠️";
-    return "❌";
+function _isOperationCompleteSuccess(targeted, succeeded, incomplete) {
+    return targeted > 0 && succeeded === targeted && incomplete === 0;
+}
+
+function _isOperationWarning(targeted, succeeded, skipped, timedOut) {
+    return succeeded > 0 || targeted === 0 || skipped > 0 || timedOut > 0;
+}
+
+function resultEmoji(result, cfg) {
+    const emojis = (cfg || config).emojis || {};
+    const targeted = Number(result?.targeted ?? 0);
+    const succeeded = Number(result?.succeeded ?? 0);
+    const failed = Number(result?.failed ?? 0);
+    const skipped = Number(result?.skipped ?? 0);
+    const timedOut = Number(result?.timedOut ?? 0);
+    const persistenceFailed = Number(result?.persistenceFailed ?? 0);
+    const incomplete = failed + skipped + timedOut + persistenceFailed;
+
+    if (_isOperationCompleteSuccess(targeted, succeeded, incomplete)) {
+        return emojis.success || "✅";
+    }
+    if (_isOperationWarning(targeted, succeeded, skipped, timedOut)) {
+        return emojis.warning || "⚠️";
+    }
+    return emojis.error || "❌";
 }
 
 function getBotMember(guild) { return guild?.members?.me || guild?.members?.cache?.get?.(guild?.client?.user?.id) || null; }
@@ -575,35 +596,31 @@ function buildPanel(channel, status = null) {
         if (inChannel.has(id) && lock.deafLocked) deaf++;
     }
     const descriptionLines = [
-        `### 🎛️ แผงควบคุมและจัดการห้องเสียง`,
-        `> ศูนย์ควบคุมสถานะสมาชิกในห้องเสียงแบบเรียลไทม์\n`,
-        `📍 **ข้อมูลห้องเสียงปัจจุบัน**`,
         `• ห้อง: <#${channel.id}>`,
-        `• สมาชิกทั้งหมด: **${members.length}** คน  │  จัดการได้: **${sourceMembers(channel).length}** คน\n`,
-        `🔒 **สถานะการล็อกระดับเซิร์ฟเวอร์**`,
-        `• 🔇 ล็อกไมค์ (Server Mute): **${mute}** คน`,
-        `• 🎧 ล็อกหู (Server Deafen): **${deaf}** คน`
+        `• สมาชิกในห้อง: **${members.length}** คน (จัดการได้ **${sourceMembers(channel).length}** คน)\n`,
+        `**สถานะการล็อก**`,
+        `• ล็อกไมค์: **${mute}** คน`,
+        `• ล็อกหู: **${deaf}** คน`
     ];
     if (status) {
         descriptionLines.push(`\n${status}`);
     }
     const embed = new EmbedBuilder()
         .setColor(config.system?.themeColors?.primary || "#5865F2")
-        .setTitle("🔊 Voice Administration Panel")
+        .setTitle(`${config.emojis?.voice_ch || "🔊"} จัดการห้องเสียง`)
         .setDescription(descriptionLines.join("\n"))
-        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
         .setTimestamp();
     const iconUrl = channel?.guild?.iconURL?.({ forceStatic: false, size: 256 }) || channel?.guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
     const actions = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(IDS.DISCONNECT).setLabel("ตัดสายทั้งหมด").setEmoji("🚪").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId(IDS.LOCK_MUTE).setLabel("ปิดไมค์").setEmoji("🔇").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(IDS.DISCONNECT).setLabel("ตัดสายทั้งหมด").setEmoji(config.emojis?.voice_leave || "🚪").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(IDS.LOCK_MUTE).setLabel("ปิดไมค์").setEmoji(config.emojis?.voice_leave || "🔇").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(IDS.LOCK_DEAF).setLabel("ปิดหู").setEmoji("🎧").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(IDS.UNLOCK_MUTE).setLabel("เปิดไมค์").setEmoji("🎙️").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(IDS.UNLOCK_DEAF).setLabel("เปิดหู").setEmoji("🔊").setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId(IDS.UNLOCK_DEAF).setLabel("เปิดหู").setEmoji(config.emojis?.voice_ch || "🔊").setStyle(ButtonStyle.Success)
     );
-    const move = new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId(IDS.MOVE).setPlaceholder("🚀 เลือกห้องเสียงปลายทางเพื่อย้ายสมาชิกทันที").setChannelTypes(ChannelType.GuildVoice).setMinValues(1).setMaxValues(1));
-    const refresh = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(IDS.REFRESH).setLabel("รีเฟรชสถานะ").setEmoji("🔄").setStyle(ButtonStyle.Primary));
+    const move = new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId(IDS.MOVE).setPlaceholder("เลือกห้องเสียงปลายทางเพื่อย้ายสมาชิก").setChannelTypes(ChannelType.GuildVoice).setMinValues(1).setMaxValues(1));
+    const refresh = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(IDS.REFRESH).setLabel("รีเฟรช").setEmoji(config.emojis?.loading_circle || config.emojis?.loading || "🔄").setStyle(ButtonStyle.Primary));
     return { embeds: [embed], components: [actions, move, refresh] };
 }
 function verifyVoiceAdminAccess(actor, channel) {
@@ -623,7 +640,7 @@ async function ensureBotPermission(guild, source, action, destination = null) {
         error.permissionAction = action;
         throw error;
     }
-    if (action === "move" && (!isVoiceChannel(destination) || String(destination.guild?.id) !== String(guild?.id) || destination.id === source.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
+    if (action === "move" && (!isVoiceChannel(destination) || String(destination?.guild?.id) !== String(guild?.id) || destination?.id === source?.id || !botCanInChannel(guild, destination, PermissionFlagsBits.Connect))) throw makeError("VOICE_ADMIN_DESTINATION_INVALID");
 }
 async function setVoice(member, type, enabled, reason) { return type === "mute" ? member.voice.setMute(enabled, reason) : member.voice.setDeaf(enabled, reason); }
 async function setVoiceBoth(member, enabled, reason) {
@@ -734,35 +751,64 @@ async function runPanelAction(interaction, action, destination = null) {
 }
 async function handleVoiceAdminCommand(interaction) {
     const access = verifyVoiceAdminAccess(interaction.member, interaction.channel);
-    if (access) return interaction.reply({ content: `> ⛔ ${access}`, ephemeral: true });
+    if (access) return interaction.reply({ content: `> ${config.emojis?.no_entry || "⛔"} ${access}`, ephemeral: true });
     const reply = await interaction.reply({ ...buildPanel(interaction.channel), ephemeral: true });
     markCommandAccepted(interaction);
     return reply;
 }
 function isVoiceAdminInteraction(interaction) { return (interaction?.isButton?.() || interaction?.isChannelSelectMenu?.()) && String(interaction.customId || "").startsWith(IDS.PREFIX); }
-async function handleVoiceAdminInteraction(interaction) {
-    const access = verifyVoiceAdminAccess(interaction.member, interaction.channel);
-    if (access) return interaction.reply({ content: `> ⛔ ${access}`, ephemeral: true });
-    if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
-    await interaction.deferUpdate();
-    const action = ({ [IDS.DISCONNECT]: "disconnect", [IDS.LOCK_MUTE]: "mute", [IDS.LOCK_DEAF]: "deaf", [IDS.UNLOCK_MUTE]: "unmute", [IDS.UNLOCK_DEAF]: "undeaf", [IDS.MOVE]: "move" })[interaction.customId];
+
+const PANEL_ACTION_MAP = Object.freeze({
+    [IDS.DISCONNECT]: "disconnect",
+    [IDS.LOCK_MUTE]: "mute",
+    [IDS.LOCK_DEAF]: "deaf",
+    [IDS.UNLOCK_MUTE]: "unmute",
+    [IDS.UNLOCK_DEAF]: "undeaf",
+    [IDS.MOVE]: "move"
+});
+
+async function _resolveMoveDestination(interaction) {
     const destinationId = interaction.values?.[0];
-    let destination = null;
-    if (action === "move") {
-        destination = interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(destinationId) || null;
-        if (!destination && destinationId && typeof interaction.guild?.channels?.fetch === "function") {
-            destination = await interaction.guild.channels.fetch(destinationId).catch(() => null);
-        }
+    let destination = interaction.channels?.first?.() || interaction.guild?.channels?.cache?.get?.(destinationId) || null;
+    if (!destination && destinationId && typeof interaction.guild?.channels?.fetch === "function") {
+        destination = await interaction.guild.channels.fetch(destinationId).catch(() => null);
     }
-    if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ❌ คำสั่งแผงนี้ไม่ถูกต้อง`));
+    return destination;
+}
+
+function _resolveActionLoadingText(action) {
+    const actionLoadingText = ({
+        disconnect: `${config.emojis?.loading || "⏳"} กำลังตัดสายทั้งหมด...`,
+        mute: `${config.emojis?.loading || "⏳"} กำลังปิดไมค์...`,
+        deaf: `${config.emojis?.loading || "⏳"} กำลังปิดหู...`,
+        unmute: `${config.emojis?.loading || "⏳"} กำลังเปิดไมค์...`,
+        undeaf: `${config.emojis?.loading || "⏳"} กำลังเปิดหู...`,
+        move: `${config.emojis?.loading || "⏳"} กำลังย้ายสมาชิก...`
+    })[action];
+    return actionLoadingText || `${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`;
+}
+
+async function _executePanelAction(interaction, action, destination) {
+    await interaction.editReply(buildPanel(interaction.channel, `> ${_resolveActionLoadingText(action)}`)).catch(() => {});
     try {
         const result = await runPanelAction(interaction, action, destination);
         return interaction.editReply(buildPanel(interaction.channel, `> ${resultEmoji(result)} ${buildResult("ผลการทำงาน", result)}`));
     }
     catch (error) {
         const detail = describePanelActionFailure(error);
-        return interaction.editReply(buildPanel(interaction.channel, `> ❌ ${detail}`));
+        return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} ${detail}`));
     }
+}
+
+async function handleVoiceAdminInteraction(interaction) {
+    const access = verifyVoiceAdminAccess(interaction.member, interaction.channel);
+    if (access) return interaction.reply({ content: `> ${config.emojis?.no_entry || "⛔"} ${access}`, ephemeral: true });
+    if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
+    await interaction.deferUpdate();
+    const action = PANEL_ACTION_MAP[interaction.customId];
+    if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} คำสั่งแผงนี้ไม่ถูกต้อง`));
+    const destination = action === "move" ? await _resolveMoveDestination(interaction) : null;
+    return _executePanelAction(interaction, action, destination);
 }
 
 function describeBotPermissionMissing(error) {
@@ -776,7 +822,7 @@ function describePanelActionFailure(error) {
     if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
     if (error.message?.startsWith("VOICE_ADMIN_ACCESS:")) return error.message.slice("VOICE_ADMIN_ACCESS:".length);
     if (error.code === "VOICE_ADMIN_DESTINATION_INVALID") return "ห้องปลายทางไม่ถูกต้องหรือบอตเข้าไม่ได้";
-    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "MongoDB บันทึกสถานะ lock ไม่สำเร็จ กรุณาลองใหม่";
+    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "บันทึกสถานะไม่สำเร็จ กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_STOPPING") return "บอตกำลังปิดระบบ ลองใหม่หลังระบบพร้อม";
     if (error.code === "VOICE_ADMIN_NOT_INITIALIZED") return "ระบบ Voice Admin ยังไม่พร้อม";
@@ -810,45 +856,55 @@ async function sendSecretMessage(message, payload) {
     return null;
 }
 
-function resultColor(result) {
+function isResultFullSuccess(result) {
     const targeted = Number(result?.targeted || 0);
     const succeeded = Number(result?.succeeded || 0);
     const incomplete = Number(result?.failed || 0) + Number(result?.skipped || 0) + Number(result?.timedOut || 0) + Number(result?.persistenceFailed || 0);
-    if (targeted > 0 && succeeded === targeted && incomplete === 0) return config.system?.themeColors?.success || "#57F287";
-    if (succeeded > 0 || targeted === 0 || Number(result?.skipped || 0) || Number(result?.timedOut || 0)) return config.system?.themeColors?.warning || "#FEE75C";
+    return targeted > 0 && succeeded === targeted && incomplete === 0;
+}
+
+function isResultPartialWarning(result) {
+    const targeted = Number(result?.targeted || 0);
+    const succeeded = Number(result?.succeeded || 0);
+    return succeeded > 0 || targeted === 0 || Number(result?.skipped || 0) > 0 || Number(result?.timedOut || 0) > 0;
+}
+
+function resultColor(result) {
+    if (isResultFullSuccess(result)) return config.system?.themeColors?.success || "#57F287";
+    if (isResultPartialWarning(result)) return config.system?.themeColors?.warning || "#FEE75C";
     return config.system?.themeColors?.error || "#ED4245";
 }
 
 function buildSecretResultEmbed(command, result, guild = null) {
-    const isFullSuccess = result.targeted > 0 && result.succeeded === result.targeted && (result.failed + result.skipped + result.timedOut + result.persistenceFailed === 0);
+    const isFullSuccess = isResultFullSuccess(result);
     const color = resultColor(result);
-    let statusBanner = "❌ **การดำเนินการล้มเหลว**";
+    const successEmoji = config.emojis?.success || "✅";
+    const errorEmoji = config.emojis?.error || "❌";
+    const warningEmoji = config.emojis?.warning || "⚠️";
+    const loadingEmoji = config.emojis?.loading || "⏳";
+
+    let statusText = `${errorEmoji} ดำเนินการไม่สำเร็จ`;
     if (isFullSuccess) {
-        statusBanner = "✅ **ดำเนินการเสร็จสมบูรณ์**";
+        statusText = `${successEmoji} ดำเนินการเสร็จสมบูรณ์`;
     } else if (result.succeeded > 0) {
-        statusBanner = "⚠️ **ดำเนินการสำเร็จบางส่วน**";
+        statusText = `${warningEmoji} ดำเนินการสำเร็จบางส่วน`;
     }
 
     const lines = [
-        statusBanner,
-        "",
-        "📊 **สรุปผลการจัดการ:**",
-        `• 👥 **เป้าหมายทั้งหมด:** **${result.targeted}** คน`,
-        `• ✅ **ดำเนินการสำเร็จ:** **${result.succeeded}** คน`
+        `### ${statusText}`,
+        `> คำสั่งลับสำหรับผู้ดูแลระบบห้องเสียง • คำสั่ง: **${command}**\n`,
+        "**สรุปผลการดำเนินการ:**",
+        `• เป้าหมายทั้งหมด: **${result.targeted}** คน`,
+        `• ${successEmoji} ดำเนินการสำเร็จ: **${result.succeeded}** คน`
     ];
-    if (result.failed > 0) lines.push(`• ❌ **ล้มเหลว:** **${result.failed}** คน`);
-    if (result.skipped > 0) lines.push(`• 🏃 **ออกจากห้องก่อนถึงคิว:** **${result.skipped}** คน`);
-    if (result.timedOut > 0) lines.push(`• ⏳ **หมดเวลาการทำงาน:** **${result.timedOut}** คน`);
-    if (result.persistenceFailed > 0) lines.push(`• ⚠️ **บันทึกสถานะไม่สำเร็จ:** **${result.persistenceFailed}** คน`);
-    if (Number.isFinite(result.durationMs) && result.durationMs > 0) {
-        lines.push(`• ⏱️ **เวลาที่ใช้:** **${(result.durationMs / 1000).toFixed(1)}** วินาที`);
-    }
+    if (result.failed > 0) lines.push(`• ${errorEmoji} ไม่สำเร็จ: **${result.failed}** คน`);
+    if (result.skipped > 0) lines.push(`• ออกจากห้องก่อนถึงคิว: **${result.skipped}** คน`);
+    if (result.timedOut > 0) lines.push(`• ${loadingEmoji} หมดเวลา: **${result.timedOut}** คน`);
 
     const embed = new EmbedBuilder()
         .setColor(color)
-        .setTitle(`⚡ Voice Admin — ${command}`)
+        .setTitle(`Voice Admin — ${command}`)
         .setDescription(lines.join("\n"))
-        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin" })
         .setTimestamp();
     const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
@@ -856,14 +912,17 @@ function buildSecretResultEmbed(command, result, guild = null) {
 }
 
 function buildSecretErrorEmbed(detail, guild = null) {
+    const errorEmoji = config.emojis?.error || "❌";
+    const warningEmoji = config.emojis?.warning || "⚠️";
     const embed = new EmbedBuilder()
         .setColor(config.system?.themeColors?.error || "#ED4245")
-        .setTitle("❌ ดำเนินการไม่สำเร็จ")
+        .setTitle(`${errorEmoji} ดำเนินการไม่สำเร็จ`)
         .setDescription(
-            `> ⚠️ **พบข้อผิดพลาดในการประมวลผล:**\n` +
-            `> ${detail}`
+            `### ${warningEmoji} พบข้อผิดพลาดในการประมวลผล\n` +
+            `> ระบบไม่สามารถดำเนินการตามคำสั่งลับได้ในขณะนี้\n\n` +
+            `**รายละเอียดข้อผิดพลาด:**\n` +
+            `• ${detail}`
         )
-        .setFooter({ text: "Phomueangtai Personal Multi-Tool • Voice Admin Error" })
         .setTimestamp();
     const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
@@ -924,21 +983,19 @@ async function handleSecretMessage(message) {
     });
 
     const pendingMessage = await sendSecretMessage(message, {
-        content: "> ⏳ กำลังดำเนินการ..."
+        content: `> ${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`
     });
 
     try {
         const result = await runSecretVoiceCommand(message, parsed, members);
         await pendingMessage?.delete?.().catch(() => {});
         await sendSecretMessage(message, {
-            content: `> ${resultEmoji(result)} ${buildResult(parsed.command, result)}`,
             embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)]
         });
     } catch (error) {
         await pendingMessage?.delete?.().catch(() => {});
         const detail = describeSecretCommandFailure(error);
         await sendSecretMessage(message, {
-            content: `> ❌ ${detail}`,
             embeds: [buildSecretErrorEmbed(detail, message.guild)]
         });
     }
@@ -947,7 +1004,7 @@ async function handleSecretMessage(message) {
 function describeSecretCommandFailure(error) {
     if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
     if (error.code === "VOICE_ADMIN_DESTINATION_INVALID") return "ID ห้องปลายทางไม่ถูกต้อง, เป็นห้องเดิม, ไม่ใช่ห้องเสียง หรือบอตเข้าไม่ได้";
-    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "MongoDB บันทึกสถานะ lock ไม่สำเร็จ กรุณาลองใหม่";
+    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "บันทึกสถานะไม่สำเร็จ กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_STOPPING") return "บอตกำลังปิดระบบ ลองใหม่หลังระบบพร้อม";
     if (error.code === "VOICE_ADMIN_NOT_INITIALIZED") return "ระบบ Voice Admin ยังไม่พร้อม";

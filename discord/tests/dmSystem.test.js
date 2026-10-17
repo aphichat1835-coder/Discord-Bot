@@ -60,9 +60,10 @@ test("shared DM design stays inside Discord embed limits", () => {
         details: "D".repeat(2000),
         nextAction: "N".repeat(2000)
     }).toJSON();
-    const textLength = embed.title.length + embed.description.length + embed.footer.text.length +
+    const textLength = embed.title.length + embed.description.length +
         embed.fields.reduce((total, field) => total + field.name.length + field.value.length, 0);
 
+    assert.equal(embed.footer, undefined);
     assert.ok(embed.fields.length <= 25);
     assert.ok(textLength <= 5800);
 });
@@ -153,27 +154,6 @@ test("DM service rejects retired moderation notifications", async () => {
 
     assert.deepEqual(result, { status: "skipped", reason: "category_retired" });
     assert.equal(dmService._test.volatileOutbox.size, 0);
-});
-
-test("restore result DM is private-profiled Thai output", () => {
-    const interaction = fakeInteraction();
-    const embed = utility._test.buildRestoreResultDmEmbed({
-        interaction,
-        resultState: "partial",
-        restoredRoles: 3,
-        restoredChannels: 4,
-        skippedRoles: 1,
-        skippedChannels: 2,
-        ambiguousRoles: 0,
-        ambiguousChannels: 1,
-        overwriteStats: { restored: 5, skippedRoleMissing: 1, skippedMemberMissing: 0 },
-        restoreErrors: 1,
-        timeoutHit: false
-    }).toJSON();
-
-    assert.match(embed.description, /สำเร็จบางส่วน/);
-    assert.ok(embed.fields.some(field => field.name === "👤 บัญชีที่เกี่ยวข้อง"));
-    assert.doesNotMatch(JSON.stringify(embed), /\bpartial\b/);
 });
 
 test("DM delivery classifies closed DMs as permanent without retrying forever", async () => {

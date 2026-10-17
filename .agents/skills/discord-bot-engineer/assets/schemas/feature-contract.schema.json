@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "feature-contract",
+  "type": "object",
+  "required": ["version", "request", "intent", "requirements", "route", "risk", "invariants", "verification", "unknowns", "status"],
+  "properties": {
+    "version": {"const": 1},
+    "request": {"type": "string", "minLength": 1},
+    "intent": {"type": "object", "required": ["goal", "scope", "constraints", "success_criteria", "prohibitions"]},
+    "requirements": {"type": "array"},
+    "route": {"type": "object"},
+    "risk": {"enum": ["low", "medium", "high", "critical"]},
+    "invariants": {"type": "array"},
+    "verification": {"type": "array"},
+    "unknowns": {"type": "array"},
+    "status": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "panels": {
+    "operational_status": {"requires": ["title", "status", "progress", "result_counts"], "optional": ["cancel", "details", "correlation"]},
+    "destructive_confirmation": {"requires": ["title", "scope", "irreversible_effect", "confirm", "cancel"], "optional": ["expiry", "reason"]},
+    "selection": {"requires": ["title", "choices", "selection_state"], "optional": ["limit", "confirm", "reset"]},
+    "settings": {"requires": ["title", "groups", "current_values"], "optional": ["dependencies", "save_state", "reset"]},
+    "review_summary": {"requires": ["title", "summary", "impact", "confirm"], "optional": ["warnings", "edit"]},
+    "result": {"requires": ["title", "outcome"], "optional": ["counts", "next_action", "details"]},
+    "error_recovery": {"requires": ["title", "cause", "impact", "next_action"], "optional": ["retry", "help", "correlation"]},
+    "requirements": {"requires": ["title", "missing_requirements", "resolution"], "optional": ["portal", "scope", "hierarchy"]},
+    "queue_job": {"requires": ["title", "phase", "owner", "updated_at"], "optional": ["position", "cancel", "retry"]},
+    "onboarding_wizard": {"requires": ["title", "step", "step_count", "action"], "optional": ["back", "skip", "resume"]},
+    "empty_state": {"requires": ["title", "reason", "next_action"], "optional": ["example", "illustration"]},
+    "detail_inspector": {"requires": ["title", "summary", "facts"], "optional": ["diagnostics", "actions", "metadata"]},
+    "announcement": {"requires": ["headline", "message"], "optional": ["media", "link", "audience", "published_at"]},
+    "live_monitor": {"requires": ["title", "current_state", "updated_at"], "optional": ["metrics", "timeline", "cancel", "diagnostics"]},
+    "pagination_browser": {"requires": ["title", "items", "page_state"], "optional": ["filters", "sort", "jump", "details"]},
+    "entity_picker": {"requires": ["title", "entity_type", "selection_state"], "optional": ["search", "limit", "confirm", "clear"]},
+    "filter_sort": {"requires": ["title", "current_query", "controls"], "optional": ["result_count", "reset", "save_view"]},
+    "form_modal": {"requires": ["title", "fields", "submit"], "optional": ["descriptions", "defaults", "validation"]},
+    "multi_step_form": {"requires": ["title", "step", "step_count", "fields"], "optional": ["back", "save_draft", "review"]},
+    "approval": {"requires": ["title", "requester", "scope", "approve", "reject"], "optional": ["reason", "expiry", "audit_context"]},
+    "media_player": {"requires": ["identity", "playback_state", "controls"], "optional": ["artwork", "progress", "queue", "volume"]},
+    "transaction_receipt": {"requires": ["outcome", "amount", "parties", "reference"], "optional": ["balance", "timestamp", "breakdown", "support"]},
+    "audit_timeline": {"requires": ["title", "events"], "optional": ["actor", "filters", "correlation", "export"]},
+    "permission_matrix": {"requires": ["subject", "scope", "effective_access"], "optional": ["roles", "overrides", "missing", "fix"]},
+    "help_command_center": {"requires": ["title", "categories", "entry_action"], "optional": ["search", "recent", "examples", "support"]}
+  },
+  "anatomy": ["accent", "context", "title", "summary", "primary_facts", "status", "secondary_detail", "warnings", "actions", "metadata"],
+  "selection_rules": [
+    {"when": "one safe immediate action", "prefer": "result", "avoid": "wizard"},
+    {"when": "irreversible or high-impact action", "prefer": "destructive_confirmation", "avoid": "one-click primary action"},
+    {"when": "long-running measurable work", "prefer": "operational_status", "avoid": "fake progress"},
+    {"when": "unknown-duration queued work", "prefer": "queue_job", "avoid": "invented percentage"},
+    {"when": "many browsable records", "prefer": "pagination_browser", "avoid": "button wall"},
+    {"when": "choose Discord users, roles, channels, or mentionables", "prefer": "entity_picker", "avoid": "manual ID input"},
+    {"when": "structured multi-field input", "prefer": "form_modal", "avoid": "serial chat questions"},
+    {"when": "dependent setup steps", "prefer": "onboarding_wizard", "avoid": "one dense form"},
+    {"when": "failure needs recovery", "prefer": "error_recovery", "avoid": "error code only"},
+    {"when": "no data yet", "prefer": "empty_state", "avoid": "blank panel"}
+  ]
+}

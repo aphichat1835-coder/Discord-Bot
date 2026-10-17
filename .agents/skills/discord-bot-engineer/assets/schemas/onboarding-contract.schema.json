@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"onboarding-contract","type":"object","required":["pattern","benefit","frequency","steps","escape"],"properties":{"pattern":{"type":"string"},"benefit":{"type":"string"},"frequency":{"enum":["once","contextual","repeatable"]},"steps":{"type":"array"},"escape":{"type":"string"}},"additionalProperties":true}

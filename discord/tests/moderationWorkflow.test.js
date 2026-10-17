@@ -194,3 +194,45 @@ test("kick and timeout never send a member DM", async () => { // NOSONAR -- node
 
     assert.deepEqual(calls, ["kick:reason", "timeout:60000:reason"]);
 });
+
+test("assertBotPermission throws MISSING_PERMS when bot lacks required permission", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interactionHas = {
+        guild: { members: { me: { permissions: { has: () => true } } } }
+    };
+    assert.doesNotThrow(() => workflow.assertBotPermission(interactionHas, 1n));
+
+    const interactionLacks = {
+        guild: { members: { me: { permissions: { has: () => false } } } }
+    };
+    assert.throws(() => workflow.assertBotPermission(interactionLacks, 1n), /MISSING_PERMS/);
+});
+
+test("moderation workflow rejects requests without admin permissions", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const interaction = {
+        member: { permissions: { has: () => false } },
+        reply: async () => {}
+    };
+    const res = await workflow.validateModerationRequest(interaction, {}, {
+        action: "ban",
+        target: { manageable: true, bannable: true },
+        duration: { ok: true }
+    });
+    assert.equal(res, workflow.VALIDATION_STOP);
+});
+
+test("moderation workflow resolves loading text for each action", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    // We can require internal function or test via handleModerationCommand
+    const banInteraction = {
+        commandName: "ban",
+        member: { permissions: { has: () => false } },
+        reply: async () => {},
+        options: {
+            getMember: () => null,
+            getString: () => "spam",
+            getInteger: () => null
+        }
+    };
+    const input = workflow.readFullModerationInput(banInteraction);
+    assert.equal(input.action, "ban");
+});
+

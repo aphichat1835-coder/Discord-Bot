@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "directions": {
+    "discord_native": {"character": ["familiar", "clear", "compact"], "density": "balanced", "accent": 5793266, "best_for": ["general", "setup", "information"], "avoid": ["ornamental_layout", "forced_branding"]},
+    "tactical_admin": {"character": ["controlled", "precise", "operational"], "density": "dense", "accent": 3447003, "best_for": ["moderation", "security", "operations"], "avoid": ["playful_error_tone", "decorative_media"]},
+    "editorial_information": {"character": ["structured", "calm", "readable"], "density": "comfortable", "accent": 10181046, "best_for": ["information", "reports", "help"], "avoid": ["equal_weight_sections", "excessive_controls"]},
+    "playful_community": {"character": ["warm", "social", "expressive"], "density": "comfortable", "accent": 16753920, "best_for": ["community", "music", "onboarding"], "avoid": ["security", "destructive", "partial_failure"]},
+    "premium_dark": {"character": ["restrained", "confident", "polished"], "density": "spacious", "accent": 7506394, "best_for": ["profile", "premium", "showcase"], "avoid": ["glow_everywhere", "low_contrast", "decoration_without_hierarchy"]}
+  }
+}

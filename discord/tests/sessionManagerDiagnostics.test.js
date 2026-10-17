@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 
 test("session manager diagnostics expose bounded load limits", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const diagnostics = sessionManager.getSessionDiagnostics();

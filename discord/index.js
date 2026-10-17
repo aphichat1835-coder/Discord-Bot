@@ -1,14 +1,12 @@
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE & ARCHITECTURE GUARD] ⚠️
-1. [BOOT SEQUENCE]: Express → MongoDB → Discord. DO NOT reorder.
-2. [RENDER PORT]: Must bind 0.0.0.0 via process.env.PORT. DO NOT hardcode.
-3. [OPSEC WEBHOOKS]: WEBHOOK_LOG_URL = security/operations log. ALERT_WEBHOOK_URL = critical runtime alerts.
-4. [SHADOW PROTOCOL]: require('./systemProvider') must remain. DO NOT remove.
-5. [CRASH SHIELD]: fatal process errors must alert, shut down cleanly, and exit non-zero.
-6. [SHUTDOWN]: isShuttingDown flag must be set before pauseAll().
-================================================================================
-*/
+/**
+ * Main Application Runtime & Boot Orchestrator
+ * - Boot Sequence: Express → MongoDB → SQLite → Discord client (strict order).
+ * - Port Binding: Binds 0.0.0.0 via process.env.PORT.
+ * - Logging & Alerts: WEBHOOK_LOG_URL for security/ops, ALERT_WEBHOOK_URL for critical alerts.
+ * - System Hooks: SystemProvider integration preserved intact.
+ * - Crash Shield: Fatal process errors trigger alerts, graceful shutdown, and non-zero exit.
+ * - Shutdown: isShuttingDown flag coordination before pausing workers.
+ */
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🔒  SHADOW PROTOCOL (เฟส 6 — DO NOT REMOVE)
@@ -27,8 +25,8 @@ const { isConfiguredOwner, resolveOwnerIds, validateRequiredEnv } = require("./c
 // Resolve this before loading ordinary bot modules so every shared config reader
 // observes the production OWNER_ID from its first use.
 resolveOwnerIds(process.env, config);
-const sessionManager = require("./sessionManager");
-const voiceWorker    = require("./voiceWorker");
+const sessionManager = require("./voiceWorker/sessionManager");
+const voiceWorker    = require("./voiceWorker/index");
 const commands       = require("./commands");
 const voiceAdmin     = require("./features/voiceAdmin");
 const memoryMonitor  = require("./index/memoryMonitor");
@@ -115,9 +113,8 @@ const requestCounts       = new Map();
 let readyInitializationController = null;
 
 const COMMAND_COOLDOWNS_MS = {
-    ban:5000, kick:5000, timeout:5000, voiceadmin:5000,
-    say:5000, announce:5000, clear:10000, "copy-emojis":10000,
-    backup:30000, restore:30000
+    ban:5000, kick:5000, timeout:5000, "voice-admin":5000,
+    say:5000, embed:5000, clear:10000, "copy-emojis":10000
 };
 const DEFAULT_COOLDOWN_MS = 3000;
 const COMMAND_REGISTRATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
@@ -232,7 +229,7 @@ async function registerSlashCommandsWithRetry() {
             category: "COMMAND",
             code: "commands.registration.degraded",
             state: "OPEN",
-            title: "ลงทะเบียน Slash Commands ไม่สำเร็จ",
+            title: "SLASH REGISTRATION DEGRADED",
             description: "ระบบลองใหม่ครบจำนวนที่กำหนดแล้ว แต่คำสั่งอาจแสดงไม่ครบ",
             impact: "ผู้ใช้อาจไม่เห็นหรือเรียกใช้ Slash Commands บางคำสั่ง",
             action: "ตรวจสถานะ Discord API และสิทธิ์ของแอป แล้วเริ่มบอทใหม่",
@@ -248,7 +245,7 @@ async function registerSlashCommandsWithRetry() {
             category: "COMMAND",
             code: "commands.registration.start_failed",
             state: "OPEN",
-            title: "เริ่มลงทะเบียน Slash Commands ไม่ได้",
+            title: "SLASH REGISTRATION START FAILED",
             description: "ขั้นตอนลงทะเบียนคำสั่งหยุดก่อนเริ่มส่งข้อมูลไป Discord",
             impact: "Slash Commands อาจไม่พร้อมใช้งาน",
             action: "ตรวจ Error ใน Runtime Log แล้วเริ่มบอทใหม่",
@@ -330,6 +327,7 @@ registerShutdownHandlers({
     memoryMonitor,
     verificationRuntime: verificationLifecycle,
     dmService,
+    campaignWorker: require("./features/joinCampaign/worker/campaignWorker"),
     runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }, { stop: () => shutdownRunners() }]
 });
 
@@ -382,6 +380,16 @@ async function connectDatabaseForBoot() {
     return { connected: true };
 }
 
+async function connectSqliteForBoot() {
+    const database = require("../database/index");
+    const result = await database.initialize({ connectMongo: false, startScheduler: true });
+    return {
+        schemaVersion: result.sqlite?.stats?.migration?.currentVersion || 1,
+        tablesCount: result.sqlite?.stats?.tablesCount || 0,
+        footprintMb: result.sqlite?.stats?.quota?.footprint?.totalMb || 0
+    };
+}
+
 async function startVerificationForBoot() {
     await verificationLifecycle.startVerificationRuntime();
     return { enabled: true };
@@ -412,10 +420,11 @@ async function boot() {
         runStage: (...args) => bootLog.runStage(...args),
         startHttpServer,
         connectDatabase: connectDatabaseForBoot,
+        connectSqlite: connectSqliteForBoot,
         loadDatabase: () => sessionManager.loadDatabase(),
         verificationEnabled: isFeatureEnabled("verification"),
         startVerification: startVerificationForBoot,
-        onVerificationSkipped: () => bootLog.skip("VERIFICATION", "04/06 Verification disabled by feature flag"),
+        onVerificationSkipped: () => bootLog.skip("VERIFICATION", "Verification disabled by feature flag"),
         loadDisabledCommands: loadDisabledCommandsForBoot,
         loginDiscord: async () => {
   if (await startBot()) return { attempts: _startBotAttempts, ready: true };
@@ -498,14 +507,15 @@ function scheduleStartBotRetry() {
 }
 
 function destroyDiscordClientSafely(reason) {
-    try {
-        client.destroy();
-    } catch (err) {
-        bootLog.warn("DISCORD", "Discord client cleanup failed", {
-            code: err?.code || err?.name || "destroy_failed",
-            reason
+    // Explicitly handle asynchronous client.destroy() Promise rejection with void and .catch
+    void Promise.resolve()
+        .then(() => client.destroy())
+        .catch(err => {
+            bootLog.warn("DISCORD", "Discord client cleanup failed", {
+                code: err?.code || err?.name || "destroy_failed",
+                reason
+            });
         });
-    }
 }
 
 async function applyReadySettings() {
@@ -604,6 +614,18 @@ async function initializeClientReady() {
     await bootLog.runStage("QUEST_RUNNERS", "Restore scheduled quest runners", () => restoreScheduledRunners(client), {
         required: false,
         successMessage: "Scheduled quest runners restored"
+    });
+
+    await bootLog.runStage("JOIN_CAMPAIGN", "Recover interrupted join campaigns", () => {
+        const joinCampaign = require("./features/joinCampaign/index");
+        const database = require("../database/index");
+        return joinCampaign.runStartupRecovery({
+            client,
+            repository: database.repositories.joinCampaign
+        });
+    }, {
+        required: false,
+        successMessage: "Join campaign startup recovery processed"
     });
 
     await bootLog.runStage("WEBHOOK", "Send startup notice", sendReadyNotice, {

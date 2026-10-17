@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "workflow_cases": [
+    {"id": "write-all", "workflow": "name: bad\non: push\npermissions: write-all\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "must_find": ["write_all_permissions", "mutable_action_ref", "timeout_absent"]},
+    {"id": "pr-target-checkout", "workflow": "name: unsafe\non:\n  pull_request_target:\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n", "must_find": ["pr_target_checkout", "missing_permissions"]},
+    {"id": "safer", "workflow": "name: ci\non:\n  pull_request:\n  merge_group:\npermissions:\n  contents: read\nconcurrency:\n  group: ci-${{ github.ref }}\n  cancel-in-progress: true\njobs:\n  test:\n    timeout-minutes: 10\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@0123456789012345678901234567890123456789\n      - run: npm test\n", "must_not_find": ["write_all_permissions", "mutable_action_ref", "timeout_absent", "concurrency_absent", "merge_group_unknown"]}
+  ],
+  "gate_cases": [
+    {"id": "stale-required-check", "expected_state": "ready_for_review", "mutation": "required_check_sha_differs"},
+    {"id": "changes-requested", "expected_state": "changes_requested", "mutation": "blocking_review"},
+    {"id": "current-green", "expected_state": "ready_to_merge", "mutation": "all_current_evidence"}
+  ]
+}

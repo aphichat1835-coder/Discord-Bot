@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const verification = require("../commands/verification");
 
 test("verification recovery distinguishes required state from durable persistence", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

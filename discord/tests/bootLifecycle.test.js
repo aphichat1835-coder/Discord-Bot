@@ -54,3 +54,21 @@ test("Discord login failure leaves boot degraded without aborting", async () => 
     assert.equal(result.discordReady, false);
     assert.deepEqual(result.degradedStages, ["discord"]);
 });
+
+test("7-stage boot lifecycle runs SQLite open stage between Mongo connect and data load", async () => {
+    const calls = []; const mark = name => async () => { calls.push(name); return { name }; };
+    const result = await runBootLifecycle({
+        runStage: runner(),
+        startHttpServer: mark("http"),
+        connectDatabase: mark("mongo-connect"),
+        connectSqlite: mark("sqlite-open"),
+        loadDatabase: mark("mongo-load"),
+        verificationEnabled: true,
+        startVerification: mark("verification"),
+        loadDisabledCommands: mark("settings"),
+        loginDiscord: mark("discord")
+    });
+    assert.deepEqual(calls, ["http", "mongo-connect", "sqlite-open", "mongo-load", "verification", "settings", "discord"]);
+    assert.equal(result.discordReady, true);
+    assert.deepEqual(result.degradedStages, []);
+});

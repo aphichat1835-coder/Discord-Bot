@@ -1,3 +1,5 @@
+"use strict";
+
 /* eslint-disable complexity -- Legacy dashboard routes keep stable response shapes; refactor separately. */
 const { requireCsrf } = require('../../index/auth');
 /*
@@ -61,6 +63,23 @@ const verifiedMemberService = require("../services/verifiedMemberService");
 const verificationOwnerService = require("../ownerService");
 const { runMemberPrivacyDeletion } = require("../services/privacyDeletion");
 const { runGuildPreflight } = require("../services/guildPreflightService");
+const { verificationWebhookManager } = require("../services/webhook/verificationWebhookManager");
+const { verificationWebhookRepository } = require("../../../database/sqlite/repositories/core/VerificationWebhookRepository");
+
+function maskWebhookUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length >= 4) {
+      const id = parts[2];
+      return `https://${parsed.host}/api/webhooks/${id}/••••••••••••`;
+    }
+    return `https://${parsed.host}${parsed.pathname.slice(0, 20)}••••••••••••`;
+  } catch {
+    return "••••••••••••";
+  }
+}
 
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 const OBJECT_ID_RE = /^[a-fA-F0-9]{24}$/;
@@ -373,27 +392,24 @@ function makeRequestId(prefix = "req") {
 
 function sanitizeVerificationBasicFlags(input = {}) {
   const out = {};
-  if ("enabled" in input) out.enabled = !!input.enabled;
-  if ("blockVPN" in input) out.blockVPN = !!input.blockVPN;
-  if ("blockHosting" in input) out.blockHosting = !!input.blockHosting;
-  if ("requireEmail" in input) out.requireEmail = !!input.requireEmail;
-  if ("requireEmailVerified" in input) out.requireEmailVerified = !!input.requireEmailVerified;
-  if ("requireConnections" in input) out.requireConnections = !!input.requireConnections;
+  const BOOLEAN_FLAGS = ["enabled", "blockVPN", "blockHosting", "requireEmail", "requireEmailVerified", "requireConnections"];
+  for (const flag of BOOLEAN_FLAGS) {
+    if (flag in input) out[flag] = Boolean(input[flag]);
+  }
 
   if ("minAccountAgeDays" in input) {
     out.minAccountAgeDays = Math.max(0, Math.min(3650, Number.parseInt(input.minAccountAgeDays, 10) || 0));
   }
 
   if ("minConnections" in input) {
-    out.minConnections = Math.max(1, Math.min(20, Number.parseInt(input.minConnections, 10) || 1));
+    out.minConnections = Math.max(0, Math.min(100, Number.parseInt(input.minConnections, 10) || 0));
   }
 
-  if ("roleId" in input) out.roleId = cleanOptionalSnowflake(input.roleId);
-  if ("channelId" in input) out.channelId = cleanOptionalSnowflake(input.channelId);
-  if ("messageId" in input) out.messageId = cleanOptionalSnowflake(input.messageId);
+  const SNOWFLAKE_FIELDS = ["roleId", "channelId", "messageId"];
+  for (const field of SNOWFLAKE_FIELDS) {
+    if (field in input) out[field] = cleanOptionalSnowflake(input[field]);
+  }
 
-  if ("allowedCountries" in input) out.allowedCountries = normalizeStringArray(input.allowedCountries);
-  if ("blockedCountries" in input) out.blockedCountries = normalizeStringArray(input.blockedCountries);
   return out;
 }
 
@@ -484,40 +500,31 @@ function sanitizeVerification(input = {}) {
   return out;
 }
 
+function resolveMergedPanel(hasIncomingPanel, currentPanel, cleanPanel) {
+  if (!hasIncomingPanel) return currentPanel;
+  return { ...currentPanel, ...cleanPanel };
+}
+
+function resolveMergedSecurityRules(hasIncomingSecurityRules, clean, current) {
+  if (!hasIncomingSecurityRules) return current.securityRules;
+  const source = clean.securityRules || {};
+  return normalizeSecurityRules(Object.fromEntries(SECURITY_RULE_KEYS.map(key => [
+    key,
+    { ...current.securityRules?.[key], ...source[key] }
+  ])), current);
+}
+
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
   const hasIncomingPanel = Object.hasOwn(incoming || {}, "panel");
   const hasIncomingSecurityRules = Object.hasOwn(incoming || {}, "securityRules");
-  const currentPanel = current.panel ?? {};
-  const cleanPanel = clean.panel ?? {};
-  let mergedPanel = currentPanel;
-  let mergedSecurityRules = current.securityRules;
-
-  if (hasIncomingPanel) {
-    mergedPanel = {
-      ...currentPanel,
-      ...cleanPanel
-    };
-  }
-
-
-  if (hasIncomingSecurityRules) {
-    const source = clean.securityRules || {};
-    mergedSecurityRules = normalizeSecurityRules(Object.fromEntries(SECURITY_RULE_KEYS.map(key => [
-      key,
-      { ...current.securityRules?.[key], ...source[key] }
-    ])), current);
-  }
+  const mergedPanel = resolveMergedPanel(hasIncomingPanel, current.panel ?? {}, clean.panel ?? {});
+  const mergedSecurityRules = resolveMergedSecurityRules(hasIncomingSecurityRules, clean, current);
 
   const merged = {
     ...current,
     ...clean,
-    /*
-      สำคัญ:
-      อย่าให้ save settings ปกติไปล้าง panelRevision เดิม
-      panelRevision จะเปลี่ยนเฉพาะตอน send/update/disable เท่านั้น
-    */
     panelRevision: current.panelRevision || clean.panelRevision || null,
     panelRevisionUpdatedAt: current.panelRevisionUpdatedAt || clean.panelRevisionUpdatedAt || null,
     securityRules: mergedSecurityRules,
@@ -528,8 +535,12 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
   if (hasIncomingSecurityRules) {
-    merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
-    merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
+    if (clean.securityRules && Object.hasOwn(clean.securityRules, "vpnProxyTor")) {
+      merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
+    }
+    if (clean.securityRules && Object.hasOwn(clean.securityRules, "hosting")) {
+      merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
+    }
   }
   return normalizeVerificationConfig(merged);
 }
@@ -572,6 +583,12 @@ function serializeGuildFromSession(guild = {}) {
   };
 }
 
+function resolveRoleAssignmentResult(roleAssignResult) {
+  if (roleAssignResult?.ok === true) return "success";
+  if (roleAssignResult?.error) return "failed";
+  return roleAssignResult || null;
+}
+
 function serializeVerifyLog(log = {}, options = {}) {
   const canViewSensitive = options.canViewSensitive === true;
   const parts = buildVerifyLogParts(log, canViewSensitive);
@@ -586,20 +603,18 @@ function serializeVerifyLog(log = {}, options = {}) {
     defaultResult: "failed"
   });
 
+  const roleAssignmentResult = resolveRoleAssignmentResult(raw.roleAssignResult);
+  const roleResult = raw.roleAssignResult?.ok === true ? "success" : (raw.roleAssignResult?.status || "");
+  const requestId = raw.requestId || raw.debugRequestId || "";
+
   return {
     ...common,
     joinResult: raw.joinResult || null,
     roleAssignResult: raw.roleAssignResult || null,
-    roleAssignmentResult: raw.roleAssignResult?.ok === true
-      ? "success"
-      : raw.roleAssignResult?.error
-        ? "failed"
-        : raw.roleAssignResult || null,
-    roleResult: raw.roleAssignResult?.ok === true ? "success" : raw.roleAssignResult?.status || "",
-
+    roleAssignmentResult,
+    roleResult,
     policyResult: common.result,
-    requestId: raw.requestId || raw.debugRequestId || "",
-
+    requestId,
     verifiedAt: raw.verifiedAt || null,
     createdAt: raw.createdAt || raw.verifiedAt || null
   };
@@ -682,19 +697,18 @@ function makePanelPayload(req, { guildId, verification }) {
 }
 
 async function ensureGuildConfig(guildId, guildName = "") {
-  let config = await GuildConfig.findOne({ guildId });
-
-  if (!config) {
-    config = await GuildConfig.create({
-      guildId,
-      guildName,
-      verification: normalizeVerificationConfig({}),
-      createdAt: now(),
-      updatedAt: now()
-    });
-  }
-
-  return config;
+  return await GuildConfig.findOneAndUpdate(
+    { guildId },
+    {
+      $setOnInsert: {
+        guildId,
+        guildName: guildName || "",
+        verification: normalizeVerificationConfig({}),
+        createdAt: now()
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
 }
 
 async function loadValidationContext(guildId, verification) {
@@ -1007,7 +1021,7 @@ router.get("/api/guilds", requireAdmin, async (req, res) => {
    Config / Resources
 ============================================================================= */
 
-router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, async (req, res) => {
+async function handleGetGuildConfig(req, res, logContext, failMsg) {
   try {
     const { guildId } = req.params;
     const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
@@ -1018,9 +1032,11 @@ router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, async 
       config: serializeConfig(config)
     });
   } catch (err) {
-    return sendServerError(res, "config", err);
+    return sendServerError(res, logContext, err, failMsg);
   }
-});
+}
+
+router.get("/api/guild/:guildId/config", requireAdmin, requireGuildAdmin, (req, res) => handleGetGuildConfig(req, res, "config"));
 
 router.post("/api/guild/:guildId/settings", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
@@ -1291,6 +1307,56 @@ router.post("/api/guild/:guildId/verify/panel/send", requireAdmin, requireGuildA
   }
 });
 
+function extractPanelTarget(verification) {
+  const channelId = cleanSnowflake(verification.channelId);
+  const messageId = cleanSnowflake(verification.messageId);
+  if (!channelId || !messageId) {
+    return { ok: false, error: "ต้องมี Channel ID และ Message ID ของแผงเดิมก่อนถึงจะแก้ message เดิมได้" };
+  }
+  return { ok: true, channelId, messageId };
+}
+
+async function handlePanelUpdateSaveFailure(res, { guildId, channelId, messageId, verification, previousPanelPayload, validation, saveError }) {
+  safeConsoleError("verify.panel.update.save", saveError);
+  const persistence = await persistedPanelMatches(guildId, verification);
+  if (persistence.status === "matched") {
+    return res.json({
+      success: true,
+      message: "แก้แผงเดิมแล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
+      messageId,
+      channelId,
+      panelRevision: verification.panelRevision,
+      panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
+      persistenceConfirmedAfterError: true,
+      validation
+    });
+  }
+  if (persistence.status === "unknown") {
+    return res.status(503).json({
+      success: false,
+      error: "แก้แผงใน Discord แล้ว แต่ยังยืนยันสถานะฐานข้อมูลไม่ได้ จึงไม่ย้อนข้อความอัตโนมัติ",
+      code: "panel_persistence_unknown",
+      recoveryRequired: true,
+      rollback: { attempted: false, complete: false, code: persistence.errorCode }
+    });
+  }
+  const rollback = await rollbackDiscordPanel(channelId, messageId, previousPanelPayload);
+  if (!rollback.complete) {
+    safeConsoleError("verify.panel.update.rollback", Object.assign(new Error("PANEL_ROLLBACK_FAILED"), {
+      code: rollback.code
+    }));
+  }
+  return res.status(503).json({
+    success: false,
+    error: rollback.complete
+      ? "บันทึก config ไม่สำเร็จ แต่คืนค่าแผง Discord เดิมแล้ว"
+      : "บันทึก config ไม่สำเร็จและคืนค่าแผง Discord เดิมไม่ได้ ต้องตรวจสอบด้วยตนเอง",
+    code: "panel_config_save_failed",
+    recoveryRequired: !rollback.complete,
+    rollback
+  });
+}
+
 router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
   try {
     const { guildId } = req.params;
@@ -1309,15 +1375,14 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
       });
     }
 
-    const channelId = cleanSnowflake(verification.channelId);
-    const messageId = cleanSnowflake(verification.messageId);
-
-    if (!channelId || !messageId) {
+    const target = extractPanelTarget(verification);
+    if (!target.ok) {
       return res.status(400).json({
         success: false,
-        error: "ต้องมี Channel ID และ Message ID ของแผงเดิมก่อนถึงจะแก้ message เดิมได้"
+        error: target.error
       });
     }
+    const { channelId, messageId } = target;
 
     const existing = await discordAPI.fetchChannelMessage(channelId, messageId);
 
@@ -1332,11 +1397,6 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
 
     const previousPanelPayload = panelRollbackPayload(existing.message);
 
-    /*
-      สำคัญ:
-      แก้แผงเดิม = rotate state ใหม่เสมอ
-      message เดิมยังอยู่ แต่ URL ในปุ่มจะเปลี่ยนเป็น state revision ล่าสุด
-    */
     verification.panelRevision = makePanelRevision("panel");
     verification.panelRevisionUpdatedAt = now();
 
@@ -1364,43 +1424,14 @@ router.patch("/api/guild/:guildId/verify/panel/update", requireAdmin, requireGui
     try {
       await saveConfigWithRetry(config);
     } catch (saveError) {
-      safeConsoleError("verify.panel.update.save", saveError);
-      const persistence = await persistedPanelMatches(guildId, verification);
-      if (persistence.status === "matched") {
-        return res.json({
-          success: true,
-          message: "แก้แผงเดิมแล้ว และยืนยันค่าที่บันทึกจากฐานข้อมูลหลังการตอบกลับคลุมเครือ",
-          messageId,
-          channelId,
-          panelRevision: verification.panelRevision,
-          panelRevisionUpdatedAt: verification.panelRevisionUpdatedAt,
-          persistenceConfirmedAfterError: true,
-          validation
-        });
-      }
-      if (persistence.status === "unknown") {
-        return res.status(503).json({
-          success: false,
-          error: "แก้แผงใน Discord แล้ว แต่ยังยืนยันสถานะฐานข้อมูลไม่ได้ จึงไม่ย้อนข้อความอัตโนมัติ",
-          code: "panel_persistence_unknown",
-          recoveryRequired: true,
-          rollback: { attempted: false, complete: false, code: persistence.errorCode }
-        });
-      }
-      const rollback = await rollbackDiscordPanel(channelId, messageId, previousPanelPayload);
-      if (!rollback.complete) {
-        safeConsoleError("verify.panel.update.rollback", Object.assign(new Error("PANEL_ROLLBACK_FAILED"), {
-          code: rollback.code
-        }));
-      }
-      return res.status(503).json({
-        success: false,
-        error: rollback.complete
-          ? "บันทึก config ไม่สำเร็จ แต่คืนค่าแผง Discord เดิมแล้ว"
-          : "บันทึก config ไม่สำเร็จและคืนค่าแผง Discord เดิมไม่ได้ ต้องตรวจสอบด้วยตนเอง",
-        code: "panel_config_save_failed",
-        recoveryRequired: !rollback.complete,
-        rollback
+      return handlePanelUpdateSaveFailure(res, {
+        guildId,
+        channelId,
+        messageId,
+        verification,
+        previousPanelPayload,
+        validation,
+        saveError
       });
     }
 
@@ -1487,6 +1518,199 @@ router.get("/api/guild/:guildId/logs", requireAdmin, requireGuildAdmin, async (r
     return sendServerError(res, "logs", err, "โหลด logs ไม่สำเร็จ");
   }
 });
+
+function resolveUrlFormatText(readiness) {
+  if (readiness.urlValid) {
+    return "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล";
+  }
+  if (readiness.urlConfigured) {
+    return "รูปแบบ Webhook URL ไม่ถูกต้อง";
+  }
+  return "ยังไม่ได้ระบุ Webhook URL";
+}
+
+function resolveWorkerReadyText(readiness) {
+  if (!readiness.databaseReady?.ok) {
+    return "ฐานข้อมูลไม่พร้อมทำงาน ไม่สามารถส่งข้อมูลได้";
+  }
+  if (!readiness.queueReady?.ok) {
+    return "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน";
+  }
+  if (!readiness.urlValid) {
+    return "รูปแบบ Webhook URL ไม่ถูกต้อง";
+  }
+  if (!readiness.enabled) {
+    return "ระบบยังไม่เริ่มทำงาน กรุณาบันทึก URL และกดเริ่มทำงาน";
+  }
+  if (readiness.activeJob) {
+    return "ระบบกำลังส่งข้อมูลประวัติย้อนหลัง";
+  }
+  if (readiness.stats?.retry > 0) {
+    return "ระบบทำงานอยู่ (มีรายการรอส่งใหม่)";
+  }
+  if (readiness.stats?.failed > 0) {
+    return "ระบบทำงานอยู่ (พบข้อผิดพลาดบางรายการ)";
+  }
+  return "ระบบพร้อมส่งข้อมูลตามเวลาจริง";
+}
+
+router.get("/api/guild/:guildId/webhook-log/status", requireAdmin, requireGuildAdmin, async (req, res) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    const { guildId } = req.params;
+    const readiness = await verificationWebhookManager.getReadiness(guildId);
+    const config = await GuildConfig.findOne().where("guildId").equals(String(guildId)).lean();
+    const rawUrl = config?.verification?.webhookLog?.url || null;
+    const urlMasked = rawUrl ? maskWebhookUrl(rawUrl) : null;
+
+    res.json({
+      success: true,
+      ...readiness,
+      urlMasked,
+      checklist: {
+        urlFormat: {
+          ok: readiness.urlValid,
+          text: resolveUrlFormatText(readiness)
+        },
+        databaseReady: {
+          ok: readiness.databaseReady?.ok === true,
+          text: readiness.databaseReady?.ok === true ? "ระบบฐานข้อมูลเชื่อมต่อเรียบร้อย" : "การเชื่อมต่อฐานข้อมูลไม่พร้อมทำงาน"
+        },
+        queueReady: {
+          ok: readiness.queueReady?.ok === true,
+          text: readiness.queueReady?.ok === true ? "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน" : "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน"
+        },
+        workerReady: {
+          ok: Boolean(readiness.enabled && readiness.urlValid && readiness.databaseReady?.ok && readiness.queueReady?.ok),
+          text: resolveWorkerReadyText(readiness)
+        }
+      }
+    });
+  } catch (err) {
+    return sendServerError(res, "webhook-log.status", err, "โหลดสถานะ Webhook ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/webhook-log/url", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { url } = req.body || {};
+
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({
+        success: false,
+        code: "invalid_url",
+        error: "กรุณาระบุ Discord Webhook URL"
+      });
+    }
+
+    const validation = verificationWebhookManager.validateUrl(url);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        code: validation.code || "invalid_webhook_url",
+        error: "ลิงก์ที่ระบุไม่ใช่ Discord Webhook URL ที่ถูกต้อง กรุณาตรวจสอบลิงก์อีกครั้ง"
+      });
+    }
+
+    const config = await GuildConfig.findOne().where("guildId").equals(String(guildId));
+    const previousUrl = config?.verification?.webhookLog?.url || "";
+    const isNewUrl = previousUrl.trim() !== url.trim();
+    let currentVersion = config?.verification?.webhookLog?.destinationVersion || 1;
+    if (isNewUrl && previousUrl) {
+      currentVersion += 1;
+      // Cancel any ongoing backfill jobs associated with the old destination URL (P1-5)
+      verificationWebhookRepository.cancelOrFailOldJobs(guildId, "webhook_url_changed", currentVersion);
+    }
+
+    await GuildConfig.updateOne(
+      { guildId: String(guildId) },
+      {
+        $set: {
+          "verification.webhookLog.url": url.trim(),
+          "verification.webhookLog.destinationVersion": currentVersion,
+          "verification.webhookLog.valid": true,
+          "verification.updatedAt": Date.now()
+        }
+      },
+      { upsert: true }
+    );
+
+    return res.json({
+      success: true,
+      message: "บันทึกและตรวจสอบ Discord Webhook URL เรียบร้อยแล้ว",
+      destinationVersion: currentVersion,
+      urlMasked: maskWebhookUrl(url)
+    });
+  } catch (err) {
+    return sendServerError(res, "webhook-log.url", err, "บันทึก Webhook URL ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/webhook-log/retry", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    verificationWebhookManager.triggerWorker(guildId);
+    return res.json({
+      success: true,
+      message: "สั่งให้ระบบลองส่งข้อมูลที่รออยู่ในคิวใหม่เรียบร้อยแล้ว"
+    });
+  } catch (err) {
+    return sendServerError(res, "webhook-log.retry", err, "สั่งลองส่งข้อมูลใหม่ไม่สำเร็จ");
+  }
+});
+
+router.post("/api/guild/:guildId/webhook-log/mode", requireAdmin, requireGuildAdmin, requireCsrf, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { mode, force } = req.body || {};
+
+    if (mode === "live") {
+      const activeJob = verificationWebhookManager.repo.getActiveJob(guildId);
+      if (activeJob && (activeJob.status === "RUNNING" || activeJob.status === "PENDING") && !force) {
+        return res.status(409).json({
+          success: false,
+          code: "backfill_in_progress",
+          error: "มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ กรุณารอให้ระบบประมวลผลเสร็จสิ้น หรือยืนยันหากต้องการสลับโหมดทันที",
+          activeJob: {
+            jobId: activeJob.job_id,
+            status: activeJob.status,
+            processedCount: activeJob.processed_count,
+            totalEligible: activeJob.total_eligible
+          }
+        });
+      }
+      const result = await verificationWebhookManager.startLiveMode(guildId);
+      return res.json({
+        success: true,
+        mode: "live",
+        message: "ระบบเริ่มส่งข้อมูลแบบเรียลไทม์เรียบร้อยแล้ว",
+        ...result
+      });
+    } else if (mode === "backfill") {
+      const result = await verificationWebhookManager.startBackfillMode(guildId);
+      return res.json({
+        success: true,
+        mode: "backfill",
+        message: "เริ่มการส่งข้อมูลประวัติทั้งหมดและจะทำงานต่อแบบเรียลไทม์",
+        ...result
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        code: "invalid_mode",
+        error: "กรุณาเลือกโหมดการทำงานที่ถูกต้อง"
+      });
+    }
+  } catch (err) {
+    return res.status(400).json({
+      success: false,
+      code: "mode_change_failed",
+      error: err.message || "ไม่สามารถเปลี่ยนโหมดการทำงานได้"
+    });
+  }
+});
+
 router.get("/api/guild/:guildId/members", requireAdmin, requireGuildAdmin, async (req, res) => {
   try {
     res.set("Cache-Control", "no-store");
@@ -1696,22 +1920,10 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
    Compatibility aliases
 ============================================================================= */
 
-router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, async (req, res) => {
-  try {
-    const { guildId } = req.params;
-    const config = await ensureGuildConfig(guildId, req.adminGuild?.name);
-
-    res.json({
-      success: true,
-      guild: serializeGuildFromSession(req.adminGuild),
-      config: serializeConfig(config)
-    });
-  } catch (err) {
-    return sendServerError(res, "get-guild", err, "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ");
-  }
-});
+router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, (req, res) => handleGetGuildConfig(req, res, "get-guild", "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ"));
 
 router._test = {
+  maskWebhookUrl,
   mergeVerificationConfig,
   tokenRevealErrorStatus,
   saveConfigWithRetry,
@@ -1722,7 +1934,18 @@ router._test = {
   comparablePanel,
   panelDifferences,
   persistedPanelMatches,
-  rollbackDiscordPanel
+  rollbackDiscordPanel,
+  resolveUrlFormatText,
+  resolveWorkerReadyText,
+  cleanText,
+  cleanHexColor,
+  cleanUrl,
+  parsePage,
+  parseLimit,
+  ipHistoryErrorStatus,
+  pagination,
+  sanitizeVerificationBasicFlags,
+  sanitizeSingleSecurityRule
 };
 
 module.exports = router;

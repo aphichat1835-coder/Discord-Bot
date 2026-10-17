@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "regression-proposal",
+  "type": "object",
+  "required": ["version", "classification", "sanitized_evidence", "gap", "recommended_change_surface", "regression_case", "review_required", "policy"],
+  "properties": {
+    "version": {"const": 1},
+    "classification": {"type": "string"},
+    "sanitized_evidence": {"type": "object"},
+    "gap": {"type": "string"},
+    "recommended_change_surface": {"type": "string"},
+    "regression_case": {"type": "object"},
+    "review_required": {"const": true},
+    "policy": {"type": "string"}
+  },
+  "additionalProperties": true
+}

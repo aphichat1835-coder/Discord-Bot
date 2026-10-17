@@ -147,7 +147,7 @@ test("large private events use checksummed chunks and reconstruct every value", 
 });
 
 test("general settings loader excludes internal event namespaces before applying its limit", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const sessionManager = require("../sessionManager");
+    const sessionManager = require("../voiceWorker/sessionManager");
     assert.equal(sessionManager._test.INTERNAL_EVENT_SETTINGS.test("internal_event_guild_1"), true);
     assert.equal(sessionManager._test.INTERNAL_EVENT_SETTINGS.test("normal_setting"), false);
     assert.equal(sessionManager._test.shouldCacheSettingKey("internal_event_guild_1"), false);

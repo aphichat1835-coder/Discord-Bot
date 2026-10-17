@@ -3,15 +3,13 @@
 const GuildConfig = require("./models/GuildConfig");
 const IpIdentityLink = require("./models/IpIdentityLink");
 const VerifyLog = require("./models/VerifyLog");
-const { safeError } = require("./utils/safeLogger");
+const safeLogger = require("./utils/safeLogger");
+const { safeError } = safeLogger;
 const {
     cleanupSnapshotGarbage,
     getSnapshotCleanupConfig
 } = require("./services/snapshotCleanup");
-const {
-    getOAuthRefreshConfig,
-    refreshPersistedOAuthTokens
-} = require("./utils/oauthTokenLifecycle");
+const oauthTokenManager = require("../tokens/oauthTokenManager");
 const {
     runAutomaticMigration,
     config: getAutomaticMigrationConfig
@@ -26,6 +24,9 @@ const {
     stopLookupCacheCleanup
 } = require("./utils/ipUtils");
 const { readFiniteInteger } = require("../core/numbers");
+const { sendWebhookEvent } = require("../core/webhooks");
+const { verificationWebhookManager } = require("./services/webhook/verificationWebhookManager");
+const { recoverPendingPrivacyDeletions } = require("./services/privacyDeletion");
 
 const RETENTION_CONFIG_SCAN_MAX = readFiniteInteger(process.env.RETENTION_CONFIG_SCAN_MAX, { fallback: 1000, min: 50, max: 10000 });
 const RETENTION_ERROR_MAX = readFiniteInteger(process.env.RETENTION_ERROR_MAX, { fallback: 50, min: 5, max: 1000 });
@@ -46,6 +47,10 @@ let lastSummary = null;
 let lastOAuthRefreshAt = null;
 let lastOAuthRefreshError = null;
 let lastOAuthRefreshSummary = null;
+let privacyDeletionRecoveryInFlight = false;
+let lastPrivacyDeletionRecoveryAt = null;
+let lastPrivacyDeletionRecoveryError = null;
+let lastPrivacyDeletionRecoverySummary = null;
 let runCount = 0;
 let failCount = 0;
 let maintenanceWaiters = [];
@@ -256,6 +261,84 @@ async function processGuildRetention(config, { now, dryRun, summary }) {
     }
 }
 
+async function runPrivacyDeletionRecoverySafe(options = {}) {
+    if (privacyDeletionRecoveryInFlight) {
+        return { skipped: true, reason: "in_flight" };
+    }
+    privacyDeletionRecoveryInFlight = true;
+    try {
+        const recoveryFn = options.recoverPendingPrivacyDeletionsFn || recoverPendingPrivacyDeletions;
+        const result = await recoveryFn(options.privacyDeletionOptions || {});
+        lastPrivacyDeletionRecoveryAt = Date.now();
+        lastPrivacyDeletionRecoverySummary = {
+            recoveredCount: Array.isArray(result) ? result.length : 0,
+            jobs: Array.isArray(result) ? result : []
+        };
+        lastPrivacyDeletionRecoveryError = null;
+        return lastPrivacyDeletionRecoverySummary;
+    } catch (err) {
+        lastPrivacyDeletionRecoveryError = safeError(err);
+        console.error("[VERIFICATION] privacy deletion recovery failed:", lastPrivacyDeletionRecoveryError);
+        return { error: lastPrivacyDeletionRecoveryError };
+    } finally {
+        privacyDeletionRecoveryInFlight = false;
+    }
+}
+
+async function _runOAuthTokenRefresh() {
+    try {
+        lastOAuthRefreshSummary = await oauthTokenManager.refreshDueTokens();
+        lastOAuthRefreshAt = Date.now();
+        lastOAuthRefreshError = null;
+    } catch (err) {
+        lastOAuthRefreshError = safeError(err);
+    }
+}
+
+async function _runWebhookMaintenanceRecovery() {
+    if (typeof verificationWebhookManager?.performStartupRecovery === "function" && !verificationWebhookManager?.startupRecoveryCompleted) {
+        try {
+            await verificationWebhookManager.performStartupRecovery();
+        } catch (err) {
+            safeLogger.warn?.("[Lifecycle] Webhook startup recovery encountered error:", err?.message || String(err));
+        }
+    } else if (typeof verificationWebhookManager?.repo?.recoverStuckSendingDeliveries === "function") {
+        try {
+            const recovery = verificationWebhookManager.repo.recoverStuckSendingDeliveries(300000);
+            const stuckGuilds = Array.isArray(recovery?.guildIds) ? recovery.guildIds : [];
+            for (const gId of stuckGuilds) {
+                if (typeof verificationWebhookManager.triggerWorker === "function") {
+                    verificationWebhookManager.triggerWorker(gId);
+                }
+            }
+        } catch (err) {
+            safeLogger.warn?.("[Lifecycle] Webhook recoverStuckSendingDeliveries encountered error:", err?.message || String(err));
+        }
+    }
+}
+
+async function _runPostMaintenanceTasks(options, summary) {
+    summary.privacyDeletionRecovery = await runPrivacyDeletionRecoverySafe(options);
+    await _runOAuthTokenRefresh();
+    await _runWebhookMaintenanceRecovery();
+}
+
+async function _runMigrationsAndRetention(dryRun, summary, now) {
+    await runAutomaticMigrationSafe(dryRun, summary);
+    await runEncryptionMigrationSafe(dryRun, summary);
+    await runIpIdentityHistoryMigration(dryRun, summary);
+    await runIpIdentityVerifyLogMigration(dryRun, summary);
+    await runSnapshotCleanup(dryRun, summary);
+    const configs = await loadRetentionConfigs(dryRun, summary);
+    summary.guildsScanned = configs.length;
+    summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
+    summary.maxGuilds = RETENTION_CONFIG_SCAN_MAX;
+
+    for (const config of configs) {
+        await processGuildRetention(config, { now, dryRun, summary });
+    }
+}
+
 async function runVerificationMaintenance(options = {}) {
     if (maintenanceInFlight) {
         return { skipped: true, reason: "maintenance_in_flight" };
@@ -271,28 +354,10 @@ async function runVerificationMaintenance(options = {}) {
     const summary = createSummary(dryRun, now);
 
     try {
-        await runAutomaticMigrationSafe(dryRun, summary);
-        await runEncryptionMigrationSafe(dryRun, summary);
-        await runIpIdentityHistoryMigration(dryRun, summary);
-        await runIpIdentityVerifyLogMigration(dryRun, summary);
-        await runSnapshotCleanup(dryRun, summary);
-        const configs = await loadRetentionConfigs(dryRun, summary);
-        summary.guildsScanned = configs.length;
-        summary.truncated = configs.length >= RETENTION_CONFIG_SCAN_MAX;
-        summary.maxGuilds = RETENTION_CONFIG_SCAN_MAX;
-
-        for (const config of configs) {
-            await processGuildRetention(config, { now, dryRun, summary });
-        }
+        await _runMigrationsAndRetention(dryRun, summary, now);
 
         if (!dryRun) {
-            try {
-                lastOAuthRefreshSummary = await refreshPersistedOAuthTokens();
-                lastOAuthRefreshAt = Date.now();
-                lastOAuthRefreshError = null;
-            } catch (err) {
-                lastOAuthRefreshError = safeError(err);
-            }
+            await _runPostMaintenanceTasks(options, summary);
         }
 
         summary.finishedAt = Date.now();
@@ -323,17 +388,59 @@ async function runVerificationMaintenance(options = {}) {
 async function startVerificationRuntime(options = {}) {
     if (runtimeStartPromise) return runtimeStartPromise;
     if (maintenanceTimer) return getVerificationDiagnostics();
+    const tokenManager = options.oauthTokenManager || oauthTokenManager;
     const maintenanceRunner = options.maintenanceRunner || runVerificationMaintenance;
     const createInterval = options.setIntervalFn || setInterval;
     maintenanceClearInterval = options.clearIntervalFn || clearInterval;
     startLookupCacheCleanup();
     runtimeStartPromise = (async () => {
         await maintenanceRunner();
-        if (!maintenanceTimer) {
-            maintenanceTimer = createInterval(() => maintenanceRunner().catch(err => {
+        if (typeof verificationWebhookManager?.performStartupRecovery === "function") {
+            try {
+                await verificationWebhookManager.performStartupRecovery();
+            } catch (recoveryErr) {
+                console.error("[VERIFICATION] webhook startup recovery failed:", recoveryErr);
+            }
+        }
+        await runPrivacyDeletionRecoverySafe(options);
+        if (typeof tokenManager.start === "function") {
+            try {
+                await tokenManager.start();
+            } catch (err) {
                 lastError = safeError(err);
-                console.error("[VERIFICATION] maintenance failed:", lastError);
-            }), MAINTENANCE_INTERVAL_MS);
+                console.error("[VERIFICATION] token manager startup failed:", lastError);
+            }
+        }
+        if (!maintenanceTimer) {
+            maintenanceTimer = createInterval(async () => {
+                try {
+                    await maintenanceRunner();
+                } catch (err) {
+                    lastError = safeError(err);
+                    console.error("[VERIFICATION] maintenance failed:", lastError);
+                    try {
+                        await sendWebhookEvent({
+                            target: "ALERT",
+                            severity: "ERROR",
+                            category: "VERIFICATION",
+                            code: "verification.maintenance_failed",
+                            state: "OPEN",
+                            title: "MAINTENANCE FAILED",
+                            description: `การบำรุงรักษาระบบยืนยันตัวตนรอบปกติล้มเหลว: ${lastError}`,
+                            fields: [
+                                { name: "สถานะ", value: "OPEN" },
+                                { name: "ผลกระทบ", value: "การล้างข้อมูลเก่าหรืออัปเดตสิทธิ์ยืนยันตัวตนอาจล่าช้า" },
+                                { name: "สิ่งที่ควรทำ", value: "ตรวจสอบฐานข้อมูลและการเชื่อมต่อ Discord API" },
+                                { name: "รหัสข้อผิดพลาด", value: String(err?.code || err?.name || "maintenance_error") }
+                            ],
+                            dedupeKey: "verification-maintenance-failed",
+                            dedupeMs: 30 * 60 * 1000
+                        });
+                    } catch {
+                        // ignore webhook delivery failure in background maintenance
+                    }
+                }
+            }, MAINTENANCE_INTERVAL_MS);
             maintenanceTimer.unref?.();
         }
         return getVerificationDiagnostics();
@@ -343,16 +450,27 @@ async function startVerificationRuntime(options = {}) {
     return runtimeStartPromise;
 }
 
-async function stopVerificationRuntime() {
+async function stopVerificationRuntime(options = {}) {
+    const tokenManager = options.oauthTokenManager || oauthTokenManager;
     if (runtimeStartPromise) await runtimeStartPromise.catch(() => {});
     if (maintenanceTimer) maintenanceClearInterval(maintenanceTimer);
     maintenanceTimer = null;
     maintenanceClearInterval = clearInterval;
     stopLookupCacheCleanup();
+    if (typeof tokenManager.stop === "function") {
+        await tokenManager.stop();
+    }
     await waitForMaintenanceIdle();
 }
 
 function getVerificationDiagnostics() {
+    let oauthRunStatus = "ok";
+    if (lastOAuthRefreshError) {
+        oauthRunStatus = "error";
+    } else if (lastOAuthRefreshSummary?.failed > 0 || lastOAuthRefreshSummary?.persistenceFailed > 0) {
+        oauthRunStatus = "partial_failure";
+    }
+
     return {
         ready: lastRunAt !== null && !lastError,
         timerActive: !!maintenanceTimer,
@@ -366,6 +484,11 @@ function getVerificationDiagnostics() {
         failCount,
         lastError,
         lastSummary,
+        privacyDeletionRecovery: {
+            lastRunAt: lastPrivacyDeletionRecoveryAt,
+            lastError: lastPrivacyDeletionRecoveryError,
+            lastSummary: lastPrivacyDeletionRecoverySummary
+        },
         retentionCursor: retentionCursor ? String(retentionCursor) : null,
         snapshotCleanup: {
             config: getSnapshotCleanupConfig(),
@@ -382,10 +505,14 @@ function getVerificationDiagnostics() {
             lastSummary: lastSummary?.encryptionMigration || null
         },
         oauthTokenRefresh: {
-            config: getOAuthRefreshConfig(),
+            config: oauthTokenManager.getOAuthRefreshConfig(),
             lastRunAt: lastOAuthRefreshAt,
             lastError: lastOAuthRefreshError,
-            lastSummary: lastOAuthRefreshSummary
+            lastSummary: lastOAuthRefreshSummary,
+            lastRunStatus: oauthRunStatus,
+            lastRunFailedCount: Number(lastOAuthRefreshSummary?.failed || 0),
+            lastRunPersistenceFailed: Number(lastOAuthRefreshSummary?.persistenceFailed || 0),
+            diagnostics: oauthTokenManager.getDiagnostics()
         }
     };
 }
@@ -394,6 +521,7 @@ module.exports = {
     startVerificationRuntime,
     stopVerificationRuntime,
     runVerificationMaintenance,
+    runPrivacyDeletionRecoverySafe,
     getVerificationDiagnostics,
     waitForMaintenanceIdle,
     retentionDays,

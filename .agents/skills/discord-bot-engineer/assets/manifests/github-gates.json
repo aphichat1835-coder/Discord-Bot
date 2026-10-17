@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "states": ["ready_for_review", "changes_requested", "ci_failed", "blocked_by_configuration", "implemented_but_unverified", "ready_to_merge", "merged_unverified_in_production", "merged_verified_in_production"],
+  "ready_to_merge": ["repository_resolved", "base_head_sha", "requirements", "diff_review", "tests", "security", "required_checks", "reviews_resolved", "mergeable", "unknowns_clear"],
+  "forbidden_claims": ["local_test_equals_ci", "ci_equals_live_discord", "changed_file_equals_addressed_review", "stale_check_equals_current_head", "draft_release_equals_published"]
+}

@@ -68,12 +68,28 @@ function deleteBlankEnvironmentValues(env = process.env) {
     return removed;
 }
 
+const v8 = require("node:v8");
+
+function applyV8MemoryOptimizations(env = process.env) {
+    if (String(env.NODE_OPTIMIZE_FOR_SIZE ?? "true").trim().toLowerCase() !== "false") {
+        if (typeof v8?.setFlagsFromString === "function") {
+            try {
+                v8.setFlagsFromString("--optimize_for_size");
+            } catch {
+                // Non-fatal if V8 flags cannot be set in current Node runtime
+            }
+        }
+    }
+}
+
 loadLocalEnv();
 deleteBlankEnvironmentValues();
+applyV8MemoryOptimizations();
 
 module.exports = {
     parseEnvLine,
     loadEnvFile,
     loadLocalEnv,
-    deleteBlankEnvironmentValues
+    deleteBlankEnvironmentValues,
+    applyV8MemoryOptimizations
 };

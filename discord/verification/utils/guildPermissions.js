@@ -1,3 +1,5 @@
+"use strict";
+
 const { PermissionFlagsBits } = require("discord.js");
 
 const PERMISSIONS = Object.freeze({
@@ -35,22 +37,28 @@ function permissionFlags(permissions) {
     return flags;
 }
 
+function hasElevatedPerm(isPrivileged, explicitFlag, permissions, permFlag) {
+    return isPrivileged || explicitFlag === true || hasPerm(permissions, permFlag);
+}
+
 function normalizeGuildPermissions(guild = {}) {
-    const owner = !!guild.owner || !!guild.isOwner;
+    const owner = Boolean(guild.owner || guild.isOwner);
     const permissions = String(guild.permissions || "0");
     const administrator = hasPerm(permissions, PERMISSIONS.Administrator);
-    const canManageGuild = owner || administrator || guild.canManageGuild === true || hasPerm(permissions, PERMISSIONS.ManageGuild);
-    const canManageRoles = owner || administrator || guild.canManageRoles === true || hasPerm(permissions, PERMISSIONS.ManageRoles);
-    const isAdmin = owner || administrator || guild.isAdmin === true;
+    const isPrivileged = owner || administrator;
+    const canManageGuild = hasElevatedPerm(isPrivileged, guild.canManageGuild, permissions, PERMISSIONS.ManageGuild);
+    const canManageRoles = hasElevatedPerm(isPrivileged, guild.canManageRoles, permissions, PERMISSIONS.ManageRoles);
+    const canBanMembers = hasElevatedPerm(isPrivileged, guild.canBanMembers, permissions, PERMISSIONS.BanMembers);
+    const isAdmin = isPrivileged || guild.isAdmin === true;
 
     return {
         owner,
         isOwner: owner,
         isAdmin,
-        canManage: owner || administrator || canManageGuild,
+        canManage: isPrivileged || canManageGuild,
         canManageGuild,
         canManageRoles,
-        canBanMembers: owner || administrator || guild.canBanMembers === true || hasPerm(permissions, PERMISSIONS.BanMembers),
+        canBanMembers,
         permissionFlags: permissionFlags(permissions)
     };
 }

@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "packs": [
+    {
+      "id": "moderation-purge-progress-discordjs",
+      "framework": "discord.js",
+      "purpose": "Truthful batch progress with partial-failure accounting, terminal-state protection, and actor ownership.",
+      "files": ["discordjs/purge-progress/core.mjs", "discordjs/purge-progress/command.ts", "discordjs/purge-progress/core.test.mjs"],
+      "verification": ["node --test assets/examples/discordjs/purge-progress/core.test.mjs"]
+    },
+    {
+      "id": "moderation-purge-progress-discordpy",
+      "framework": "discord.py",
+      "purpose": "Truthful batch progress with partial-failure accounting and terminal-state protection.",
+      "files": ["discordpy/purge_progress/core.py", "discordpy/purge_progress/command.py", "discordpy/purge_progress/test_core.py"],
+      "verification": ["python3 -m unittest assets/examples/discordpy/purge_progress/test_core.py"]
+    },
+    {
+      "id": "verification-single-use-discordjs",
+      "framework": "discord.js",
+      "purpose": "Identity-bound, expiring verification challenge transition; production single-use consumption requires an atomic durable compare-and-set or transaction.",
+      "files": ["discordjs/verification-single-use/core.mjs", "discordjs/verification-single-use/core.test.mjs"],
+      "verification": ["node --test assets/examples/discordjs/verification-single-use/core.test.mjs"]
+    },
+    {
+      "id": "verification-single-use-discordpy",
+      "framework": "discord.py",
+      "purpose": "Identity-bound, expiring verification challenge transition; production single-use consumption requires an atomic durable compare-and-set or transaction.",
+      "files": ["discordpy/verification_single_use/core.py", "discordpy/verification_single_use/test_core.py"],
+      "verification": ["python3 -m unittest assets/examples/discordpy/verification_single_use/test_core.py"]
+    },
+    {
+      "id": "economy-ledger-invariants-discordjs",
+      "framework": "discord.js",
+      "purpose": "Pure transfer invariants for exact amount, idempotency, conservation, and ledger evidence; production persistence still requires a database transaction.",
+      "files": ["discordjs/economy-ledger/core.mjs", "discordjs/economy-ledger/core.test.mjs"],
+      "verification": ["node --test assets/examples/discordjs/economy-ledger/core.test.mjs"]
+    },
+    {
+      "id": "economy-ledger-invariants-discordpy",
+      "framework": "discord.py",
+      "purpose": "Pure transfer invariants for exact amount, idempotency, conservation, and ledger evidence; production persistence still requires a database transaction.",
+      "files": ["discordpy/economy_ledger/core.py", "discordpy/economy_ledger/test_core.py"],
+      "verification": ["python3 -m unittest assets/examples/discordpy/economy_ledger/test_core.py"]
+    },
+    {
+      "id": "ticket-lifecycle-discordjs",
+      "framework": "discord.js",
+      "purpose": "Pure ticket state machine for duplicate-open prevention, serialized close, transcript evidence, and partial-close recovery; production persistence requires a database constraint/transaction.",
+      "files": ["discordjs/ticket-lifecycle/core.mjs", "discordjs/ticket-lifecycle/core.test.mjs"],
+      "verification": ["node --test assets/examples/discordjs/ticket-lifecycle/core.test.mjs"]
+    },
+    {
+      "id": "ticket-lifecycle-discordpy",
+      "framework": "discord.py",
+      "purpose": "Pure ticket state machine for duplicate-open prevention, serialized close, transcript evidence, and partial-close recovery; production persistence requires a database constraint/transaction.",
+      "files": ["discordpy/ticket_lifecycle/core.py", "discordpy/ticket_lifecycle/test_core.py"],
+      "verification": ["python3 -m unittest assets/examples/discordpy/ticket_lifecycle/test_core.py"]
+    },
+    {
+      "id": "runtime-invariants-discordjs",
+      "framework": "discord.js",
+      "purpose": "Pure OAuth state, voice/player lifecycle, distributed lease fencing, and ordered idempotent entitlement invariants; production adapters require durable atomic storage and framework integration.",
+      "files": ["discordjs/runtime-invariants/core.mjs", "discordjs/runtime-invariants/core.test.mjs"],
+      "verification": ["node --test assets/examples/discordjs/runtime-invariants/core.test.mjs"]
+    },
+    {
+      "id": "runtime-invariants-discordpy",
+      "framework": "discord.py",
+      "purpose": "Pure OAuth state, voice/player lifecycle, distributed lease fencing, and ordered idempotent entitlement invariants; production adapters require durable atomic storage and framework integration.",
+      "files": ["discordpy/runtime_invariants/core.py", "discordpy/runtime_invariants/test_core.py"],
+      "verification": ["python3 -m unittest assets/examples/discordpy/runtime_invariants/test_core.py"]
+    }
+  ],
+  "policy": "Copy only the applicable pattern, adapt it to installed framework types and repository conventions, and run its regression tests. Templates are examples, not specifications."
+}

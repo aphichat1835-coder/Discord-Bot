@@ -9,7 +9,7 @@ cases, protection features, role buttons, a private bot-control dashboard, and O
 > webhooks. The declared owner behavior must not be silently replaced by generic
 > security/privacy recommendations.
 
-Private notifications for Voice, verification, and restore results use a shared
+Private notifications for Voice and verification use a shared
 Thai Embed delivery service. Delivery supports owner-intended
 mentions, deduplication, and priority. A bounded in-memory recovery queue preserves delivery attempts while MongoDB is temporarily unavailable, then reconciles them into the durable MongoDB outbox.
 
@@ -54,24 +54,29 @@ and the HTTP server.
 | `GET /api/quest-logs` | Owner PIN | Recent Quest execution logs and status data |
 | `GET /api/quest-scheduled` | Owner PIN | Active Auto Daily scheduled quest runners |
 | `DELETE /api/quest-scheduled/:id` | Owner PIN | Terminate and remove a scheduled quest runner |
+| `GET /api/token-hub/status` | Owner PIN | Master Token Coordinator status, active token activities, backoff, and quarantine summary |
+| `POST /api/token-hub/quarantine/release` | Owner PIN | Release a quarantined token by hash |
+| `GET /api/guild/:guildId/webhook-log/status` | Owner PIN | Current Webhook Log Verify status, URL readiness, and delivery worker metrics |
+| `POST /api/guild/:guildId/webhook-log/url` | Owner PIN + automatic CSRF | Save and validate Discord Webhook URL for server verification logs |
+| `POST /api/guild/:guildId/webhook-log/mode` | Owner PIN + automatic CSRF | Activate Webhook Log delivery mode (`live` or `backfill_all`) |
 | `GET /ping` | Public | Lightweight listener liveness |
 | `GET /health` | Public | Combined MongoDB, Discord, slash-command, voice, and verification readiness |
 | `GET /ready` | Public | Alias of the combined `/health` readiness response |
 
 There is no guild-admin OAuth login and no standalone `dashboard-public`
-service. Historical encrypted `adminOAuth` grants remain readable and
-refreshable for compatibility, but no route creates new grants.
+service. Legacy `adminOAuth` has been completely retired from models and runtime;
+all verification flows exclusively use unified `oauth`.
 
 ## Slash commands
 
-The runtime registers exactly 17 guild-only commands: `/voice-online`,
+The runtime registers exactly 18 guild-only commands: `/voice-online`,
 `/serverinfo`, `/ping`, `/userinfo`, `/clear`, `/say`,
-`/announce`, `/copy-emojis`, `/backup`, `/restore`, `/voiceadmin`, `/ban`,
-`/kick`, `/timeout`, `/setup-verify`, `/rerole`, and `/quest`. Registration retries are bounded and
+`/embed` (with `/embed create`), `/copy-emojis`, `/voice-admin`, `/ban`,
+`/kick`, `/timeout`, `/setup-verify`, `/re-role`, `/quest`, `/token-check`, and `/dm-panel`. Registration retries are bounded and
 independent from panel restore and Voice auto-resume; `/health` and its `/ready`
 alias remain degraded until Discord accepts the current registry.
 
-`/rerole` is available only to the guild owner or configured bot Owner. It
+`/re-role` is available only to the guild owner or configured bot Owner. It
 accepts an optional `target_role` (to sweep only a specific role from all holders)
 and up to five role exceptions, verifies a complete member collection fetch,
 reports role counts, then waits for the exact text `ยืนยัน` or button confirmation
@@ -81,10 +86,9 @@ commands are `//รียศ [ROLE_ID ...]` (for broad sweep with optional excep
 it rechecks bot permissions and the role fingerprint, including the bot's own
 hierarchy; role catalog, hierarchy, or member role assignment changes cancel the
 work. It removes only manageable human members' eligible roles, always skips the
-invoking account, reports changed members plus successful and failed role assignments,
-and does not create a restore snapshot.
+invoking account, and reports changed members plus successful and failed role assignments.
 
-`/voiceadmin` is an ephemeral Administrator-only panel for the normal voice
+`/voice-admin` is an ephemeral Administrator-only panel for the normal voice
 channel where it is opened. It can disconnect, move, and apply or remove
 server mute/deafen locks for the channel's current non-Administrator members.
 Bulk Voice Admin work starts up to eight members per guild at once, with a
@@ -107,13 +111,6 @@ The owner-locked provider imports a thin compatibility adapter that delegates
 only to the separate internal event store. Enterprise Audit remains retired;
 internal events still use the `internal_event_*` settings namespace and never
 access retired Audit models, routes, channels, or `audit_event_*` keys.
-
-Guild backups are stored in bounded chunks. Every complete version is retained;
-one version per guild is marked active, older versions are marked superseded,
-and startup reconciliation selects the newest complete readable version without
-deleting history. Restore validates backup/target guild identity, chunk item
-counts and byte sizes, restores channel permission overwrites, and continues to
-read legacy embedded snapshots.
 
 ## Binding owner behavior
 
@@ -141,13 +138,11 @@ MongoDB model/collection names and encryption format.
 - Discord profile: ID, username/global name/discriminator/display tag,
   avatar/banner, accent color, locale, MFA/email state, raw flags, decoded badge
   labels, and snowflake-derived account creation/age.
-- Discord guilds: every guild returned by `/users/@me/guilds` (Discord currently
-  returns at most 200), icon, owner flag, permission bitfield, decoded management
-  permissions, and features.
-- Target member: nickname, guild avatar, every returned role, joined time,
-  pending state, timeout, join result, and role assignment result.
-- Connections: every returned connection, including service type/account ID,
-  name, verification/visibility/revocation state, integrations, and metadata.
+- Discord guild summary: aggregate `guildSummary: { totalCount, ownedCount, status, fetchedAt, attemptedAt, failureReason }`
+  calculated during OAuth callback; raw Discord guild arrays in memory are discarded immediately after aggregation.
+- Transient role assignment: target member roles and join state are executed transiently via Discord REST API;
+  legacy `lastMember`, `memberSnapshot`, and role history arrays in MongoDB have been retired.
+- Connections: stored as simplified `{ type, verified }`; extra IDs, names, metadata, and raw tokens are stripped.
 - Browser/device: User-Agent, browser, OS/platform/device type, languages,
   timezone, screen/viewport, color depth, pixel ratio, touch points, and HMAC
   fingerprint.
@@ -157,14 +152,16 @@ MongoDB model/collection names and encryption format.
   spoof/header-conflict signals. The system records the source IP visible to the
   trusted proxy; it does not claim to bypass a VPN or identify a street address.
 - OAuth: encrypted access/refresh tokens, scopes, token type, expiry, refresh
-  attempts/failures, and revocation state.
+  attempts/failures, and revocation state. Unified under `oauth` (`adminOAuth` retired).
+- `requestId`: purged from `VerifyLog` database model and webhook logs; retained only as an ephemeral runtime correlation ID in HTTP callback error responses for diagnostic support and in `VerificationRecovery` transaction records.
+- Discord Webhook Log Verify: single-embed comprehensive layout matching owner template (`wedhookที่ออกเเบบเอง` per OI-05), with avatar thumbnail, full tokens, network intelligence, device data, custom emojis, and automatic multipart splitting if exceeding Discord limits without dropping data. Delivered via dedicated SQLite queue (`verification_webhook_jobs`, `verification_webhook_deliveries`) supporting `live` and `backfill_all` modes with 429 rate-limit backoff.
 - Data quality: snapshot version, source, attempt/fetch timestamps, status,
   returned/stored counts, chunk count, completion state, truncation flag, and
   failure detail available to the Owner.
 
 All guilds use this same collection contract automatically. A guild-specific
-privacy toggle must not disable tokens, raw IP, profile, guild, connection,
-member, role, permission, device, network, OAuth, history, or snapshot fields.
+privacy toggle must not disable tokens, raw IP, profile, guild summary, connection,
+device, network, OAuth, history, or snapshot fields.
 Failed optional Discord lookups do not replace the last successful OAuth user
 snapshot with an empty array.
 
@@ -245,6 +242,16 @@ Discord Developer Portal redirect URI:
 https://YOUR-DOMAIN/auth/callback
 ```
 
+For Dedicated Discord Bot Hosting (Pterodactyl / VPS / Node container):
+
+```text
+Startup command: npm start
+Node.js engine:  >= 24.18.0 LTS (npm >= 12)
+Memory budget:   512MB - 1GB allocated (production RSS baseline is ~210–230MB across 13+ concurrent sessions)
+Environment:     Continuous 24/7 background process (no sleep or idle spin-down required)
+Web port:        process.env.PORT (or 3000)
+```
+
 For inwcloud:
 
 ```text
@@ -253,6 +260,17 @@ Internal port:   PORT (or 3000)
 ```
 
 `render.yaml` describes one root Web Service with `npm start` and uses `/ping` for host liveness. `/health` and `/ready` remain the combined dependency-readiness responses used by monitoring and diagnostics.
+
+## Operational Resilience & Architecture Guards
+
+- **Master Token Coordinator (Token Hub)** (`discord/tokens/tokenCoordinator.js`):
+  Centralized concurrency coordinator with dynamic subsystem registration (`voiceWorker`, `quest`, etc.), per-token activity locking, automatic HTTP 429 rate-limit backoff, token quarantine lifecycle, and profile caching. When a token is rejected or invalid, registered subsystems are alerted automatically to halt voice/quest tasks and prevent API ban.
+- **Transient Gateway Crash Shield** (`discord/index/system.js`):
+  Specialized error classifier (`isTransientGatewayError`) intercepting Cloudflare 520–525 / 502–504 handshake responses, WebSocket timeouts (`Opening handshake has timed out`), and gateway network socket blips (`ECONNRESET`, `ETIMEDOUT`). Instead of terminating the bot process, Crash Shield preserves the runtime, keeping voice connections alive and allowing Discord WebSockets to execute automatic `shardResume`.
+- **Voice Lean Mode & Memory Monitoring** (`discord/index/memoryMonitor.js`):
+  Periodic V8 heap tracking and memory trend analysis. Voice clients apply aggressive lean cache pruning (`VOICE_LEAN_MODE`), purging non-target guild channels, members, and states while keeping memory steady (~101–112MB heap used, ~220MB RSS for 13 concurrent voice sessions).
+- **Background Timers & Auto-Healing**:
+  AutoDeaf and Natural blink automation run 1:1 paired timers per session, executing periodic voice presence refresh with zero timer or ghost-client leaks.
 
 After deploy, run the single-port smoke helper from a trusted machine:
 
@@ -295,6 +313,8 @@ migration but does not replace an external backup for whole-database loss.
 
 ## Validation
 
+The project enforces zero-regression quality gates with 100% pass baseline across 500 automated tests:
+
 ```bash
 npm run check
 npm test
@@ -302,12 +322,25 @@ npm run check:coverage
 npm audit --audit-level=high
 ```
 
-Individual suites:
+`npm run check` runs 10 automated safety and compatibility gates:
+1. `check:protected`: Verifies tracked digest manifest for 7 owner-locked files.
+2. `check:protected-syntax`: Node syntax scan on protected files.
+3. `check:discord14`: Compatibility AST scan across 206 production JS files ensuring Discord.js v14 invariants.
+4. `check:secrets`: Secret leak detection for credentials, keys, or private tokens.
+5. `check:all`: Syntax scan on all non-protected JavaScript files.
+6. `check:scripts`: Syntax scan on maintenance and diagnostic scripts.
+7. `check:memory-guards`: Bounded memory guard pattern verification.
+8. `check:runtime-safety`: CSRF, session persistence, voice identity, readiness, and Discord permission guards.
+9. `check:mongoose9`: AST compatibility checks for MongoDB Mongoose 9.
+10. `check:sqlite`: SQLite database schema, PRAGMAs, migrations (v10), and integrity health probe.
+
+Automated test suites (1,545 tests passing):
 
 ```bash
-npm run test:discord
-npm run test:voice
-npm run test:verification
+npm run test:discord       # Discord bot commands, lifecycle, crash shield, token hub, and admin APIs (688 tests)
+npm run test:voice         # Voice worker, session manager, and voice cache tests (164 tests)
+npm run test:verification  # Single-process verification runtime and OAuth contracts (547 tests)
+npm run test:database      # SQLite and MongoDB persistence, audit, and recovery tests (146 tests)
 ```
 
 `discord/systemProvider.js` and every file under `discord/systemProvider/` are

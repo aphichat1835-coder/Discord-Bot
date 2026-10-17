@@ -19,10 +19,12 @@
 
 const { PermissionFlagsBits } = require("discord.js");
 const crypto = require("node:crypto");
-const { MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
+const fs = require("node:fs");
+const path = require("node:path");
+const { AttachmentBuilder, MessageEmbed, MessageActionRow, MessageButton } = require("../core/discordCompat");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const { createCompactCallbackState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
@@ -41,16 +43,25 @@ const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 409
 const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
 const SNOWFLAKE_RE = /^\d{17,22}$/;
 
+const VERIFY_PANEL_BANNER_ATTACHMENT_NAME = "verification-panel-banner.webp";
+
+function getVerifyPanelBannerPath() {
+    try {
+        return path.resolve(__dirname, "../assets/verification-panel-banner.webp");
+    } catch {
+        return null;
+    }
+}
+
 const DEFAULT_PANEL = {
     content: "",
-    title: "🔐 ยืนยันตัวตนเพื่อเข้าดิส",
-    description:
-        "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2\n" +
-        "ระบบจะตรวจสอบบัญชีและเพิ่มยศให้โดยอัตโนมัติเมื่อผ่านเงื่อนไข",
+    title: "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
+    description: "",
     color: "#5865F2",
-    footer: "Discord Verification System",
-    oauthButtonText: "✅ ยืนยันตัวตนเข้าดิส",
-    directButtonText: "🎭 รับยศ"
+    footer: "",
+    oauthButtonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
+    directButtonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
+    imageUrl: `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`
 };
 
 function cleanText(value, fallback = "") {
@@ -158,42 +169,25 @@ function makePanelRevision(prefix = "panel") {
 }
 
 function buildDiscordAuthorizeUrl({
-    interaction,
     guildId,
     roleId,
     expectedUserId = null,
     panelRevision = null
 }) {
     const dashboardUrl = getDashboardUrl();
-    const clientId = getDiscordClientId(interaction);
 
     if (!dashboardUrl) {
         throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL/PUBLIC_BASE_URL");
     }
 
-    if (!clientId) {
-        throw new Error("Missing DISCORD_CLIENT_ID/Application ID");
-    }
-
-    const redirectUri = `${dashboardUrl}/auth/callback`;
-
-    const state = createCompactCallbackState({
+    const panelState = createCompactCallbackState({
         guildId,
         roleId,
         expectedUserId,
         panelRevision
     });
 
-    const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: VERIFY_SCOPE,
-        state,
-        prompt: "consent"
-    });
-
-    const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
+    const url = `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 
     if (url.length > 512) {
         throw new Error(`OAuth URL too long (${url.length}/512). Use a shorter PUBLIC_DASHBOARD_URL domain.`);
@@ -284,11 +278,7 @@ function emojiToDisplay(emoji, fallback = "") {
 }
 
 function resolveButtonEmoji(input, fallback, client) {
-    const primary = parseButtonEmoji(input, null, client);
-
-    if (primary) return primary;
-
-    return parseButtonEmoji(fallback, null, client);
+    return parseButtonEmoji(input, null, client) || parseButtonEmoji(fallback, null, client) || null;
 }
 
 function applyEmoji(button, emojiInput, fallback, client) {
@@ -403,11 +393,10 @@ async function syncGuildConfig(interaction, role, channel, panelMsg, panelData) 
                     createdAt: Date.now(),
 
                     "verification.blockVPN": true,
-                    "verification.minAccountAgeDays": 7,
+                    "verification.minAccountAgeDays": 0,
                     "verification.requireEmail": false,
                     "verification.requireEmailVerified": false,
                     "verification.requireConnections": false,
-                    "verification.minConnections": 1,
 
                     "security.storeOAuthTokens": true,
                     "security.storeRawIpEncrypted": true,
@@ -456,7 +445,7 @@ async function persistVerificationRecovery({ guildId, messageId, settingKey, rol
             category: "VERIFICATION",
             code: "verification.panel.recovery_persistence_failed",
             state: "OPEN",
-            title: "แผงยืนยันต้องตรวจสอบด้วยตนเอง",
+            title: "PANEL RECOVERY RECORD FAILED",
             description: "ระบบกู้คืนแผงไม่สมบูรณ์และไม่สามารถบันทึก Recovery Record ได้",
             impact: "สถานะแผงใน Discord กับฐานข้อมูลอาจไม่ตรงกัน",
             action: "ตรวจแผงยืนยันล่าสุดใน Discord แล้วตั้งค่าแผงใหม่หากจำเป็น",
@@ -555,7 +544,7 @@ async function handle(interaction, client) {
 
 async function validateSetupChannelAndRole(interaction, channel, role) {
     if (channel?.isTextBased?.() !== true || channel?.isSendable?.() !== true || channel?.isThread?.() === true) {
-        return { ok: false, error: `> ${config.emojis.error} กรุณาเลือกห้องข้อความเท่านั้น` };
+        return { ok: false, error: `> ${config.emojis?.error || "❌"} กรุณาเลือกห้องข้อความเท่านั้น` };
     }
     const botMember = await resolveGuildBotMember(interaction.guild, interaction.client);
     const sendPerms = channel.permissionsFor(botMember);
@@ -564,17 +553,17 @@ async function validateSetupChannelAndRole(interaction, channel, role) {
         return {
             ok: false,
             error:
-                `> ${config.emojis.error} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +
-                `> เปิดสิทธิ์ Send Messages และ Embed Links ให้บอทก่อน`
+                `> ${config.emojis?.error || "❌"} บอทไม่มีสิทธิ์ส่งข้อความหรือ Embed ในห้อง <#${channel.id}>\n` +
+                `> กรุณาเปิดสิทธิ์ Send Messages และ Embed Links ให้บอทก่อน`
         };
     }
 
     if (role?.id === interaction.guild.id) {
-        return { ok: false, error: `> ${config.emojis.error} ไม่สามารถใช้ยศ @everyone เป็นยศยืนยันตัวตนได้` };
+        return { ok: false, error: `> ${config.emojis?.error || "❌"} ไม่สามารถใช้ยศ @everyone เป็นยศยืนยันตัวตนได้` };
     }
     const roleCheck = validateDirectRoleAssignment(botMember, role);
     if (!roleCheck.ok) {
-        return { ok: false, error: `> ${config.emojis.error} ${roleCheck.reason}` };
+        return { ok: false, error: `> ${config.emojis?.error || "❌"} ${roleCheck.reason}` };
     }
     return { ok: true, botMember };
 }
@@ -586,22 +575,22 @@ function parseVerificationButtonParts(interaction, role, verifyType) {
 
     const fallbackButtonText = verifyType
         ? DEFAULT_PANEL.oauthButtonText
-        : `${DEFAULT_PANEL.directButtonText} ${role.name}`;
+        : DEFAULT_PANEL.directButtonText;
 
     if (newButtonText) {
         return extractButtonTextParts(newButtonText, fallbackButtonText, interaction.client);
     }
     const label = cleanText(
         oldButtonLabel,
-        verifyType ? "ยืนยันตัวตนเข้าดิส" : `รับยศ ${role.name}`
+        "vfy (user)"
     );
     const emojiInput = cleanText(
         oldButtonEmoji,
-        verifyType ? "✅" : "🎭"
+        "<a:ddd_pmt:1553844572873040044>"
     );
     const resolved = resolveButtonEmoji(
         emojiInput,
-        verifyType ? "✅" : "🎭",
+        "<a:ddd_pmt:1553844572873040044>",
         interaction.client
     );
     return {
@@ -622,10 +611,15 @@ function parseVerificationPanelOptions(interaction, role, verifyType) {
 
     validatePanelText(content, "content", PANEL_LIMITS.content);
     validatePanelText(title, "title", PANEL_LIMITS.title);
-    validatePanelText(description, "description", PANEL_LIMITS.description);
-    validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
+    if (description) {
+        validatePanelText(description, "description", PANEL_LIMITS.description);
+    }
+    if (footerText) {
+        validatePanelText(footerText, "footer", PANEL_LIMITS.footer);
+    }
 
-    const imageUrl = cleanHttpsUrl(interaction.options.getString("image"), "image");
+    const rawImage = interaction.options.getString("image");
+    const imageUrl = rawImage ? cleanHttpsUrl(rawImage, "image") : (DEFAULT_PANEL.imageUrl || null);
     const thumbUrl = cleanHttpsUrl(interaction.options.getString("thumbnail"), "thumbnail");
     const titleUrl = cleanHttpsUrl(interaction.options.getString("url"), "url");
     const buttonParts = parseVerificationButtonParts(interaction, role, verifyType);
@@ -647,8 +641,11 @@ function parseVerificationPanelOptions(interaction, role, verifyType) {
 function buildVerificationPanelComponents({ interaction, verifyType, role, panelRevision, panelOptions }) {
     const embed = new MessageEmbed()
         .setColor(panelOptions.colorHex)
-        .setTitle(panelOptions.title)
-        .setDescription(panelOptions.description);
+        .setTitle(panelOptions.title);
+
+    if (panelOptions.description) {
+        embed.setDescription(panelOptions.description);
+    }
 
     if (panelOptions.titleUrl) embed.setURL(panelOptions.titleUrl);
     if (panelOptions.imageUrl) embed.setImage(panelOptions.imageUrl);
@@ -672,8 +669,8 @@ function buildVerificationPanelComponents({ interaction, verifyType, role, panel
             return {
                 ok: false,
                 error:
-                    `> ${config.emojis.error} สร้างลิงก์ OAuth ไม่สำเร็จ\n` +
-                    `> กรุณาตรวจการตั้งค่า OAuth และ public URL แล้วลองใหม่`
+                    `> ${config.emojis?.error || "❌"} สร้างลิงก์ OAuth ไม่สำเร็จ\n` +
+                    `> กรุณาตรวจสอบการตั้งค่า OAuth และ Public URL แล้วลองใหม่อีกครั้ง`
             };
         }
 
@@ -717,10 +714,16 @@ async function sendAndPersistVerificationPanel({
         .where("guildId")
         .equals(guildId)
         .lean();
+    const bannerPath = getVerifyPanelBannerPath();
+    const isAttachmentImage = panelOptions.imageUrl === `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`;
     const panelPayload = {
         embeds: [panelComponents.embed],
         components: [panelComponents.row]
     };
+
+    if (isAttachmentImage && bannerPath && fs.existsSync(bannerPath)) {
+        panelPayload.files = [new AttachmentBuilder(bannerPath, { name: VERIFY_PANEL_BANNER_ATTACHMENT_NAME })];
+    }
 
     if (panelOptions.content) {
         panelPayload.content = panelOptions.content;
@@ -826,79 +829,67 @@ function buildVerificationSetupResultEmbed({
     channel,
     role,
     verifyType,
-    panelOptions,
-    panelMsgId,
-    panelRevision
+    panelOptions
 }) {
     return new MessageEmbed()
         .setColor(config.system.themeColors.success)
-        .setTitle(`${config.emojis.success} ติดตั้งแผงยืนยันสำเร็จ`)
+        .setTitle(`${config.emojis?.check_alt || config.emojis?.success || "✅"} ติดตั้งแผงยืนยันเรียบร้อย`)
         .setDescription(
             `แผงยืนยันถูกส่งไปที่ <#${channel.id}> แล้ว\n` +
             `ระบบบันทึกการตั้งค่าและพร้อมให้สมาชิกยืนยันตัวตน`
         )
         .addFields(
             {
-                name: "📌 ช่อง",
+                name: "ช่อง",
                 value: `<#${channel.id}>`,
                 inline: true
             },
             {
-                name: "🎭 ยศ",
+                name: "ยศ",
                 value: `<@&${role.id}>`,
                 inline: true
             },
             {
-                name: "🔒 ประเภท",
-                value: verifyType ? "OAuth2 Direct Authorize" : "กดรับยศทันที",
+                name: "ประเภท",
+                value: verifyType ? "OAuth2" : "กดรับยศทันที",
                 inline: true
             },
             {
-                name: "🧩 ปุ่ม",
+                name: "ปุ่ม",
                 value: `${panelOptions.buttonParts.emojiDisplay || ""} ${panelOptions.buttonParts.label}`.trim(),
                 inline: false
             },
             {
-                name: "🎨 สี",
+                name: "สี",
                 value: panelOptions.colorHex,
                 inline: true
             },
             {
-                name: "🕐 เวลา",
+                name: "เวลา",
                 value: panelOptions.showTs ? "เปิด" : "ปิด",
                 inline: true
-            },
-            {
-                name: "🆔 Message ID",
-                value: `\`${panelMsgId}\``,
-                inline: false
-            },
-            {
-                name: "🧬 Panel Revision",
-                value: `\`${panelRevision}\``,
-                inline: false
             }
         )
-        .setFooter({ text: `ตั้งค่าโดย ${interaction.user.tag}` })
         .setTimestamp();
 }
 
 async function handleSetupVerify(interaction) {
     if (!isConfiguredOwner(config, interaction.user?.id)) {
         return interaction.reply({
-            content: `> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
+            content: `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
             ephemeral: true
         });
     }
 
     await interaction.deferReply({ ephemeral: true });
+    await interaction.editReply({ content: `${config.emojis?.loading_circle || config.emojis?.loading || "⏳"} กำลังติดตั้งแผงยืนยันตัวตน...` }).catch(() => {});
 
     const channel = interaction.options.getChannel("channel");
     const role = interaction.options.getRole("role");
     const guildId = strictSnowflake(interaction.guild?.id);
 
     if (!guildId || !role) {
-        return interaction.editReply({ content: `> ${config.emojis.error} ไม่พบเซิร์ฟเวอร์หรือยศที่ถูกต้อง` });
+        return interaction.editReply({ content: `> ${config.emojis?.error || "❌"} ไม่พบเซิร์ฟเวอร์หรือยศที่ถูกต้อง` });
     }
 
     const preflight = await validateSetupChannelAndRole(interaction, channel, role);
@@ -912,7 +903,7 @@ async function handleSetupVerify(interaction) {
     try {
         panelOptions = parseVerificationPanelOptions(interaction, role, verifyType);
     } catch (err) {
-        return interaction.editReply({ content: `> ${config.emojis.error} ${err.safeMessage || "ข้อมูลแผงไม่ถูกต้อง"}` });
+        return interaction.editReply({ content: `> ${config.emojis?.error || "❌"} ${err.safeMessage || "ข้อมูลแผงไม่ถูกต้อง"}` });
     }
 
     const panelRevision = makePanelRevision("panel");
@@ -931,7 +922,7 @@ async function handleSetupVerify(interaction) {
 
     try {
         if (!GuildConfig) throw new Error("GUILD_CONFIG_MODEL_UNAVAILABLE");
-        const panelMsg = await sendAndPersistVerificationPanel({
+        await sendAndPersistVerificationPanel({
             interaction,
             guildId,
             role,
@@ -948,12 +939,28 @@ async function handleSetupVerify(interaction) {
             channel,
             role,
             verifyType,
-            panelOptions,
-            panelMsgId: panelMsg.id,
-            panelRevision
+            panelOptions
         });
 
-        return interaction.editReply({ embeds: [resultEmbed] });
+        sendWebhookEvent({
+            target: "LOG",
+            severity: "SUCCESS",
+            category: "VERIFICATION",
+            code: "verification.panel.created",
+            title: "PANEL CREATED",
+            description: `ติดตั้งแผงยืนยันตัวตนสำเร็จในห้อง <#${channel.id}>`,
+            fields: [
+                { name: "ผู้ดำเนินการ", value: `${interaction.user.tag} (\`${interaction.user.id}\`)` },
+                { name: "เซิร์ฟเวอร์", value: `${interaction.guild.name} (\`${interaction.guild.id}\`)` },
+                { name: "เป้าหมาย", value: `<#${channel.id}>` },
+                { name: "การกระทำ", value: `setup-verify (${verifyType ? "OAuth2" : "Direct Role"})` },
+                { name: "ผลลัพธ์", value: `สำเร็จ (Role: @${role.name})` },
+                { name: "รายละเอียด", value: `Panel Revision: ${panelRevision}` }
+            ],
+            sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
+        }).catch(() => {});
+
+        return interaction.editReply({ content: null, embeds: [resultEmbed] });
     } catch (err) {
         console.error(`[VERIFY] ❌ setup-verify failed: ${err.message}`);
         return interaction.editReply({ content: verificationSetupFailureMessage(err) });
@@ -967,15 +974,15 @@ function verificationRecoverySummary(err = {}) {
 }
 
 function verificationSetupFailureMessage(err = {}) {
-    return `> ${config.emojis.error} ติดตั้งแผงยืนยันไม่สำเร็จ${verificationRecoverySummary(err)}\n` +
-        `> ตรวจสอบสิทธิ์ของบอทและสถานะฐานข้อมูล แล้วลองใหม่`;
+    return `> ${config.emojis?.error || "❌"} ติดตั้งแผงยืนยันไม่สำเร็จ${verificationRecoverySummary(err)}\n` +
+        `> กรุณาตรวจสอบสิทธิ์ของบอทและสถานะระบบ แล้วลองใหม่อีกครั้ง`;
 }
 
 async function executeDirectRoleAssignment(interaction, member, role, roleId) {
     try {
         if (member.roles.cache.has(roleId)) {
             return interaction.reply({
-                content: `> ${config.emojis.success} คุณมียศ ${role.toString()} อยู่แล้ว`,
+                content: `> ${config.emojis?.check_alt || config.emojis?.success || "✅"} คุณมียศ ${role.toString()} อยู่แล้ว`,
                 ephemeral: true
             });
         }
@@ -985,9 +992,9 @@ async function executeDirectRoleAssignment(interaction, member, role, roleId) {
         return interaction.reply({
             embeds: [
                 new MessageEmbed()
-                    .setColor(config.system.themeColors.success)
-                    .setTitle("Added Roles")
-                    .setDescription(`+ ${role.toString()} (user)`)
+                    .setColor(config.system?.themeColors?.success || "#57F287")
+                    .setTitle(`${config.emojis?.check_alt || config.emojis?.success || "✅"} รับยศเรียบร้อย`)
+                    .setDescription(`ยศ: ${role.toString()}`)
                     .setTimestamp()
             ],
             ephemeral: true
@@ -998,7 +1005,7 @@ async function executeDirectRoleAssignment(interaction, member, role, roleId) {
             .slice(0, 80);
         console.warn(`[VERIFY] role interaction failed: ${errorCode}`);
         return interaction.reply({
-            content: `> ${config.emojis.error} ไม่สามารถจัดการยศได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล`,
+            content: `> ${config.emojis?.error || "❌"} ไม่สามารถจัดการยศได้ กรุณาลองใหม่อีกครั้งหรือติดต่อผู้ดูแลระบบ`,
             ephemeral: true
         });
     }
@@ -1010,7 +1017,7 @@ async function handleVerifyRoleButton(interaction, roleId) {
 
     if (!role) {
         return interaction.reply({
-            content: `> ${config.emojis.error} ไม่พบยศนี้แล้ว กรุณาแจ้ง Admin ตั้งค่าใหม่`,
+            content: `> ${config.emojis?.error || "❌"} ไม่พบยศนี้แล้ว กรุณาแจ้งผู้ดูแลระบบตั้งค่าใหม่`,
             ephemeral: true
         });
     }
@@ -1019,7 +1026,7 @@ async function handleVerifyRoleButton(interaction, roleId) {
     const roleCheck = validateDirectRoleAssignment(botMember, role);
     if (!roleCheck.ok) {
         return interaction.reply({
-            content: `> ${config.emojis.error} ${roleCheck.reason}`,
+            content: `> ${config.emojis?.error || "❌"} ${roleCheck.reason}`,
             ephemeral: true
         });
     }
@@ -1030,13 +1037,13 @@ async function handleVerifyRoleButton(interaction, roleId) {
     } catch (err) {
         console.error(`[VERIFY] Direct panel config read failed: ${String(err?.code || err?.name || "database_error").slice(0, 80)}`);
         return interaction.reply({
-            content: `> ${config.emojis.warning} ตรวจสอบสถานะแผงล่าสุดจากฐานข้อมูลไม่ได้ กรุณาลองใหม่ภายหลัง`,
+            content: `> ${config.emojis?.warning || "⚠️"} ไม่สามารถตรวจสอบสถานะแผงล่าสุดได้ กรุณาลองใหม่อีกครั้งในภายหลัง`,
             ephemeral: true
         });
     }
     if (!currentConfig) {
         return interaction.reply({
-            content: `> ${config.emojis.warning} แผงนี้ไม่ใช่แผงล่าสุดแล้ว กรุณาใช้แผงยืนยันตัวตนล่าสุด`,
+            content: `> ${config.emojis?.warning || "⚠️"} แผงนี้ไม่ใช่แผงล่าสุดแล้ว กรุณาใช้แผงยืนยันตัวตนล่าสุด`,
             ephemeral: true
         });
     }
@@ -1055,7 +1062,7 @@ async function handleVerifyButton(interaction) {
     if (customId.startsWith("verify_oauth_")) {
         return interaction.reply({
             content:
-                `> แผงยืนยันนี้เป็นแผงเก่าแล้ว\n` +
+                `> ${config.emojis?.warning || "⚠️"} แผงยืนยันนี้เป็นแผงเก่าแล้ว\n` +
                 `> กรุณาให้แอดมินกดส่งแผงใหม่ หรือแก้แผงล่าสุดจากหน้า Dashboard`,
             ephemeral: true
         });

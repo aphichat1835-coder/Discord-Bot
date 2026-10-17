@@ -1,0 +1,30 @@
+name: Discord bot bug
+description: Report reproducible Discord command, event, component, voice, or dashboard behavior.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: textarea
+    id: expected
+    attributes: {label: Expected behavior}
+    validations: {required: true}
+  - type: textarea
+    id: actual
+    attributes: {label: Actual behavior}
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Reproduction steps, command/event, and guild/DM context}
+    validations: {required: true}
+  - type: input
+    id: version
+    attributes: {label: Last known good commit or release}
+  - type: textarea
+    id: permissions
+    attributes: {label: Relevant permissions, intents, scopes, and configuration}
+  - type: textarea
+    id: logs
+    attributes: {label: Redacted logs or check links, with all tokens and personal payloads removed}
+  - type: dropdown
+    id: impact
+    attributes: {label: Impact, options: [Single user, Single guild, Multiple guilds, Production-wide, Security or privacy]}
+    validations: {required: true}

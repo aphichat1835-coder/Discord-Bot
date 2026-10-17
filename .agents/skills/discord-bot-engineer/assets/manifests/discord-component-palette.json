@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "message": {
+    "layout": {"action_row": 1, "section": 9, "separator": 14, "container": 17},
+    "content": {"text_display": 10, "thumbnail": 11, "media_gallery": 12, "file": 13},
+    "interactive": {"button": 2, "string_select": 3, "user_select": 5, "role_select": 6, "mentionable_select": 7, "channel_select": 8}
+  },
+  "modal": {
+    "layout": {"label": 18},
+    "content": {"text_display": 10},
+    "interactive": {"string_select": 3, "text_input": 4, "user_select": 5, "role_select": 6, "mentionable_select": 7, "channel_select": 8, "file_upload": 19, "radio_group": 21, "checkbox_group": 22, "checkbox": 23}
+  },
+  "rules": [
+    "Use one primary button per unequal action group; use secondary buttons when actions have equal weight.",
+    "Use native entity selects for users, roles, mentionables, and channels; use string select for bounded authored choices.",
+    "Use Label around modal inputs; Action Row with modal Text Input is deprecated.",
+    "Use a modal for structured input, not for information that could remain in the message.",
+    "Expose Components V2 attachments through File or Media Gallery; plain attachments do not display automatically.",
+    "Never simulate animation by noisy message spam; edit one owned status surface at meaningful state changes."
+  ]
+}

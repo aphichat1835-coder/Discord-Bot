@@ -10,17 +10,40 @@ const {
     buildVerifyLogParts
 } = require("../utils/verificationSnapshots");
 
-function tokenStatus(token = {}) {
-    const issuedAt = Number(token.rawTokenMeta?.receivedAt || 0) || null;
+function _resolveTokenLifetime(token) {
+    const issuedAt = Number(token.issuedAt || token.rawTokenMeta?.receivedAt || 0) || null;
     const expiresAt = Number(token.expiresAt || 0) || null;
+    let lifetimeMs = null;
+    if (typeof token.lifetimeMs === "number") {
+        lifetimeMs = token.lifetimeMs;
+    } else if (issuedAt && expiresAt) {
+        lifetimeMs = Math.max(0, expiresAt - issuedAt);
+    }
+    return { issuedAt, expiresAt, lifetimeMs };
+}
+
+function _resolveTokenFlags(token) {
+    const hasAccessToken = typeof token.hasAccessToken === "boolean"
+        ? token.hasAccessToken
+        : Boolean(token.hasToken || token.accessToken);
+    const hasRefreshToken = typeof token.hasRefreshToken === "boolean"
+        ? token.hasRefreshToken
+        : Boolean(token.hasRefreshToken || token.refreshToken);
+    return { hasAccessToken, hasRefreshToken };
+}
+
+function tokenStatus(token = {}) {
+    const { issuedAt, expiresAt, lifetimeMs } = _resolveTokenLifetime(token);
+    const { hasAccessToken, hasRefreshToken } = _resolveTokenFlags(token);
+
     return {
-        hasAccessToken: !!token.encryptedAccessToken,
-        hasRefreshToken: !!token.encryptedRefreshToken,
+        hasAccessToken,
+        hasRefreshToken,
         scope: token.scope || "",
         tokenType: token.tokenType || "",
         issuedAt,
         expiresAt,
-        lifetimeMs: issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null,
+        lifetimeMs,
         lastRefreshAt: token.lastRefreshAt || null,
         refreshFailCount: Number(token.refreshFailCount || 0),
         lastRefreshError: token.lastRefreshError || null,
@@ -100,11 +123,15 @@ function buildVerification(oauth = {}, logSummary = null) {
     };
 }
 
-function buildOAuthTokenStatuses(oauth = {}, canViewSensitive = false) {
-    if (!canViewSensitive) return { oauth: null, adminOAuth: null };
+function buildOAuthTokenStatuses(oauth = {}, canViewSensitive = false, tokenStatuses = null) {
+    if (!canViewSensitive) return { oauth: null };
+    if (tokenStatuses && typeof tokenStatuses === "object") {
+        return {
+            oauth: tokenStatuses.oauth || null
+        };
+    }
     return {
-        oauth: tokenStatus(oauth.oauth || {}),
-        adminOAuth: tokenStatus(oauth.adminOAuth || {})
+        oauth: tokenStatus(oauth.oauth || {})
     };
 }
 
@@ -126,7 +153,7 @@ function buildRawSnapshots(oauth = {}, targetMember = {}, canViewSensitive = fal
     };
 }
 
-function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false } = {}) {
+function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = null, canViewSensitive = false, tokenStatuses = null } = {}) {
     const oauth = oauthUser?.toObject ? oauthUser.toObject() : oauthUser || {};
     const log = latestLog?.toObject ? latestLog.toObject() : latestLog || null;
     const oauthDiscord = oauthUserDiscord(oauth, canViewSensitive);
@@ -150,7 +177,7 @@ function serializeMemberDetail({ guildId, userId, oauthUser = null, latestLog = 
         network: log ? safeIpInfo(log.ipInfo || {}) : {},
         tracking: buildTracking(log, oauth),
         verification: buildVerification(oauth, logSummary),
-        oauthTokens: buildOAuthTokenStatuses(oauth, canViewSensitive),
+        oauthTokens: buildOAuthTokenStatuses(oauth, canViewSensitive, tokenStatuses),
         rawSnapshots: buildRawSnapshots(oauth, targetMember, canViewSensitive)
     };
 }

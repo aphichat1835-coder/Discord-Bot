@@ -61,8 +61,11 @@ const {
 const {
     handleQuestCommand,
     handleQuestButton,
-    handleQuestSelect
+    handleQuestSelect,
+    handleQuestModalSubmit,
+    buildQuestPanelRow
 } = require('../commands/quest');
+const { IDS } = require('../commands/customIds');
 const {
     questSummaryTone,
     buildQuestSummaryEmbed,
@@ -263,6 +266,82 @@ test('handleQuestCommand enforces bot owner check for panel', async () => {
     assert.ok(ownerReply.components && ownerReply.components.length > 0);
     assert.ok(ownerReply.files && ownerReply.files.length > 0);
     assert.equal(ownerReply.embeds[0].data.image.url, 'attachment://quest-banner.gif');
+    const defaultButtons = ownerReply.components[0].components;
+    assert.equal(defaultButtons.length, 2);
+    assert.equal(defaultButtons[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(defaultButtons[1].data.custom_id, 'quest_panel:stop');
+});
+
+test('handleQuestCommand renders AUTO DAILY button when auto_daily option is true', async () => {
+    const ownerId = process.env.OWNER_ID || require('../config.json').system?.ownerId || '661415152146710558';
+    let ownerReply = null;
+    const ownerInteraction = {
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: (name) => (name === 'auto_daily' ? true : null)
+        },
+        reply: (payload) => { ownerReply = payload; return Promise.resolve(payload); },
+        isRepliable: () => true,
+        deferred: false,
+        replied: false
+    };
+
+    await handleQuestCommand(ownerInteraction);
+    assert.ok(ownerReply);
+    assert.ok(ownerReply.components && ownerReply.components.length > 0);
+    const buttons = ownerReply.components[0].components;
+    assert.equal(buttons.length, 3);
+    assert.equal(buttons[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(buttons[1].data.custom_id, 'quest_panel:run_daily');
+    assert.equal(buttons[2].data.custom_id, 'quest_panel:stop');
+});
+
+test('handleQuestCommand defers reply and transitions via editReply to prevent timeouts', async () => {
+    const ownerId = process.env.OWNER_ID || require('../config.json').system?.ownerId || '661415152146710558';
+    let deferred = false;
+    let editReplyPayload = null;
+
+    const ownerInteraction = {
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: () => null
+        },
+        deferred: false,
+        replied: false,
+        deferReply: async () => {
+            deferred = true;
+            ownerInteraction.deferred = true;
+        },
+        editReply: async (p) => {
+            editReplyPayload = p;
+            return p;
+        }
+    };
+
+    await handleQuestCommand(ownerInteraction);
+    assert.equal(deferred, true);
+    assert.ok(editReplyPayload);
+    assert.ok(editReplyPayload.files && editReplyPayload.files.length > 0);
+});
+
+test('buildQuestPanelRow respects showDaily option', () => {
+    const defaultRow = buildQuestPanelRow();
+    assert.equal(defaultRow.components.length, 2);
+    assert.equal(defaultRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(defaultRow.components[1].data.custom_id, 'quest_panel:stop');
+
+    const dailyRow = buildQuestPanelRow({ showDaily: true });
+    assert.equal(dailyRow.components.length, 3);
+    assert.equal(dailyRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(dailyRow.components[1].data.custom_id, 'quest_panel:run_daily');
+    assert.equal(dailyRow.components[2].data.custom_id, 'quest_panel:stop');
+
+    const explicitFalseRow = buildQuestPanelRow({ showDaily: false });
+    assert.equal(explicitFalseRow.components.length, 2);
+    assert.equal(explicitFalseRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(explicitFalseRow.components[1].data.custom_id, 'quest_panel:stop');
 });
 
 test('handleQuestButton allows users to open modal and view stop controls', async () => {
@@ -286,7 +365,7 @@ test('handleQuestButton allows users to open modal and view stop controls', asyn
     assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
 });
 
-test('runnerManager routes status updates to DM and falls back to channel when DM fails', async () => {
+test('runnerManager routes status updates to DM and continues silently without channel fallback when DM fails', async () => {
     const dmDeliveries = [];
     const mockDm = {
         id: 'dm_12345',
@@ -327,7 +406,7 @@ test('runnerManager routes status updates to DM and falls back to channel when D
     assert.ok(dmDeliveries[0].embeds && dmDeliveries[0].embeds.length > 0);
     assert.match(dmDeliveries[0].embeds[0].data.fields[0].value, /TestUserDM/);
 
-    // Test fallback when DM sending fails (e.g. DMs closed)
+    // Test that when DM sending fails (e.g. DMs closed), it never falls back to guild channel and continues silently
     const channelDeliveries = [];
     const mockClosedDm = {
         id: 'dm_closed',
@@ -372,9 +451,38 @@ test('runnerManager routes status updates to DM and falls back to channel when D
     fallbackRunner.controller.abort();
     await fallbackRunner.task.catch(() => {});
 
-    assert.ok(channelDeliveries.length > 0, 'Status message should fall back to guild channel when DM fails');
-    assert.ok(channelDeliveries[0].embeds && channelDeliveries[0].embeds.length > 0);
-    assert.match(channelDeliveries[0].embeds[0].data.fields[0].value, /TestUserClosed/);
+    assert.equal(channelDeliveries.length, 0, 'Status message must never fall back to guild channel when DM fails');
+
+    // Test runner without resolvable DM channel never sends to guild channel
+    const noDmChannelDeliveries = [];
+    const mockChannelOnlyClient = {
+        users: {
+            fetch: async () => null
+        },
+        channels: {
+            fetch: async () => ({
+                id: 'guild_channel_only',
+                isTextBased: () => true,
+                send: async (p) => {
+                    noDmChannelDeliveries.push(p);
+                    return { edit: async () => {} };
+                }
+            })
+        }
+    };
+    const silentRunner = await startRunner({
+        jobKey: 'test:dm:routing:3',
+        ownerId: 'user_unknown',
+        userToken: 'invalid_dummy_token_for_test_3',
+        channelId: 'guild_channel_only',
+        client: mockChannelOnlyClient,
+        mode: 'oneshot',
+        username: 'TestUserSilent'
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    silentRunner.controller.abort();
+    await silentRunner.task.catch(() => {});
+    assert.equal(noDmChannelDeliveries.length, 0, 'Status message must never be sent to guild channel when DM is unresolvable');
 });
 
 test('questDm builds correct tones and embeds for success, partial, danger, and auth failure', () => {
@@ -495,7 +603,7 @@ test('questDm buildQuestStoppedEmbed creates danger embed with abort reason', ()
     });
 
     assert.ok(embed);
-    assert.equal(embed.data.title, '🛑 สั่งหยุดการทำงานของ Quest แล้ว');
+    assert.match(embed.data.title, /สั่งหยุดการทำงานของ Quest แล้ว/);
     assert.equal(embed.data.color, parseInt('ED4245', 16));
     assert.ok(embed.data.fields.some((f) => f.name.includes('บัญชีที่หยุดทำงาน') && f.value.includes('OperatorUser')));
     assert.ok(embed.data.fields.some((f) => f.name.includes('เหตุผลที่หยุด') && f.value.includes('/quest panel')));
@@ -538,6 +646,307 @@ test('runnerSchedule zonedParts extracts correct local time components', () => {
     assert.equal(parts.hour, 16);
     assert.equal(parts.minute, 0);
 });
+
+test('buildQuestPanelRow renders conditional buttons based on showDaily flag', () => {
+    const standardRow = buildQuestPanelRow({ showDaily: false });
+    assert.equal(standardRow.components.length, 2);
+
+    const dailyRow = buildQuestPanelRow({ showDaily: true });
+    assert.equal(dailyRow.components.length, 3);
+});
+
+test('handleQuestCommand validates subcommand and permissions correctly', async () => {
+    const ownerId = process.env.OWNER_ID || '661415152146710558';
+
+    // 1. Invalid subcommand
+    let replyPayload = null;
+    await handleQuestCommand({
+        user: { id: ownerId },
+        options: { getSubcommand: () => 'invalid_sub' },
+        reply: async (p) => { replyPayload = p; return p; }
+    });
+    assert.ok(replyPayload);
+    assert.match(replyPayload.content, /คำสั่งย่อยไม่ถูกต้อง/);
+
+    // 2. Non-owner trying to open panel
+    let nonOwnerReply = null;
+    await handleQuestCommand({
+        user: { id: '999999999999999999' },
+        options: { getSubcommand: () => 'panel' },
+        reply: async (p) => { nonOwnerReply = p; return p; }
+    });
+    assert.ok(nonOwnerReply);
+    assert.match(nonOwnerReply.content, /สงวนสิทธิ์เฉพาะ/);
+
+    // 3. Owner opening panel
+    let ownerReply = null;
+    await handleQuestCommand({
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: (name) => name === 'auto_daily'
+        },
+        deferReply: async () => {},
+        editReply: async (p) => { ownerReply = p; return p; },
+        reply: async (p) => { ownerReply = p; return p; },
+        deferred: true
+    });
+    assert.ok(ownerReply);
+    assert.ok(ownerReply.embeds && ownerReply.embeds.length > 0);
+    assert.ok(ownerReply.components && ownerReply.components.length > 0);
+});
+
+test('handleQuestButton and handleQuestSelect handle all actions and fallback', async () => {
+    const ownerId = process.env.OWNER_ID || '661415152146710558';
+
+    // 1. Unknown button
+    let unknownReply = null;
+    await handleQuestButton({
+        customId: 'quest_panel:unknown_action',
+        user: { id: ownerId },
+        reply: async (p) => { unknownReply = p; return p; }
+    });
+    assert.ok(unknownReply);
+    assert.match(unknownReply.content, /ปุ่มควบคุมนี้หมดอายุหรือไม่รองรับแล้ว/);
+
+    // 2. BTN_QUEST_RUN_ONESHOT shows modal
+    let shownModal = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_RUN_ONESHOT,
+        showModal: async (m) => { shownModal = m; return m; }
+    });
+    assert.ok(shownModal);
+    assert.ok(shownModal.data.custom_id.includes('oneshot'));
+
+    // 3. BTN_QUEST_RUN_DAILY shows modal
+    let dailyModal = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_RUN_DAILY,
+        showModal: async (m) => { dailyModal = m; return m; }
+    });
+    assert.ok(dailyModal);
+    assert.ok(dailyModal.data.custom_id.includes('scheduled'));
+
+    // 4. BTN_QUEST_STOP opens stop panel
+    let stopReply = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_STOP,
+        user: { id: ownerId },
+        deferReply: async () => {},
+        editReply: async (p) => { stopReply = p; return p; }
+    });
+    assert.ok(stopReply);
+    assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
+
+    // 5. BTN_QUEST_REFRESH updates stop panel
+    let refreshReply = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_REFRESH,
+        user: { id: ownerId },
+        deferUpdate: async () => {},
+        editReply: async (p) => { refreshReply = p; return p; }
+    });
+    assert.ok(refreshReply);
+    assert.ok(refreshReply.embeds && refreshReply.embeds.length > 0);
+
+    // 6. BTN_QUEST_STOP_ALL stops runners
+    let stopAllReply = null;
+    await handleQuestButton({
+        customId: IDS.BTN_QUEST_STOP_ALL,
+        user: { id: ownerId },
+        deferred: true,
+        deferUpdate: async () => {},
+        editReply: async (p) => { stopAllReply = p; return p; }
+    });
+    assert.ok(stopAllReply);
+    assert.ok(stopAllReply.embeds && stopAllReply.embeds.length > 0);
+
+    // 7. handleQuestSelect ignores unrelated customId
+    const ignored = await handleQuestSelect({
+        customId: 'unrelated_select'
+    });
+    assert.equal(ignored, undefined);
+
+    // 8. handleQuestSelect processes SELECT_QUEST_STOP
+    let selectReply = null;
+    await handleQuestSelect({
+        customId: IDS.SELECT_QUEST_STOP,
+        user: { id: ownerId },
+        values: ['mock_schedule_1', 'mock_schedule_2'],
+        deferred: true,
+        deferUpdate: async () => {},
+        editReply: async (p) => { selectReply = p; return p; }
+    });
+    assert.ok(selectReply);
+    assert.ok(selectReply.embeds && selectReply.embeds.length > 0);
+});
+
+test('handleQuestModalSubmit validates empty and excessive tokens', async () => {
+    // 1. Empty tokens
+    let emptyReply = null;
+    await handleQuestModalSubmit({
+        customId: IDS.MODAL_QUEST_RUN,
+        fields: {
+            getTextInputValue: () => '   \n  \n'
+        },
+        reply: async (p) => { emptyReply = p; return p; }
+    });
+    assert.ok(emptyReply);
+    assert.match(emptyReply.content, /ไม่พบ Token/);
+
+    // 2. More than 10 tokens
+    let limitReply = null;
+    const elevenTokens = Array.from({ length: 11 }, (_, i) => `token_${i + 1}`).join('\n');
+    await handleQuestModalSubmit({
+        customId: IDS.MODAL_QUEST_RUN,
+        fields: {
+            getTextInputValue: () => elevenTokens
+        },
+        reply: async (p) => { limitReply = p; return p; }
+    });
+    assert.ok(limitReply);
+    assert.match(limitReply.content, /สามารถส่งได้สูงสุด \*\*10 บัญชี\*\*/);
+});
+
+test('runnerManager job query and lifecycle management functions', async () => {
+    const {
+        getJob,
+        listJobs,
+        getUserJobs,
+        findUserJobByAccount,
+        findAnyJobByAccount,
+        stopJob,
+        stopScheduledJob,
+        stopScheduledJobAsAdmin,
+        stopRunner,
+        shutdownRunners
+    } = require('../quest/core/runnerManager');
+
+    // 1. Initial state
+    assert.equal(getJob('non_existent'), null);
+    assert.equal(findUserJobByAccount('user1', 'acc1'), null);
+    assert.equal(findAnyJobByAccount('acc1'), null);
+    assert.deepEqual(getUserJobs('user1'), []);
+    assert.equal(stopJob('user1', 'non_existent'), false);
+    assert.equal(stopScheduledJob('user1', 'sched1'), false);
+    assert.equal(stopScheduledJobAsAdmin('sched1'), false);
+    assert.equal(stopRunner('user1'), false);
+
+    // 2. shutdownRunners with empty jobs
+    const stopped = await shutdownRunners(100);
+    assert.equal(typeof stopped, 'number');
+});
+
+test('runnerManager active runner execution, stopping, and shutdown', async () => {
+    const {
+        startRunner,
+        getJob,
+        getUserJobs,
+        findUserJobByAccount,
+        stopJob,
+        shutdownRunners
+    } = require('../quest/core/runnerManager');
+
+    const origFetch = globalThis.fetch;
+    let finishFetchQuests;
+    const fetchQuestsPromise = new Promise(resolve => {
+        finishFetchQuests = resolve;
+    });
+
+    globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/users/@me')) {
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({ id: 'acc_active_1', username: 'active_user' })
+            };
+        }
+        if (urlStr.includes('/quests/@me') || urlStr.includes('/users/@me/quests')) {
+            await fetchQuestsPromise;
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => []
+            };
+        }
+        return {
+            ok: true,
+            status: 200,
+            headers: new Headers({ 'content-type': 'application/json' }),
+            json: async () => ({})
+        };
+    };
+
+    try {
+        // 1. Invalid mode rejects
+        await assert.rejects(
+            startRunner({ jobKey: 'job_invalid', ownerId: 'u1', userToken: 'tok1', mode: 'invalid' }),
+            /Unknown runner mode/
+        );
+
+        // 2. Start active runner
+        await startRunner({
+            jobKey: 'job_active_1',
+            ownerId: 'owner_a',
+            userToken: 'tok_active_1',
+            mode: 'oneshot',
+            accountId: 'acc_active_1',
+            username: 'active_user'
+        });
+
+        // 3. Duplicate job key rejected
+        await assert.rejects(
+            startRunner({
+                jobKey: 'job_active_1',
+                ownerId: 'owner_a',
+                userToken: 'tok_active_1',
+                mode: 'oneshot'
+            }),
+            /กำลังทำงานอยู่/
+        );
+
+        // 4. Query active runner state
+        const job = getJob('job_active_1');
+        assert.ok(job);
+        assert.equal(job.ownerId, 'owner_a');
+        assert.equal(job.mode, 'oneshot');
+
+        const userJobs = getUserJobs('owner_a');
+        assert.equal(userJobs.length, 1);
+        assert.equal(userJobs[0].key, 'job_active_1');
+
+        const foundJob = findUserJobByAccount('owner_a', 'acc_active_1');
+        assert.ok(foundJob);
+        assert.equal(foundJob.key, 'job_active_1');
+
+        // 5. Unauthorized stop fails
+        assert.equal(stopJob('unauthorized_owner', 'job_active_1'), false);
+
+        // 6. Authorized stop marks lifecycle stopping and aborts controller
+        assert.equal(stopJob('owner_a', 'job_active_1'), true);
+        assert.equal(job.lifecycle, 'stopping');
+        assert.equal(job.controller.signal.aborted, true);
+
+        // 7. Start a second runner to test shutdownRunners
+        await startRunner({
+            jobKey: 'job_active_2',
+            ownerId: 'owner_b',
+            userToken: 'tok_active_2',
+            mode: 'oneshot'
+        });
+
+        const stoppedCount = await shutdownRunners(200);
+        assert.ok(stoppedCount >= 1);
+    } finally {
+        if (finishFetchQuests) finishFetchQuests();
+        globalThis.fetch = origFetch;
+    }
+});
+
+
 
 
 

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "tiers": {
+    "brief": {
+      "use": "short_low_risk_feedback",
+      "rules": ["concise_for_micro_status", "warm_and_natural", "familiar_microcopy_allowed", "expand_when_ambiguity_or_action_requires"],
+      "detail": "Keep a micro-status easy to scan, but add context when the user would otherwise misunderstand the state or next action."
+    },
+    "contextual": {
+      "use": "recognizable_wait_or_state_change",
+      "rules": ["match_density_to_placement", "name_task_or_phase_when_helpful", "keep_primary_scannable", "give_body_enough_context", "next_action_when_useful"],
+      "detail": "Use a scannable primary line and a fuller body when the panel needs explanation; neither brevity nor detail is the default everywhere."
+    },
+    "operational": {
+      "use": "batch_destructive_partial_or_high_stakes_work",
+      "rules": ["short_primary_headline", "progressive_disclosure", "show_only_actionable_phase_or_counts", "preserve_partial_truth", "keep_impact_recovery_and_diagnostics_secondary"],
+      "detail": "Keep the headline short; put necessary counts, impact, recovery, and diagnostics in secondary content or details."
+    }
+  },
+  "placements": {
+    "label_or_button": {"density": "minimal", "requires": ["clear_action_or_state"]},
+    "loading_or_status_headline": {"density": "short", "requires": ["acknowledgement_or_phase"]},
+    "panel_summary": {"density": "medium", "requires": ["context", "outcome_or_current_truth"]},
+    "supporting_detail": {"density": "as_needed", "requires": ["facts_that_improve_decision_or_trust"]},
+    "error_recovery": {"density": "complete_but_scannable", "requires": ["cause_or_known_unknown", "impact", "safe_next_action"]},
+    "destructive_confirmation": {"density": "complete_but_scannable", "requires": ["scope", "consequence", "confirm", "escape"]},
+    "diagnostics": {"density": "detailed_on_demand", "requires": ["evidence", "correlation", "technical_context"]}
+  },
+  "emoji": {
+    "allowed": ["tone", "scanability", "semantic_cue", "brand_character"],
+    "review_when": ["every_line_uses_one_without_purpose", "meaning_depends_on_emoji", "tone_conflicts_with_risk", "repetition_flattens_hierarchy"],
+    "rule": "A purposeful emoji or familiar short phrase is not an AI anti-pattern by itself."
+  },
+  "examples_th": {
+    "brief": ["✨ กำลังดำเนินการ โปรดรอสักครู่..."],
+    "contextual": ["🧹 กำลังลบข้อความ..."],
+    "operational": ["🧹 กำลังลบข้อความ...", "ตรวจสอบ 43 รายการแล้ว: สำเร็จ 40 ข้าม 2 และล้มเหลว 1 รายการ คุณเปิดรายละเอียดเพื่อดูสาเหตุได้"]
+  }
+}

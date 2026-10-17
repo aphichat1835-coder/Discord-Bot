@@ -3,7 +3,8 @@
 const GuildConfig = require("./models/GuildConfig");
 const VerifyLog = require("./models/VerifyLog");
 const OAuthUser = require("./models/OAuthUser");
-const { decryptIP, decryptToken } = require("./utils/crypto");
+const { decryptIP } = require("./utils/crypto");
+const oauthTokenManager = require("../tokens/oauthTokenManager");
 const { serializeMemberDetail } = require("./serializers/memberDetailSerializer");
 const verifiedMemberService = require("./services/verifiedMemberService");
 const snapshotStore = require("./services/oauthSnapshotStore");
@@ -108,27 +109,41 @@ function statsGroup() {
     };
 }
 
-function safeRecent(log) {
+function extractLogIpInfo(ipInfo = {}) {
     return {
-        id: String(log._id || ""),
-        requestId: log.requestId || "",
+        country: ipInfo.country ?? null,
+        countryCode: ipInfo.countryCode ?? null,
+        city: ipInfo.city ?? null,
+        isp: ipInfo.isp ?? null,
+        isVPN: Boolean(ipInfo.isVPN),
+        isProxy: Boolean(ipInfo.isProxy),
+        isTOR: Boolean(ipInfo.isTOR),
+        hosting: Boolean(ipInfo.hosting)
+    };
+}
+
+function extractLogDevice(device = {}) {
+    return {
+        browser: device.browser ?? null,
+        os: device.os ?? null,
+        platform: device.platform ?? null
+    };
+}
+
+function safeRecent(log) {
+    const ip = extractLogIpInfo(log.ipInfo || {});
+    const dev = extractLogDevice(log.device || {});
+    return {
+        id: String(log._id ?? ""),
+        requestId: log.requestId ?? "",
         userId: log.userId,
-        roleId: log.roleId || null,
+        roleId: log.roleId ?? null,
         result: log.result,
-        reason: log.reason || "",
+        reason: log.reason ?? "",
         findings: Array.isArray(log.findings) ? log.findings : [],
-        roleResult: log.roleAssignResult || null,
-        country: log.ipInfo?.country || null,
-        countryCode: log.ipInfo?.countryCode || null,
-        city: log.ipInfo?.city || null,
-        isp: log.ipInfo?.isp || null,
-        isVPN: !!log.ipInfo?.isVPN,
-        isProxy: !!log.ipInfo?.isProxy,
-        isTOR: !!log.ipInfo?.isTOR,
-        hosting: !!log.ipInfo?.hosting,
-        browser: log.device?.browser || null,
-        os: log.device?.os || null,
-        platform: log.device?.platform || null,
+        roleResult: log.roleAssignResult ?? null,
+        ...ip,
+        ...dev,
         verifiedAt: log.verifiedAt || log.createdAt || null
     };
 }
@@ -232,8 +247,6 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
                 lastIpTracking: 1,
                 snapshotMeta: 1,
                 snapshotRefs: 1,
-                oauth: 1,
-                adminOAuth: 1,
                 createdAt: 1,
                 updatedAt: 1
             })
@@ -245,6 +258,10 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
     ]);
 
     if (!oauthUser && !latestLog) throw memberNotFoundError();
+
+    const tokenStatuses = canViewSensitive
+        ? await oauthTokenManager.getOwnerTokenMetadata(safeUserId)
+        : null;
 
     let hydratedOAuthUser = oauthUser;
     const snapshotRefs = {
@@ -273,78 +290,20 @@ async function getMemberDetail(guildId, userId, { canViewSensitive = false } = {
         userId: safeUserId,
         oauthUser: hydratedOAuthUser,
         latestLog,
-        canViewSensitive
+        canViewSensitive,
+        tokenStatuses
       }),
       history: historyLogs.map(safeRecent),
       historyTruncated: historyLogs.length >= 100
     };
 }
 
-function revealTokenState(token = {}) {
-    const issuedAt = Number(token.rawTokenMeta?.receivedAt || 0) || null;
-    const expiresAt = Number(token.expiresAt || 0) || null;
-    return {
-        accessToken: token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null,
-        refreshToken: token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null,
-        scope: token.scope || "",
-        tokenType: token.tokenType || "",
-        issuedAt,
-        expiresAt,
-        lifetimeMs: issuedAt && expiresAt ? Math.max(0, expiresAt - issuedAt) : null,
-        lastRefreshAt: token.lastRefreshAt || null,
-        refreshFailCount: Number(token.refreshFailCount || 0),
-        revokedAt: token.revokedAt || null
-    };
-}
-
-function collectMissingScopeReasons(tokenScope) {
-    const scopes = new Set(String(tokenScope || "").split(/\s+/).filter(Boolean));
-    const missing = [];
-    for (const scope of REQUIRED_USER_SCOPES) {
-        if (!scopes.has(scope)) missing.push(`missing_scope:${scope}`);
-    }
-    return missing;
-}
-
-function checkTokenCryptoReasons(token, now) {
-    const reasons = [];
-    const accessToken = token.encryptedAccessToken ? decryptToken(token.encryptedAccessToken) : null;
-    const refreshToken = token.encryptedRefreshToken ? decryptToken(token.encryptedRefreshToken) : null;
-
-    if (!token.encryptedAccessToken) reasons.push("missing_access_token");
-    else if (!accessToken) reasons.push("access_token_decrypt_failed");
-
-    if (!token.encryptedRefreshToken) reasons.push("missing_refresh_token");
-    else if (!refreshToken) reasons.push("refresh_token_decrypt_failed");
-
-    if (token.revokedAt) reasons.push("token_revoked");
-
-    const isExpired = Number(token.expiresAt || 0) > 0 && Number(token.expiresAt) <= now;
-    if (isExpired && !refreshToken) {
-        reasons.push("access_token_expired_without_refresh");
-    }
-    return reasons;
-}
-
-function tokenRecoveryReasons(token = {}, now = Date.now()) {
-    const reasons = [
-        ...checkTokenCryptoReasons(token, now),
-        ...collectMissingScopeReasons(token.scope)
-    ];
-    return [...new Set(reasons)];
+function tokenRecoveryReasons(token = {}, now = Date.now(), ...args) {
+    return oauthTokenManager.tokenRecoveryReasons(token, now, ...args);
 }
 
 function recoveryReasonLabel(reason) {
-    const labels = {
-        missing_access_token: "ไม่มี Access Token",
-        access_token_decrypt_failed: "ถอดรหัส Access Token ไม่สำเร็จ",
-        missing_refresh_token: "ไม่มี Refresh Token",
-        refresh_token_decrypt_failed: "ถอดรหัส Refresh Token ไม่สำเร็จ",
-        token_revoked: "Token ถูกยกเลิก",
-        access_token_expired_without_refresh: "Access Token หมดอายุและต่ออายุไม่ได้"
-    };
-    if (String(reason).startsWith("missing_scope:")) return `ขาด Scope ${String(reason).slice(14)}`;
-    return labels[reason] || String(reason);
+    return oauthTokenManager.recoveryReasonLabel(reason);
 }
 
 async function getOAuthRecoveryCenter(guildId) {
@@ -359,17 +318,26 @@ async function getOAuthRecoveryCenter(guildId) {
         ])
     ]);
     const userIds = recipients.map(item => String(item._id || "")).filter(Boolean);
-    const oauthUsers = userIds.length ? await OAuthUser.find({ "discord.userId": { $in: userIds } })
-        .select("discord.userId discord.username discord.globalName discord.displayTag discord.avatarUrl oauth")
-        .lean() : [];
-    const oauthMap = new Map(oauthUsers.map(item => [String(item.discord?.userId || ""), item]));
+    const [recoveryMap, oauthUsers] = await Promise.all([
+        oauthTokenManager.getRecoveryStatuses(userIds),
+        userIds.length ? OAuthUser.find({
+            "discord.userId": { $in: userIds },
+            $or: [
+                { deletedAt: { $exists: false } },
+                { deletedAt: null }
+            ]
+        })
+            .select("discord.userId discord.username discord.globalName discord.displayTag discord.avatarUrl")
+            .lean() : []
+    ]);
+    const userMap = new Map(oauthUsers.map(item => [String(item.discord?.userId || ""), item]));
     const defaultRoleId = config?.verification?.roleId || null;
     const members = [];
     for (const recipient of recipients) {
         const userId = String(recipient._id || "");
-        const oauthUser = oauthMap.get(userId);
-        const reasons = tokenRecoveryReasons(oauthUser?.oauth || {});
-        if (!reasons.length) continue;
+        const recovery = recoveryMap.get(userId);
+        if (!recovery?.reasons?.length) continue;
+        const oauthUser = userMap.get(userId);
         members.push({
             userId,
             username: oauthUser?.discord?.username || null,
@@ -378,8 +346,8 @@ async function getOAuthRecoveryCenter(guildId) {
             avatarUrl: oauthUser?.discord?.avatarUrl || null,
             roleId: recipient.roleId || defaultRoleId,
             lastVerifiedAt: recipient.verifiedAt || null,
-            reasons,
-            reasonLabels: reasons.map(recoveryReasonLabel)
+            reasons: recovery.reasons,
+            reasonLabels: recovery.reasonLabels
         });
     }
     return {
@@ -447,20 +415,28 @@ async function revokeAllRecoveryRoles({ guildId, expectedCount, concurrency = 3 
     };
 }
 
-function ownerIpLocation(link = {}) {
+function extractLocationConfidence(link, lastInfo) {
     return {
-        country: link.lastCountry || null,
-        countryCode: link.lastCountryCode || null,
-        region: link.lastRegion || null,
-        city: link.lastCity || null,
-        timezone: link.lastTimezone || null,
-        isp: link.lastIsp || null,
-        org: link.lastOrg || null,
-        as: link.lastAs || null,
-        asname: link.lastAsname || null,
-        accuracyRadiusKm: link.accuracyRadiusKm ?? link.lastIpInfo?.accuracyRadiusKm ?? null,
-        locationConfidence: link.locationConfidence || link.lastIpInfo?.locationConfidence || "unknown",
-        locationConfidenceScore: link.locationConfidenceScore ?? link.lastIpInfo?.locationConfidenceScore ?? null
+        accuracyRadiusKm: link.accuracyRadiusKm ?? lastInfo.accuracyRadiusKm ?? null,
+        locationConfidence: link.locationConfidence || lastInfo.locationConfidence || "unknown",
+        locationConfidenceScore: link.locationConfidenceScore ?? lastInfo.locationConfidenceScore ?? null
+    };
+}
+
+function ownerIpLocation(link = {}) {
+    const lastInfo = link.lastIpInfo || {};
+    const confidence = extractLocationConfidence(link, lastInfo);
+    return {
+        country: link.lastCountry ?? null,
+        countryCode: link.lastCountryCode ?? null,
+        region: link.lastRegion ?? null,
+        city: link.lastCity ?? null,
+        timezone: link.lastTimezone ?? null,
+        isp: link.lastIsp ?? null,
+        org: link.lastOrg ?? null,
+        as: link.lastAs ?? null,
+        asname: link.lastAsname ?? null,
+        ...confidence
     };
 }
 
@@ -534,10 +510,8 @@ async function getOwnerFullMemberDetail({ guildId, userId }) {
     const safeGuildId = requireSnowflake(guildId, "Guild ID");
     const safeUserId = requireSnowflake(userId, "User ID");
     const detail = await getMemberDetail(safeGuildId, safeUserId, { canViewSensitive: true });
-    const [user, log, identityLink] = await Promise.all([
-        scopedOAuthUserQuery(OAuthUser.findOne(), safeGuildId, safeUserId)
-            .select("discord.userId oauth adminOAuth")
-            .lean(),
+    const [tokenStates, log, identityLink] = await Promise.all([
+        oauthTokenManager.getOwnerTokenState(safeUserId),
         scopedGuildUserQuery(VerifyLog.findOne(), safeGuildId, safeUserId)
             .where("ipInfo.encryptedRawIp").exists(true).ne("")
             .sort({ verifiedAt: -1, createdAt: -1, _id: -1 }),
@@ -550,8 +524,7 @@ async function getOwnerFullMemberDetail({ guildId, userId }) {
         ...detail,
         sensitive: {
             rawIp: decryptIP(log?.ipInfo?.encryptedRawIp || identityLink?.encryptedRawIp || ""),
-            oauth: revealTokenState(user?.oauth || {}),
-            adminOAuth: revealTokenState(user?.adminOAuth || {}),
+            oauth: tokenStates.oauth,
             ipIdentity: ownerIpIdentityDetail(identityLink, history)
         }
     };

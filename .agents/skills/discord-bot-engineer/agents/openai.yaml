@@ -1,0 +1,11 @@
+interface:
+  display_name: "Discord Bot Engineer"
+  short_description: "Close Discord engineering work with proof"
+  default_prompt: "Use $discord-bot-engineer to allocate a risk-scaled context budget, route only applicable Discord/SDLC/defect/UX/GitHub workflows, inspect current evidence, implement the smallest coherent change, and report compact exact proof with honest live boundaries."
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

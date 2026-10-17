@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "priority": ["runtime", "installed_source", "lockfile", "official_framework", "official_discord", "official_examples", "maintained_examples"],
+  "capabilities": ["interaction_responses", "components_v2", "modals", "installation_contexts", "persistent_components", "entitlements", "voice", "sharding", "localization"],
+  "statuses": ["confirmed_supported", "confirmed_unsupported", "deprecated", "requires_configuration", "version_mismatch", "unknown"]
+}

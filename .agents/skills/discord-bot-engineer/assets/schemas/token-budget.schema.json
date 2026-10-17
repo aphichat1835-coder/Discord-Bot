@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "token-budget",
+  "type": "object",
+  "required": ["version", "level", "risk", "workflows", "references", "tool_sequence", "protected_context", "escalation"],
+  "properties": {
+    "version": {"const": 1},
+    "level": {"enum": ["micro", "standard", "deep", "incident"]},
+    "risk": {"enum": ["low", "medium", "high", "critical"]},
+    "workflows": {"type": "object"},
+    "references": {"type": "object"},
+    "tool_sequence": {"type": "array"},
+    "protected_context": {"type": "array"},
+    "escalation": {"type": "object"},
+    "estimated_initial_context": {"type": "object"}
+  },
+  "additionalProperties": true
+}

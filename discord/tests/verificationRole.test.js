@@ -130,10 +130,8 @@ test("verification setup failure explains each recovery state without nested for
 
 test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact state", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
-    const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
         process.env.PUBLIC_BASE_URL = "https://example.test";
-        process.env.DISCORD_CLIENT_ID = "12345678901234567";
 
         const url = _test.buildDiscordAuthorizeUrl({
             interaction: {},
@@ -142,12 +140,8 @@ test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact 
             panelRevision: "panel_test123"
         });
 
-        assert.ok(url.startsWith("https://discord.com/oauth2/authorize?"));
+        assert.ok(url.startsWith("https://example.test/auth/start?state="));
         const parsed = new URL(url);
-        assert.equal(parsed.searchParams.get("client_id"), "12345678901234567");
-        assert.equal(parsed.searchParams.get("redirect_uri"), "https://example.test/auth/callback");
-        assert.equal(parsed.searchParams.get("response_type"), "code");
-        assert.equal(parsed.searchParams.get("prompt"), "consent");
         const stateParam = parsed.searchParams.get("state");
         const { decodeCallbackState } = require("../verification/utils/state");
         const decoded = decodeCallbackState(stateParam);
@@ -158,39 +152,27 @@ test("buildDiscordAuthorizeUrl builds direct Discord authorize URL with compact 
     } finally {
         if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL;
         else process.env.PUBLIC_BASE_URL = prevBase;
-        if (prevClient === undefined) delete process.env.DISCORD_CLIENT_ID;
-        else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
 
-test("buildDiscordAuthorizeUrl throws when public URL or client ID is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("buildDiscordAuthorizeUrl throws when public URL is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
     const prevDashboard = process.env.PUBLIC_DASHBOARD_URL;
-    const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
         delete process.env.PUBLIC_BASE_URL;
         delete process.env.PUBLIC_DASHBOARD_URL;
         delete process.env.DASHBOARD_URL;
         delete process.env.RENDER_EXTERNAL_URL;
-        delete process.env.DISCORD_CLIENT_ID;
 
         assert.throws(
             () => _test.buildDiscordAuthorizeUrl({ interaction: {}, guildId: "1", roleId: "2" }),
             /Missing PUBLIC_DASHBOARD_URL/
-        );
-
-        process.env.PUBLIC_BASE_URL = "https://example.test";
-        assert.throws(
-            () => _test.buildDiscordAuthorizeUrl({ interaction: {}, guildId: "1", roleId: "2" }),
-            /Missing DISCORD_CLIENT_ID/
         );
     } finally {
         if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL;
         else process.env.PUBLIC_BASE_URL = prevBase;
         if (prevDashboard === undefined) delete process.env.PUBLIC_DASHBOARD_URL;
         else process.env.PUBLIC_DASHBOARD_URL = prevDashboard;
-        if (prevClient === undefined) delete process.env.DISCORD_CLIENT_ID;
-        else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
 
@@ -245,4 +227,129 @@ test("parseVerificationButtonParts parses single text and fallback options", () 
     assert.equal(partsLegacy.label, "Click Here");
     assert.equal(partsLegacy.emojiInput, "🔒");
 });
+
+test("direct role mode validates hierarchy without invoking OAuth or Webhook pipelines", async () => {
+    const bot = botMember({ canManageRoles: true, highestPosition: 10 });
+    const targetRole = { id: "role_target", name: "Verified Member", managed: false, position: 3 };
+    const check = _test.validateDirectRoleAssignment(bot, targetRole);
+    assert.equal(check.ok, true);
+
+    // Direct mode is isolated: does not invoke OAuth Start, VerifyLog, or Webhook Manager
+    assert.equal(typeof _test.validateDirectRoleAssignment, "function");
+});
+
+test("handleVerifyButton rejects legacy verify_oauth_ buttons", async () => {
+    const { handleVerifyButton } = require("../commands/verification");
+    let replyPayload = null;
+    const interaction = {
+        customId: "verify_oauth_123456",
+        reply: async (payload) => { replyPayload = payload; return payload; }
+    };
+    await handleVerifyButton(interaction);
+    assert.ok(replyPayload);
+    assert.equal(replyPayload.ephemeral, true);
+    assert.match(replyPayload.content, /แผงเก่าแล้ว/);
+});
+
+test("handleVerifyButton rejects missing role in guild", async () => {
+    const { handleVerifyButton } = require("../commands/verification");
+    let replyPayload = null;
+    const interaction = {
+        customId: "verify_role_999999",
+        guild: {
+            roles: {
+                cache: new Map()
+            }
+        },
+        reply: async (payload) => { replyPayload = payload; return payload; }
+    };
+    await handleVerifyButton(interaction);
+    assert.ok(replyPayload);
+    assert.match(replyPayload.content, /ไม่พบยศนี้แล้ว/);
+});
+
+test("buildVerificationPanelComponents creates proper embed and button components", () => {
+    const role = { id: "role_abc", name: "Member" };
+    const panelOptions = {
+        title: "Test Panel",
+        description: "Welcome",
+        colorHex: "#5865F2",
+        buttonParts: {
+            label: "Verify Now",
+            emojiInput: null,
+            emojiDisplay: ""
+        }
+    };
+    const res = _test.buildVerificationPanelComponents({
+        interaction: { guild: { id: "guild_123" }, client: {} },
+        verifyType: false,
+        role,
+        panelRevision: "rev_1",
+        panelOptions
+    });
+    assert.equal(res.ok, true);
+    assert.ok(res.embed);
+    assert.ok(res.row);
+});
+
+test("buildVerificationSetupResultEmbed formats confirmation embed properly", () => {
+    const channel = { id: "ch_123" };
+    const role = { id: "role_123" };
+    const panelOptions = {
+        colorHex: "#5865F2",
+        showTs: true,
+        buttonParts: {
+            label: "Verify",
+            emojiDisplay: "✅"
+        }
+    };
+    const embed = _test.buildVerificationSetupResultEmbed({
+        interaction: {},
+        channel,
+        role,
+        verifyType: true,
+        panelOptions
+    });
+    assert.ok(embed);
+    assert.match(embed.data.title, /ติดตั้งแผงยืนยันเรียบร้อย/);
+});
+
+test("verification handle rejects non-owners for setup-verify", async () => {
+    const { handle } = require("../commands/verification");
+    let replyPayload = null;
+    const interaction = {
+        commandName: "setup-verify",
+        user: { id: "not_owner_id" },
+        reply: async (payload) => { replyPayload = payload; return payload; }
+    };
+    await handle(interaction);
+    assert.ok(replyPayload);
+    assert.equal(replyPayload.ephemeral, true);
+    assert.match(replyPayload.content, /เจ้าของบอท/);
+});
+
+test("verification handle rejects missing guild or role", async () => {
+    const { handle } = require("../commands/verification");
+    const ownerId = "661415152146710558";
+
+    let editPayload = null;
+    const interaction = {
+        commandName: "setup-verify",
+        user: { id: ownerId },
+        guild: { id: "12345678901234567" },
+        options: {
+            getChannel: () => ({ id: "ch1" }),
+            getRole: () => null // missing role
+        },
+        reply: async () => {},
+        deferReply: async () => {},
+        editReply: async (payload) => { editPayload = payload; return payload; }
+    };
+    await handle(interaction);
+    assert.ok(editPayload);
+    assert.match(editPayload.content, /ไม่พบเซิร์ฟเวอร์หรือยศ/);
+});
+
+
+
 

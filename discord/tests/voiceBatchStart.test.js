@@ -107,7 +107,7 @@ test("handleModal executes batch tokens and reports success and failure breakdow
     };
 
     // Mock ensureVoiceSession on getVoiceWorker
-    const voiceWorker = require("../voiceWorker");
+    const voiceWorker = require("../voiceWorker/index");
     const originalEnsure = voiceWorker.ensureVoiceSession;
     let callCount = 0;
     voiceWorker.ensureVoiceSession = async (input) => {

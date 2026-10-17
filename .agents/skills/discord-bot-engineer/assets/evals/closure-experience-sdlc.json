@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "cases": [
+    {"id": "reopened-bug-route", "kind": "route", "request": "แก้บัคไปแล้วแต่ยังพังและต้องวนแก้อีก", "expect": "defect"},
+    {"id": "discord-ux-route", "kind": "route", "request": "ออกแบบ UX Discord progress ให้ไม่เหมือน AI", "expect": "experience"},
+    {"id": "sdlc-route", "kind": "route", "request": "ทำ SDLC สำหรับระบบ verification ใหม่", "expect": "sdlc"},
+    {"id": "incident-lifecycle", "kind": "sdlc", "request": "production outage ระบบบอทล่ม", "risk": "critical", "expect": "incident"},
+    {"id": "retirement-lifecycle", "kind": "sdlc", "request": "ยุติระบบ verification เก่า", "risk": "high", "expect": "retirement"},
+    {"id": "high-bug-lifecycle", "kind": "sdlc", "request": "แก้บัค permission bypass", "risk": "high", "expect": "patch"},
+    {"id": "thai-progress-panel", "kind": "ux", "request": "ลบข้อความพร้อมแสดงความคืบหน้า", "surface": "components_v2", "expect": "operational_status"},
+    {"id": "destructive-panel", "kind": "ux_destructive", "request": "ลบข้อมูลทั้งหมด", "surface": "components_v2", "expect": "destructive_confirmation"},
+    {"id": "critical-counterexamples", "kind": "defect", "request": "economy duplicate transaction", "risk": "critical", "expect": "cross_tenant_isolation"}
+  ]
+}

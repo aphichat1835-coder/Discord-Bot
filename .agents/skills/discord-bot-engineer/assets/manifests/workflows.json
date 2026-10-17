@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "workflows": [
+    {"id": "context_budget", "always": true},
+    {"id": "project_model", "always": true},
+    {"id": "feature_contract", "always": true},
+    {"id": "defect_closure", "profiles": ["defect"]},
+    {"id": "experience_quality", "profiles": ["experience"]},
+    {"id": "domain_invariants", "profiles": ["interactions", "moderation", "verification", "tickets", "economy", "music", "dashboard", "monetization", "distributed"]},
+    {"id": "sdlc", "always": true},
+    {"id": "github_evidence", "profile_prefix": "github_"},
+    {"id": "verification", "always": true},
+    {"id": "production_proof", "always": true},
+    {"id": "completion_gate", "always": true}
+  ],
+  "policy": "Activate applicable workflows automatically, mark unavailable evidence as blocked, and do not execute irrelevant ceremony."
+}

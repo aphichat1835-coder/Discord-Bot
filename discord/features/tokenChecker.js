@@ -1,12 +1,15 @@
 'use strict';
 
-const { AttachmentBuilder, MessageEmbed } = require('../core/discordCompat');
+const { MessageEmbed } = require('../core/discordCompat');
 const { buildUserHeaders } = require('../quest/core/clientProfile');
+const tokenCoordinator = require('../tokens/tokenCoordinator');
+const config = require('../config.json');
 
 const THEME_COLORS = Object.freeze({
     BOOST: '#EB459E',
     NITRO: '#5865F2',
     NORMAL: '#57F287',
+    BOT: '#57F287',
     INVALID: '#ED4245'
 });
 
@@ -68,12 +71,8 @@ function resolveAvatarUrl(user) {
         const ext = isGif ? 'gif' : 'png';
         return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${ext}?size=256`;
     }
-    try {
-        const index = Number(BigInt(user.id) >> 22n) % 6;
-        return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
-    } catch {
-        return 'https://cdn.discordapp.com/embed/avatars/0.png';
-    }
+    const defaultIndex = (BigInt(user.id) >> 22n) % 6n;
+    return `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
 }
 
 const DISCORD_USER_ME_URL = 'https://discord.com/api/v9/users/@me';
@@ -86,6 +85,24 @@ async function fetchDiscordUser(token) {
         return await fetch(DISCORD_USER_ME_URL, {
             method: 'GET',
             headers: buildUserHeaders(token, '/users/@me'),
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function fetchDiscordBot(token) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+        return await fetch(DISCORD_USER_ME_URL, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bot ${token}`,
+                'User-Agent': 'DiscordBot (https://github.com/discordjs/discord.js, 14.16.3)',
+                Accept: 'application/json'
+            },
             signal: controller.signal
         });
     } finally {
@@ -211,7 +228,34 @@ function buildValidTokenProfile(user, cleanToken, nitroData) {
     };
 }
 
-async function checkSingleToken(token) {
+function buildValidBotProfile(user, cleanToken) {
+    return {
+        valid: true,
+        isBot: true,
+        tokenType: 'bot',
+        token: cleanToken,
+        maskedToken: maskToken(cleanToken),
+        id: String(user.id),
+        username: String(user.username || 'Bot'),
+        globalName: user.global_name ? String(user.global_name) : null,
+        avatarUrl: resolveAvatarUrl(user),
+        email: null,
+        emailVerified: false,
+        phone: null,
+        phoneVerified: false,
+        mfaEnabled: Boolean(user.mfa_enabled),
+        premiumType: 0,
+        hasNitro: false,
+        nitroPlan: 'ไม่มี Nitro (Bot Account)',
+        hasBoost: false,
+        expireDays: 0,
+        expireDate: null,
+        createdAt: getAccountCreatedAt(user.id),
+        category: 'bot'
+    };
+}
+
+async function checkSingleToken(token, options = {}) {
     const cleanToken = sanitizeTokenInput(token);
 
     if (!cleanToken) {
@@ -225,21 +269,72 @@ async function checkSingleToken(token) {
         };
     }
 
-    try {
-        const userRes = await fetchDiscordUser(cleanToken);
-
-        if (!userRes.ok) {
-            return classifyUserResponseError(userRes.status, cleanToken);
+    // Check in-memory profile cache unless forceRefresh is requested
+    if (!options?.forceRefresh) {
+        const cached = tokenCoordinator.getCachedTokenProfile(cleanToken);
+        if (cached) {
+            return cached;
         }
+    }
 
-        const user = await userRes.json();
-        const hasNitro = Number(user.premium_type || 0) > 0;
-        const nitroData = hasNitro
-            ? await fetchNitroSubscription(cleanToken)
-            : { expireDays: 0, expireDate: null };
+    try {
+        const profile = await tokenCoordinator.executeWithToken(cleanToken, 'tokenChecker', async () => {
+            let isBot = false;
+            let userRes = await fetchDiscordUser(cleanToken);
 
-        return buildValidTokenProfile(user, cleanToken, nitroData);
-    } catch {
+            if (!userRes.ok && userRes.status === 401) {
+                // Dual check: test if this is a Bot Token
+                try {
+                    const botRes = await fetchDiscordBot(cleanToken);
+                    if (botRes.ok) {
+                        userRes = botRes;
+                        isBot = true;
+                    }
+                } catch {
+                    // Fall back to original 401 response
+                }
+            }
+
+            if (!userRes.ok) {
+                if (userRes.status === 401) {
+                    tokenCoordinator.quarantineToken(cleanToken, 'Token Invalid / Expired (HTTP 401)');
+                }
+                return classifyUserResponseError(userRes.status, cleanToken);
+            }
+
+            const user = await userRes.json();
+            if (user.bot || isBot) {
+                tokenCoordinator.releaseQuarantine(cleanToken);
+                const botProfile = buildValidBotProfile(user, cleanToken);
+                tokenCoordinator.cacheTokenProfile(cleanToken, botProfile);
+                return botProfile;
+            }
+
+            const hasNitro = Number(user.premium_type || 0) > 0;
+            const nitroData = hasNitro
+                ? await fetchNitroSubscription(cleanToken)
+                : { expireDays: 0, expireDate: null };
+
+            const validProfile = buildValidTokenProfile(user, cleanToken, nitroData);
+            tokenCoordinator.cacheTokenProfile(cleanToken, validProfile);
+            return validProfile;
+        }, {
+            priority: options?.priority || 'NORMAL',
+            bypassQuarantine: Boolean(options?.forceRefresh)
+        });
+
+        return profile;
+    } catch (err) {
+        if (err?.code === 'TOKEN_QUARANTINED') {
+            return {
+                valid: false,
+                token: cleanToken,
+                maskedToken: maskToken(cleanToken),
+                errorType: 'QUARANTINED',
+                errorMessage: `Token ติดสถานะ Quarantine (${err?.quarantine?.reason || 'Token Invalid'})`,
+                category: 'invalid'
+            };
+        }
         // Network errors, timeouts, or unexpected response formats from Discord API are safely surfaced as an invalid token outcome
         return {
             valid: false,
@@ -252,30 +347,65 @@ async function checkSingleToken(token) {
     }
 }
 
-async function checkBatchTokens(tokens = [], delayMs = 1200) {
+async function checkBatchTokens(tokens = [], optionsOrDelay = {}) {
     const list = Array.isArray(tokens) ? tokens : [];
     const results = [];
     const groups = {
         boost: [],
         nitro: [],
         normal: [],
+        bot: [],
         invalid: []
     };
 
-    for (let i = 0; i < list.length; i++) {
-        const token = list[i];
-        const res = await checkSingleToken(token);
-        results.push(res);
+    let batchSize = 5;
+    let delayMs = 150;
+    let onProgress = null;
 
-        if (groups[res.category]) {
-            groups[res.category].push(res);
+    if (typeof optionsOrDelay === 'number') {
+        delayMs = Math.min(optionsOrDelay, 200);
+    } else if (optionsOrDelay && typeof optionsOrDelay === 'object') {
+        if (Number.isFinite(optionsOrDelay.batchSize) && optionsOrDelay.batchSize > 0) {
+            batchSize = Math.min(10, Math.max(1, Math.floor(optionsOrDelay.batchSize)));
         }
-
-        // Delay between tokens to avoid Cloudflare/Discord rate limits
-        if (i < list.length - 1 && delayMs > 0) {
-            await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (Number.isFinite(optionsOrDelay.delayMs) && optionsOrDelay.delayMs >= 0) {
+            delayMs = optionsOrDelay.delayMs;
+        }
+        if (typeof optionsOrDelay.onProgress === 'function') {
+            onProgress = optionsOrDelay.onProgress;
         }
     }
+
+    // Process tokens in batches of size 5 (or configured batchSize) using recursive async chaining
+    const processBatch = async (startIndex) => {
+        if (startIndex >= list.length) return;
+        const chunk = list.slice(startIndex, startIndex + batchSize);
+        const chunkPromises = chunk.map(token => checkSingleToken(token, { priority: 'BACKGROUND' }));
+        const chunkResults = await Promise.all(chunkPromises);
+
+        for (const res of chunkResults) {
+            results.push(res);
+            if (groups[res.category]) {
+                groups[res.category].push(res);
+            }
+        }
+
+        if (onProgress) {
+            try {
+                await onProgress(results.length, list.length);
+            } catch {
+                // Ignore progress callback errors
+            }
+        }
+
+        if (startIndex + batchSize < list.length && delayMs > 0) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+
+        return processBatch(startIndex + batchSize);
+    };
+
+    await processBatch(0);
 
     return {
         results,
@@ -286,31 +416,105 @@ async function checkBatchTokens(tokens = [], delayMs = 1200) {
             boost: groups.boost.length,
             nitro: groups.nitro.length,
             normal: groups.normal.length,
+            bot: groups.bot.length,
             invalid: groups.invalid.length
         }
     };
 }
 
-function buildSingleTokenEmbed(result) {
-    if (!result.valid) {
-        return new MessageEmbed()
-            .setColor(THEME_COLORS.INVALID)
-            .setTitle('❌ ผลการตรวจสอบ Discord Token: ใช้งานไม่ได้')
-            .setDescription([
-                `**สถานะ:** 🔴 \`${result.errorMessage || 'Invalid Token'}\``,
-                `**Token:** \`${result.maskedToken}\``
-            ].join('\n'))
-            .setFooter({ text: 'Token Checker · ตรวจสอบไม่ผ่าน' })
-            .setTimestamp();
+function resolveInvalidTokenErrorMessage(result) {
+    if (!result) return 'Token ใช้งานไม่ได้';
+    if (result.errorType === 'EMPTY') return 'ไม่พบข้อมูล Token';
+    if (result.errorType === 'INVALID') return 'Token ไม่ถูกต้อง หรือหมดอายุแล้ว';
+    if (result.errorType === 'LOCKED') return 'บัญชีถูกระงับ หรือติดด่านยืนยันความปลอดภัย';
+    if (result.errorType === 'QUARANTINED') return 'Token ติดสถานะกักกัน ไม่สามารถใช้งานได้';
+    if (result.errorType === 'NETWORK_ERROR') return 'การเชื่อมต่อขัดข้องหรือหมดเวลา';
+    if (typeof result.errorType === 'string' && result.errorType.startsWith('HTTP_')) {
+        return 'ตรวจสอบ Token ไม่สำเร็จ';
     }
+    return result.errorMessage || 'Token ใช้งานไม่ได้';
+}
 
-    let color = THEME_COLORS.NORMAL;
-    if (result.hasBoost) {
-        color = THEME_COLORS.BOOST;
-    } else if (result.hasNitro) {
-        color = THEME_COLORS.NITRO;
+function _buildInvalidTokenEmbed(result) {
+    const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
+    const keyEmoji = config.emojis?.key || '🔑';
+
+    return new MessageEmbed()
+        .setColor(THEME_COLORS.INVALID)
+        .setTitle(`${errorEmoji} ผลการตรวจสอบ Discord Token: ใช้งานไม่ได้`)
+        .setDescription([
+            `**สถานะ:** ${errorEmoji} \`${resolveInvalidTokenErrorMessage(result)}\``,
+            `**${keyEmoji} Token:** \`${result.maskedToken}\``
+        ].join('\n'))
+        .setTimestamp();
+}
+
+function _buildBotTokenEmbed(result) {
+    const successEmoji = config.emojis?.success || '✅';
+    const searchEmoji = config.emojis?.search || '🔍';
+    const keyEmoji = config.emojis?.key || '🔑';
+
+    const nameDisplay = result.globalName
+        ? `${result.username} (${result.globalName})`
+        : result.username;
+    const createdDisplay = result.createdAt
+        ? `${formatDateBangkok(result.createdAt)} (${getAccountAgeString(result.createdAt)})`
+        : '-';
+
+    const embed = new MessageEmbed()
+        .setColor(THEME_COLORS.BOT || '#57F287')
+        .setTitle(`${searchEmoji} ข้อมูลบัญชี Discord (Bot)`)
+        .setDescription([
+            `**สถานะ:** ${successEmoji} \`Token บอทถูกต้อง (Valid Bot Token)\``,
+            `**ชื่อบอท:** \`${nameDisplay}\` \`[BOT]\``,
+            `**ID บอท:** \`${result.id}\``,
+            `**สร้างเมื่อ:** ${createdDisplay}`,
+            `**${keyEmoji} Token:** \`${result.maskedToken}\``
+        ].join('\n'))
+        .setTimestamp();
+
+    if (result.avatarUrl) {
+        embed.setThumbnail(result.avatarUrl);
     }
+    return embed;
+}
 
+function _resolveTokenThemeColor(result) {
+    if (result.hasBoost) return THEME_COLORS.BOOST;
+    if (result.hasNitro) return THEME_COLORS.NITRO;
+    return THEME_COLORS.NORMAL;
+}
+
+function _buildNitroDetail(result) {
+    if (!result.hasNitro) return 'ไม่มี Nitro';
+    const expireInfo = result.expireDate
+        ? `หมดอายุวันที่ ${formatDateBangkok(result.expireDate)} (เหลืออีก **${result.expireDays}** วัน)`
+        : `เหลืออีก **${result.expireDays}** วัน`;
+    return `**ประเภท:** \`${result.nitroPlan}\`\n**วันหมดอายุ:** ${expireInfo}`;
+}
+
+function _buildSecurityLines(result, successEmoji, errorEmoji, lockEmoji) {
+    const emailStatus = result.emailVerified ? `${successEmoji} ยืนยันแล้ว` : `${errorEmoji} ยังไม่ยืนยัน`;
+    const phoneStatus = result.phoneVerified ? `${successEmoji} ผูกแล้ว` : `${errorEmoji} ยังไม่ผูก`;
+    const mfaStatus = result.mfaEnabled ? `${lockEmoji} เปิดใช้งานแล้ว` : `${errorEmoji} ปิดอยู่`;
+
+    return [
+        `• ยืนยันอีเมล: ${emailStatus}`,
+        `• ผูกเบอร์โทรศัพท์: ${phoneStatus}`,
+        `• ระบบ 2FA: ${mfaStatus}`
+    ].join('\n');
+}
+
+function _buildUserTokenEmbed(result) {
+    const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
+    const successEmoji = config.emojis?.success || '✅';
+    const searchEmoji = config.emojis?.search || '🔍';
+    const boostEmoji = config.emojis?.boost || '🚀';
+    const lockEmoji = config.emojis?.lock || '🔒';
+    const keyEmoji = config.emojis?.key || '🔑';
+    const userEmoji = config.emojis?.user || '👤';
+
+    const color = _resolveTokenThemeColor(result);
     const nameDisplay = result.globalName
         ? `${result.username} (${result.globalName})`
         : result.username;
@@ -319,68 +523,70 @@ function buildSingleTokenEmbed(result) {
         ? `${formatDateBangkok(result.createdAt)} (${getAccountAgeString(result.createdAt)})`
         : '-';
 
-    let nitroDetail = 'ไม่มี Nitro ที่ใช้งานอยู่';
-    if (result.hasNitro) {
-        const expireInfo = result.expireDate
-            ? `หมดอายุวันที่ ${formatDateBangkok(result.expireDate)} (เหลืออีก **${result.expireDays}** วัน)`
-            : `เหลืออีก **${result.expireDays}** วัน`;
-        nitroDetail = `**ประเภท:** \`${result.nitroPlan}\`\n**วันหมดอายุ:** ${expireInfo}`;
-    }
-
+    const nitroDetail = _buildNitroDetail(result);
     const boostDetail = result.hasBoost
-        ? '🚀 มีสิทธิ์ Server Boost (พร้อมใช้งาน 2 บูสต์)'
-        : '❌ ไม่มีสิทธิ์ Server Boost';
+        ? `${boostEmoji} มีสิทธิ์ Server Boost (พร้อมใช้งาน 2 บูสต์)`
+        : `${errorEmoji} ไม่มีสิทธิ์ Server Boost`;
 
-    const securityLines = [
-        `• ยืนยันอีเมล: ${result.emailVerified ? '✅ สำเร็จ' : '❌ ยังไม่ยืนยัน'}`,
-        `• ผูกเบอร์โทรศัพท์: ${result.phoneVerified ? '✅ สำเร็จ' : '❌ ยังไม่ผูก'}`,
-        `• ระบบ 2FA: ${result.mfaEnabled ? '🔐 เปิดใช้งานแล้ว' : '❌ ปิดอยู่'}`
-    ].join('\n');
+    const securityLines = _buildSecurityLines(result, successEmoji, errorEmoji, lockEmoji);
 
     return new MessageEmbed()
         .setColor(color)
-        .setTitle('🔍 ข้อมูลบัญชี Discord Token')
+        .setTitle(`${searchEmoji} ข้อมูลบัญชี Discord`)
         .setThumbnail(result.avatarUrl)
         .addFields(
             {
-                name: '👤 ข้อมูลบัญชี',
+                name: `${userEmoji} ข้อมูลบัญชี`,
                 value: `• **ชื่อผู้ใช้:** ${nameDisplay}\n• **ไอดีผู้ใช้:** \`${result.id}\`\n• **สร้างเมื่อ:** ${createdDisplay}`,
                 inline: false
             },
             {
-                name: '💎 สถานะ Nitro',
+                name: 'Nitro',
                 value: nitroDetail,
                 inline: false
             },
             {
-                name: '🚀 สิทธิ์การบูสต์',
+                name: `${boostEmoji} Server Boost`,
                 value: boostDetail,
                 inline: false
             },
             {
-                name: '🛡️ ความปลอดภัยของบัญชี',
+                name: `${lockEmoji} ความปลอดภัย`,
                 value: securityLines,
                 inline: false
             },
             {
-                name: '🔑 Token (Masked)',
+                name: `${keyEmoji} Token`,
                 value: `\`${result.maskedToken}\``,
                 inline: false
             }
         )
-        .setFooter({ text: 'Discord Token Checker · ปลอดภัยและแสดงเฉพาะคุณ' })
         .setTimestamp();
 }
 
+function buildSingleTokenEmbed(result) {
+    if (!result.valid) {
+        return _buildInvalidTokenEmbed(result);
+    }
+
+    if (result.isBot || result.category === 'bot') {
+        return _buildBotTokenEmbed(result);
+    }
+
+    return _buildUserTokenEmbed(result);
+}
+
 function resolveBatchItemPlanTag(item) {
-    if (item.hasBoost) return '🚀 Boost';
+    if (item.isBot || item.category === 'bot') return '🤖 Bot';
+    if (item.hasBoost) return `${config.emojis?.boost || '🚀'} Boost`;
     if (item.hasNitro) return '💎 Nitro';
-    return '🟢 Normal';
+    return `${config.emojis?.status_online || '🟢'} ปกติ`;
 }
 
 function formatBatchItemLine(item, index) {
+    const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
     if (!item.valid) {
-        return `${index}. 🔴 \`${item.maskedToken}\` — ${item.errorMessage || 'Invalid'}`;
+        return `${index}. ${errorEmoji} \`${item.maskedToken}\` — ${resolveInvalidTokenErrorMessage(item)}`;
     }
     const planTag = resolveBatchItemPlanTag(item);
     const expireNote = item.hasNitro ? ` · เหลือ ${item.expireDays} วัน` : '';
@@ -389,6 +595,9 @@ function formatBatchItemLine(item, index) {
 
 function buildBatchSummaryEmbed(batchData) {
     const { summary, results } = batchData;
+    const successEmoji = config.emojis?.check_alt || config.emojis?.success || '✅';
+    const boostEmoji = config.emojis?.boost || '🚀';
+    const errorEmoji = config.emojis?.red_card || config.emojis?.error || '❌';
 
     let color = THEME_COLORS.NORMAL;
     if (summary.boost > 0) {
@@ -400,48 +609,27 @@ function buildBatchSummaryEmbed(batchData) {
     }
 
     const summaryText = [
-        `📊 **สรุปผลการตรวจสอบทั้งหมด:** \`${summary.total}\` บัญชี`,
-        `• 🚀 **มี Nitro Boost:** \`${summary.boost}\` บัญชี`,
-        `• 💎 **มี Nitro (ไม่มี Boost):** \`${summary.nitro}\` บัญชี`,
-        `• 🟢 **โทเค่นปกติ (No Nitro):** \`${summary.normal}\` บัญชี`,
-        `• 🔴 **โทเค่นใช้งานไม่ได้ (Invalid):** \`${summary.invalid}\` บัญชี`
-    ].join('\n');
+        `**สรุปผลการตรวจสอบทั้งหมด:** \`${summary.total}\` Token`,
+        `• ${boostEmoji} **Nitro Boost:** \`${summary.boost}\``,
+        `• 💎 **Nitro (ไม่มี Boost):** \`${summary.nitro}\``,
+        `• ${config.emojis?.status_online || '🟢'} **Token ปกติ:** \`${summary.normal}\``,
+        summary.bot > 0 ? `• 🤖 **Token บอท:** \`${summary.bot}\`` : null,
+        `• ${errorEmoji} **Token ใช้งานไม่ได้:** \`${summary.invalid}\``
+    ].filter(Boolean).join('\n');
 
-    // Show up to 15 items in embed
-    const previewList = results.slice(0, 15).map((item, idx) => formatBatchItemLine(item, idx + 1));
-    if (results.length > 15) {
-        previewList.push(`... และอีก ${results.length - 15} บัญชี (ดูรายละเอียดเต็มในไฟล์แนบด้านล่าง)`);
+    // Show up to 20 items in embed (maximum batch limit)
+    const previewList = results.slice(0, 20).map((item, idx) => formatBatchItemLine(item, idx + 1));
+    if (results.length > 20) {
+        previewList.push(`... และอีก ${results.length - 20} Token`);
     }
 
     const embed = new MessageEmbed()
         .setColor(color)
-        .setTitle('📊 ผลการตรวจสอบ Discord Tokens แบบกลุ่ม')
-        .setDescription(`${summaryText}\n\n**📋 รายการบัญชี:**\n${previewList.join('\n')}`)
-        .setFooter({ text: 'Discord Token Checker · แยกไฟล์หมวดหมู่ส่งให้เรียบร้อยแล้ว' })
+        .setTitle(`${successEmoji} ตรวจสอบเสร็จแล้ว`)
+        .setDescription(`${summaryText}\n\n**รายการ Token:**\n${previewList.join('\n')}`)
         .setTimestamp();
 
     return embed;
-}
-
-function createCategoryAttachments(groups) {
-    const attachments = [];
-
-    const fileMap = [
-        { key: 'boost', fileName: 'tokens_boost.txt' },
-        { key: 'nitro', fileName: 'tokens_nitro.txt' },
-        { key: 'normal', fileName: 'tokens_normal.txt' },
-        { key: 'invalid', fileName: 'tokens_invalid.txt' }
-    ];
-
-    for (const { key, fileName } of fileMap) {
-        const items = groups[key] || [];
-        if (items.length > 0) {
-            const content = items.map(item => item.token).join('\n');
-            attachments.push(new AttachmentBuilder(Buffer.from(content, 'utf8'), { name: fileName }));
-        }
-    }
-
-    return attachments;
 }
 
 module.exports = {
@@ -452,9 +640,11 @@ module.exports = {
     getAccountAgeString,
     resolveNitroPlan,
     resolveAvatarUrl,
+    resolveInvalidTokenErrorMessage,
     checkSingleToken,
     checkBatchTokens,
     buildSingleTokenEmbed,
     buildBatchSummaryEmbed,
-    createCategoryAttachments
+    buildValidBotProfile,
+    fetchDiscordBot
 };

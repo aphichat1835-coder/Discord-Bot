@@ -1,3 +1,5 @@
+"use strict";
+
 /* eslint-disable complexity -- IP normalization helpers are behavior-sensitive; refactor separately. */
 const net = require('net');
 const { encryptIP, hmacValue } = require('./crypto');
@@ -216,9 +218,9 @@ function checkNamedHeaderSpoofFlags(namedHeaders, comparableTrusted) {
     return flags;
 }
 
-function checkXffChainSpoofFlags(chain = [], comparableTrusted) {
+function checkXffChainSpoofFlags(chain, comparableTrusted = null) {
     const flags = [];
-    for (const ip of chain) {
+    for (const ip of (chain || [])) {
         if (!isValidIP(ip)) {
             flags.push('xff_chain_invalid_ip');
         } else if (isPrivateIP(ip) && comparableTrusted && !isPrivateIP(comparableTrusted)) {
@@ -664,31 +666,42 @@ function validateLookupTarget(url) {
     return url;
 }
 
+function isFlatIpApiResponse(data) {
+    return Boolean(data.status || data.countryCode || data.proxy !== undefined);
+}
+
+function resolveIpapiIsOrg(company, asn) {
+    const orgName = company.name || asn.org || null;
+    const asName = asn.org || asn.descr || null;
+    const netType = company.type || asn.type || null;
+    return { orgName, asName, netType };
+}
+
 function normalizeIpapiIsResponse(data = {}, hostname = '') {
-    // Custom endpoints historically returned the flat ip-api shape. Preserve
-    // compatibility when that shape reaches the new default normalizer.
-    if (data.status || data.countryCode || data.proxy !== undefined) {
+    if (isFlatIpApiResponse(data)) {
         return normalizeIpApiResponse(data, hostname);
     }
     if (data.error) throw new Error(String(data.error));
     const location = data.location || {};
     const company = data.company || {};
     const asn = data.asn || {};
+    const { orgName, asName, netType } = resolveIpapiIsOrg(company, asn);
+
     return {
         provider: hostname || 'ipapi.is', raw: data, status: 'success',
         country: location.country, countryCode: location.country_code,
         region: location.state, city: location.city, zip: location.zip,
         lat: location.latitude, lon: location.longitude, timezone: location.timezone,
-        isp: company.name || asn.org, org: company.name || asn.org,
+        isp: orgName, org: orgName,
         as: asn.asn ? `AS${asn.asn}` : null,
-        asname: asn.org || asn.descr, reverse: null,
+        asname: asName, reverse: null,
         mobile: data.is_mobile === true, proxy: data.is_proxy === true,
         hosting: data.is_datacenter === true, vpn: data.is_vpn === true,
         tor: data.is_tor === true, query: data.ip, message: null,
         anycast: data.is_anycast === true,
-        networkType: company.type || asn.type || null,
+        networkType: netType,
         accuracyRadiusKm: safeNumber(location.accuracy, null),
-        locationAccuracy: location.accuracy || null,
+        locationAccuracy: location.accuracy ?? null,
         securitySignalsAvailable: true
     };
 }
@@ -1349,44 +1362,12 @@ startLookupCacheCleanup();
 async function lookupIP(ip) {
     if (isPrivateIP(ip)) {
         return {
+            ...makeLookupDisabledInfo(ip),
             provider: 'local',
-            raw: null,
             status: 'local',
-
-            country: 'unknown',
-            countryCode: 'unknown',
-            region: 'unknown',
-            city: 'unknown',
-            zip: 'unknown',
-            lat: null,
-            lon: null,
-            timezone: 'unknown',
-
             isp: 'local/private',
             org: 'local/private',
-            as: 'unknown',
-            asname: 'unknown',
-            reverse: 'unknown',
-
-            mobile: false,
-            proxy: false,
-            hosting: false,
-            vpn: false,
-            tor: false,
-            anycast: false,
-            networkType: null,
-            accuracyRadiusKm: null,
-            locationAccuracy: null,
-            locationConfidence: 'unknown',
-            locationConfidenceScore: null,
             locationConfidenceReasons: ['private_or_reserved_ip'],
-            providerAgreement: null,
-            providerEvidence: [],
-            providerCount: 0,
-            consensusUsed: false,
-            securitySignalsAvailable: false,
-
-            query: ip,
             message: null
         };
     }

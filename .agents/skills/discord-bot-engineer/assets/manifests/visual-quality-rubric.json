@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "dimensions": ["task_fit", "hierarchy", "scanability", "state_truth", "action_clarity", "copy_density", "accessibility", "brand_character", "platform_fit", "variation_without_drift"],
+  "blocking": ["false_state", "missing_primary_action", "unsafe_control", "meaning_only_in_color_or_emoji", "components_v2_contract_violation", "unrecoverable_failure_copy"],
+  "comparison_rule": "Prefer the variant with fewer blockers; then compare dimensions against the user job and placement rather than decorative intensity."
+}

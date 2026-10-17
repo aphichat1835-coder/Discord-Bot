@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "verification-plan",
+  "type": "object",
+  "required": ["version", "root", "risk", "profiles", "commands", "scenario_checks", "manual_or_live", "selection_basis"],
+  "properties": {
+    "version": {"const": 1},
+    "root": {"type": "string"},
+    "risk": {"enum": ["low", "medium", "high", "critical"]},
+    "profiles": {"type": "array"},
+    "commands": {"type": "array"},
+    "scenario_checks": {"type": "array"},
+    "manual_or_live": {"type": "array"},
+    "selection_basis": {"type": "object"}
+  },
+  "additionalProperties": true
+}

@@ -40,14 +40,21 @@ function createActionResult(input = {}) {
     };
 }
 
+function firstTruthy(...values) {
+    for (const v of values) {
+        if (v) return v;
+    }
+    return null;
+}
+
 function buildProtectionEvent(input = {}) {
     return {
-        guildId: input.guildId || input.guild?.id || null,
-        userId: input.userId || input.member?.id || input.user?.id || null,
-        actorId: input.actorId || input.executorId || null,
-        channelId: input.channelId || input.channel?.id || null,
-        trigger: safeText(input.trigger || "Protection Trigger", 120),
-        reason: safeText(input.reason || "Protection policy triggered", 500),
+        guildId: firstTruthy(input.guildId, input.guild?.id),
+        userId: firstTruthy(input.userId, input.member?.id, input.user?.id),
+        actorId: firstTruthy(input.actorId, input.executorId),
+        channelId: firstTruthy(input.channelId, input.channel?.id),
+        trigger: safeText(input.trigger || "ระบบป้องกันเซิร์ฟเวอร์", 120),
+        reason: safeText(input.reason || "ระบบป้องกันตรวจพบพฤติกรรมเสี่ยง", 500),
         evidence: createEvidence(input),
         actionResult: createActionResult(input.actionResult || input),
         createdAt: input.createdAt || Date.now(),

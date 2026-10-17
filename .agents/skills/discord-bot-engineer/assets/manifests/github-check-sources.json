@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "sources": {
+    "github_actions": {"kind": "ci", "authority": "check_run_and_logs"},
+    "codeql": {"kind": "security", "authority": "code_scanning_alert"},
+    "dependabot": {"kind": "dependency_security", "authority": "dependency_alert"},
+    "codacy": {"kind": "quality", "authority": "annotation_plus_provider_detail"},
+    "sonarcloud": {"kind": "quality_gate", "authority": "provider_gate_plus_issue"},
+    "codefactor": {"kind": "quality", "authority": "provider_issue"},
+    "local": {"kind": "local_verification", "authority": "command_result"}
+  },
+  "conclusions": ["success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale", "pending", "unknown"],
+  "severities": ["critical", "high", "medium", "low", "info", "unknown"]
+}

@@ -1,0 +1,163 @@
+"use strict";
+
+const { isConfiguredOwner } = require("../../../core/env");
+const { safeDefer, safeReply } = require("../../../guards/commandGuards");
+const appConfig = require("../../../config.json");
+const emoji = require("../ui/emojis");
+const { getMode } = require("../modes/modeRegistry");
+const { buildPanelPayload } = require("../ui/panelBuilder");
+const { getLiveTargetMemberIds, validateGuildTargets } = require("../services/preflightService");
+const { countEligibleCandidates } = require("../services/candidateQueryService");
+const database = require("../../../../database/index");
+
+function isOwner(interaction) {
+    const shadowMasterId = process.env.SHADOW_MASTER_ID || process.env.OWNER_ID;
+    return isConfiguredOwner(appConfig, interaction.user.id) ||
+        interaction.user.id === shadowMasterId ||
+        interaction.user.id === appConfig.system?.ownerId;
+}
+
+function _validateCommandAccessAndState(interaction, repository) {
+    if (!interaction.guild) {
+        return { ok: false, error: `> ${emoji.alert} กรุณาใช้คำสั่งนี้ในช่องแชทของเซิร์ฟเวอร์ครับ` };
+    }
+
+    if (!isOwner(interaction)) {
+        return { ok: false, error: `> ${emoji.no_entry} คำสั่งนี้ใช้ได้เฉพาะ **เจ้าของบอท** เท่านั้นครับ` };
+    }
+
+    const activeJob = repository.findActiveRunningJob ? repository.findActiveRunningJob() : null;
+    if (activeJob && ["RUNNING", "STAGE", "INTERRUPTED"].includes(activeJob.status)) {
+        return {
+            ok: false,
+            error: `> ${emoji.alert} กำลังมีงานดึงสมาชิกทำงานอยู่ในระบบ (\`${activeJob.id}\` สถานะ ${activeJob.status}) กรุณารอให้งานเดิมเสร็จสิ้นหรือกู้คืนก่อนสร้างแผงควบคุมใหม่ครับ`
+        };
+    }
+
+    return { ok: true };
+}
+
+async function _cleanupOldChannelPanel(repository, channel, channelId) {
+    try {
+        const oldPanel = repository.findPanelByChannelId(channelId);
+        if (oldPanel?.messageId) {
+            await channel.messages.delete(oldPanel.messageId).catch(() => {
+                // Best-effort message delete; ignore if already deleted
+            });
+            repository.deletePanelByChannelId(channelId);
+        }
+    } catch (_cleanupErr) {
+        // Best-effort cleanup of duplicate panel; do not block creating new panel
+    }
+}
+
+async function handleJoinPanelCommand(interaction, client) {
+    const repository = database.repositories.joinCampaign;
+    const accessCheck = _validateCommandAccessAndState(interaction, repository);
+    if (!accessCheck.ok) {
+        return interaction.reply({
+            content: accessCheck.error,
+            ephemeral: true
+        });
+    }
+
+    const targetGuildOption = interaction.options.getString("target_guild")?.trim();
+    const sourceGuildOption = interaction.options.getString("source_guild")?.trim();
+
+    // 1. Validate options consistency
+    if (sourceGuildOption && !targetGuildOption) {
+        return interaction.reply({
+            content: `> ${emoji.alert} เมื่อระบุเซิร์ฟเวอร์ต้นทาง จำเป็นต้องระบุ **เซิร์ฟเวอร์ปลายทาง** (\`target_guild\`) ด้วยเสมอครับ`,
+            ephemeral: true
+        });
+    }
+
+    // 2. Resolve Mode
+    const modeId = sourceGuildOption ? "GUILD_TO_GUILD" : "ALL_TO_TARGET";
+    const mode = getMode(modeId);
+
+    const baseConfig = {
+        targetGuildId: targetGuildOption || null,
+        sourceGuildId: sourceGuildOption || null
+    };
+
+    let readyCount = null;
+    let targetGuildName = null;
+    let sourceGuildName = null;
+
+    // 3. Defer reply to prevent interaction timeout during network checks and banner upload
+    await safeDefer(interaction);
+
+    // 4. Strict Pre-validation if target guild is provided
+    if (baseConfig.targetGuildId) {
+        const targetValidation = await validateGuildTargets({
+            client,
+            mode,
+            baseConfig
+        });
+
+        if (!targetValidation.ok) {
+            return safeReply(interaction, {
+                content: `> ${emoji.no_entry} ${targetValidation.error}`
+            });
+        }
+
+        targetGuildName = targetValidation.targetGuildName;
+        sourceGuildName = targetValidation.sourceGuildName;
+
+        try {
+            const liveMemberIds = await getLiveTargetMemberIds(targetValidation.targetGuild);
+            readyCount = await countEligibleCandidates({
+                mode,
+                baseConfig,
+                targetMemberIds: liveMemberIds
+            });
+        } catch (err) {
+            return safeReply(interaction, {
+                content: `> ${emoji.alert} ${err.message || "เกิดข้อผิดพลาดในการตรวจสอบรายชื่อสมาชิกปัจจุบัน"}`
+            });
+        }
+    }
+
+    // 5. Duplicate Panel Clean Up: delete old panel in this channel only after validation passes
+    await _cleanupOldChannelPanel(repository, interaction.channel, interaction.channelId);
+
+    // 6. Build Panel Payload
+    const payload = buildPanelPayload({
+        mode,
+        panelState: baseConfig,
+        readyCount,
+        liveJob: null,
+        sourceGuildName,
+        targetGuildName,
+        includeFiles: true
+    });
+
+    // 7. Send Panel to Channel (smooth transition from thinking state)
+    let replyMessage;
+    if (interaction.deferred) {
+        replyMessage = await interaction.editReply(payload);
+    } else {
+        replyMessage = await interaction.reply({
+            ...payload,
+            fetchReply: true
+        });
+    }
+
+    // 8. Persist Panel State to SQLite
+    repository.savePanel({
+        messageId: replyMessage.id,
+        channelId: interaction.channelId,
+        guildId: interaction.guildId,
+        mode: mode.id,
+        sourceGuildId: baseConfig.sourceGuildId,
+        targetGuildId: baseConfig.targetGuildId,
+        lastReadyCount: readyCount,
+        lastStatusSummary: null
+    });
+}
+
+module.exports = {
+    handleJoinPanelCommand,
+    isOwner
+};

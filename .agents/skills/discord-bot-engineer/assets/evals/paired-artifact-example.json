@@ -1,0 +1,22 @@
+{
+  "case": {
+    "id": "ticket-close-partial-failure",
+    "must_do": ["serialize close", "preserve partial truth", "test retry"],
+    "must_not": ["claim success before transcript persistence"],
+    "rubric": ["intent", "correctness", "security", "verification", "experience", "evidence_integrity"]
+  },
+  "baseline": {
+    "evidenced": ["serialize close"],
+    "avoided": [],
+    "scores": {"intent": 2, "correctness": 1, "security": 1, "verification": 0, "experience": 1, "evidence_integrity": 1},
+    "diff_or_answer_review": {"passed": false},
+    "evidence_integrity": {"passed": false}
+  },
+  "candidate": {
+    "evidenced": ["serialize close", "preserve partial truth", "test retry"],
+    "avoided": ["claim success before transcript persistence"],
+    "scores": {"intent": 3, "correctness": 3, "security": 2, "verification": 3, "experience": 3, "evidence_integrity": 3},
+    "diff_or_answer_review": {"passed": true},
+    "evidence_integrity": {"passed": true}
+  }
+}

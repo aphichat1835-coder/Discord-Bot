@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "evidence-receipt",
+  "type": "object",
+  "required": ["version", "created_at", "command", "checks", "findings", "unknowns", "claim"],
+  "properties": {
+    "version": {"const": 1},
+    "created_at": {"type": "string"},
+    "command": {"type": "string", "minLength": 1},
+    "checks": {"type": "object"},
+    "findings": {"type": "array"},
+    "unknowns": {"type": "array"},
+    "claim": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -11,7 +11,8 @@ const {
     advanceHibernationState,
     handleWrongChannelState,
     isSessionConnectionReady,
-    safeRejoinConnection
+    safeRejoinConnection,
+    setupVoiceConnectionListeners
 } = lifecycle._test;
 
 test("same token and guild uses latest-request-wins while skipping stale queued work", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -229,4 +230,34 @@ test("isSessionConnectionReady evaluates client readiness and voice connection s
         connection: null
     };
     assert.equal(isSessionConnectionReady(noConnSession, "ready"), false);
+});
+
+test("setupVoiceConnectionListeners attaches error handler to safely absorb socket / gateway 521/522 errors", () => {
+    const EventEmitter = require("node:events");
+    const connection = new EventEmitter();
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(" "));
+
+    try {
+        setupVoiceConnectionListeners({
+            connection,
+            client: {},
+            guild: {},
+            guildId: "g-1",
+            tokenHash: "hash-1",
+            sessionId: "session-test",
+            session: {}
+        });
+
+        // Verify that emitting an error does NOT throw an unhandled exception
+        assert.doesNotThrow(() => {
+            connection.emit("error", new Error("Unexpected server response: 522"));
+        });
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /VoiceConnection socket error/);
+        assert.match(warnings[0], /Unexpected server response: 522/);
+    } finally {
+        console.warn = originalWarn;
+    }
 });

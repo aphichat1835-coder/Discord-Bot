@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "policies": [
+    {"id": "instant", "max_ms": 700, "pattern": "none", "reason": "avoid_flicker"},
+    {"id": "short_unknown", "max_ms": 3000, "pattern": "inline_indeterminate", "reason": "acknowledge_wait"},
+    {"id": "known_total", "pattern": "determinate", "reason": "real_progress"},
+    {"id": "structured_initial_load", "surface": "dashboard", "pattern": "skeleton", "reason": "preserve_layout"},
+    {"id": "multi_phase", "pattern": "phase_and_counters", "reason": "operational_truth"},
+    {"id": "external_wait", "pattern": "waiting_with_reason", "reason": "maintain_context"}
+  ],
+  "forbidden": ["fake_percentage", "multiple_competing_indicators", "artificial_delay", "blank_wait", "rapid_discord_edits"]
+}

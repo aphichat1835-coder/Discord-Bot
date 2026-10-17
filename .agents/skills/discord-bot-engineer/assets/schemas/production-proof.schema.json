@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "production-proof",
+  "type": "object",
+  "required": ["version", "target", "evidence"],
+  "properties": {
+    "version": {"const": 1},
+    "target": {"enum": ["deterministic_verified", "repository_verified", "experience_verified", "live_verified"]},
+    "evidence": {"type": "object"},
+    "repository": {"type": "object"},
+    "unknowns": {"type": "array"},
+    "blockers": {"type": "array"}
+  },
+  "additionalProperties": true
+}

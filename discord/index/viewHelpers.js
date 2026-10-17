@@ -17,7 +17,8 @@ const NAV_GROUPS = [
         ["/settings", "⚙️ ตั้งค่าบอท"],
         ["/commands", "⚡ คำสั่ง"],
         ["/approved", "🌐 เซิร์ฟเวอร์"],
-        ["/quests", "🎯 บันทึก Quest"]
+        ["/quests", "🎯 บันทึก Quest"],
+        ["/database", "🗄️ ฐานข้อมูล"]
     ]],
     ["สมาชิก", [
         ["/verification", "🛡️ ยืนยันตัวตน"],

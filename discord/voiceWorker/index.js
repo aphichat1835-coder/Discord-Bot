@@ -1,4 +1,4 @@
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const {
     st,
     clientPool,
@@ -76,8 +76,8 @@ const {
 function getWorkerDiagnostics() {
     cleanupTokenLoginCooldowns();
     const pooledClients = [...clientPool.values()];
-    const clientCacheStats = pooledClients.map(getClientCacheStats);
-    const clientListenerStats = pooledClients.map(getClientListenerStats);
+    const clientCacheStats = pooledClients.map(c => getClientCacheStats(c));
+    const clientListenerStats = pooledClients.map(c => getClientListenerStats(c));
     const ready = !!st.mainClient && st.isShuttingDown !== true;
     let status = "ready";
     if (!st.mainClient) status = "initializing";

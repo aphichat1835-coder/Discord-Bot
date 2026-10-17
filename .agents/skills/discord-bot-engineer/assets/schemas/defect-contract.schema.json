@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "defect-contract",
+  "type": "object",
+  "required": ["version", "request", "risk", "reproduction", "root_cause", "neighborhood", "counterexamples", "regression", "live_boundary", "status"],
+  "properties": {
+    "version": {"const": 1},
+    "request": {"type": "string", "minLength": 1},
+    "risk": {"enum": ["low", "medium", "high", "critical"]},
+    "reproduction": {"type": "object"},
+    "root_cause": {"type": "object"},
+    "neighborhood": {"type": "object"},
+    "counterexamples": {"type": "array"},
+    "regression": {"type": "object"},
+    "live_boundary": {"type": "object"},
+    "status": {"type": "string"}
+  },
+  "additionalProperties": true
+}

@@ -92,4 +92,15 @@ describe("independent verification security rules", () => {
     expect(result.blockHosting).toBe(true);
     expect(result.securityRules.unknownLookup).toMatchObject({ enabled: true, action: "deny_role" });
   });
+
+  test("does not implicitly enable rules from legacy blockVPN and blockHosting boolean flags", () => {
+    const result = normalizeVerificationConfig({
+      verifyType: "oauth",
+      blockVPN: true,
+      blockHosting: true,
+      securityRules: {}
+    });
+    expect(result.securityRules.vpnProxyTor.enabled).toBe(false);
+    expect(result.securityRules.hosting.enabled).toBe(false);
+  });
 });

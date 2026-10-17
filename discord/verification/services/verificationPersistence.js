@@ -1,21 +1,93 @@
 "use strict";
 
-function evaluateCriticalPersistence({ oauthSaved, verifyLogSaved, trackingRequired, trackingSaved }) {
+function evaluateCriticalPersistence({ oauthSaved, verifyLogSaved, trackingRequired, trackingSaved, verifyLogDegraded = false }) {
     const persistence = {
         oauthUser: oauthSaved === true,
-        verifyLog: verifyLogSaved === true,
+        verifyLog: verifyLogSaved === true && verifyLogDegraded !== true,
         ipTracking: trackingRequired !== true || trackingSaved === true
     };
     return {
         persistence,
-        ok: Object.values(persistence).every(Boolean)
+        ok: Object.values(persistence).every(Boolean),
+        degraded: verifyLogDegraded === true
     };
 }
 
-function roleWasApplied(result, roleAssignResult) {
-    return result === "success" &&
-        roleAssignResult?.ok === true &&
-        roleAssignResult?.alreadyHadRole !== true;
+function sendWebhookEventSafe(...args) {
+    try {
+        const webhooks = require("../../core/webhooks");
+        if (typeof webhooks.sendWebhookEvent === "function") {
+            return webhooks.sendWebhookEvent(...args);
+        }
+    } catch {
+        // optional in isolated unit tests
+    }
+    return Promise.resolve(false);
+}
+
+function roleWasApplied(resultOrRoleAssign, maybeRoleAssign) {
+    let roleAssign = null;
+    if (maybeRoleAssign && typeof maybeRoleAssign === "object") {
+        roleAssign = maybeRoleAssign;
+    } else if (resultOrRoleAssign && typeof resultOrRoleAssign === "object") {
+        roleAssign = resultOrRoleAssign;
+    }
+
+    return Boolean(
+        roleAssign?.ok === true &&
+        roleAssign?.alreadyHadRole !== true
+    );
+}
+
+async function executeRoleRollback(roleApplied, removeRole) {
+    if (!roleApplied || typeof removeRole !== "function") {
+        return { rollbackAttempted: false, rollbackSucceeded: false };
+    }
+    try {
+        const rollback = await removeRole();
+        return { rollbackAttempted: true, rollbackSucceeded: rollback?.ok === true };
+    } catch {
+        return { rollbackAttempted: true, rollbackSucceeded: false };
+    }
+}
+
+function notifyRollbackOutcome(roleApplied, rollbackSucceeded, guildId, userId, roleId) {
+    if (!roleApplied || typeof sendWebhookEventSafe !== "function") return;
+    sendWebhookEventSafe({
+        target: "ALERT",
+        severity: rollbackSucceeded ? "WARN" : "ERROR",
+        category: "VERIFICATION",
+        code: rollbackSucceeded ? "verification.persistence_failure_rolled_back" : "verification.persistence_rollback_failed",
+        state: "OPEN",
+        guildId,
+        title: rollbackSucceeded ? "PERSISTENCE FAILURE (ROLLED BACK)" : "PERSISTENCE ROLLBACK FAILED",
+        description: rollbackSucceeded
+            ? `บันทึกข้อมูลสำคัญไม่ครบ จึงย้อนยศสมาชิกกลับแล้ว (userId=${userId}, roleId=${roleId})`
+            : `การย้อนยศสมาชิกล้มเหลวหลังข้อมูลสำคัญบันทึกไม่ครบ (userId=${userId}, roleId=${roleId}): ต้องตรวจสอบด้วยตนเอง`
+    }).catch(() => {});
+}
+
+async function persistRecoveryRecord(saveRecovery, recovery, guildId, userId, roleId) {
+    let recoveryPersisted = false;
+    try {
+        recoveryPersisted = await saveRecovery(recovery) === true;
+    } catch {
+        recoveryPersisted = false;
+    }
+
+    if (!recoveryPersisted && typeof sendWebhookEventSafe === "function") {
+        sendWebhookEventSafe({
+            target: "ALERT",
+            severity: "CRITICAL",
+            category: "VERIFICATION",
+            code: "verification.recovery_record_save_failed",
+            state: "OPEN",
+            guildId,
+            title: "RECOVERY RECORD SAVE FAILED",
+            description: `ไม่สามารถบันทึกประวัติการกู้คืน (Recovery Record) ลงฐานข้อมูลได้ (userId=${userId}, roleId=${roleId}): ข้อมูลสำคัญอาจตกหล่น ต้องตรวจสอบทันที`
+        }).catch(() => {});
+    }
+    return recoveryPersisted;
 }
 
 async function coordinatePersistenceFailure({
@@ -23,26 +95,20 @@ async function coordinatePersistenceFailure({
     guildId,
     userId,
     roleId,
-    result,
+    result = "failed",
     roleAssignResult,
+    roleApplied: explicitRoleApplied,
     persistence,
     removeRole,
     saveRecovery,
     now = Date.now
 }) {
-    const roleApplied = roleWasApplied(result, roleAssignResult);
-    let rollbackAttempted = false;
-    let rollbackSucceeded = false;
+    const roleApplied = typeof explicitRoleApplied === "boolean"
+        ? explicitRoleApplied
+        : roleWasApplied(roleAssignResult || result, roleAssignResult);
 
-    if (roleApplied) {
-        rollbackAttempted = true;
-        try {
-            const rollback = await removeRole();
-            rollbackSucceeded = rollback?.ok === true;
-        } catch {
-            rollbackSucceeded = false;
-        }
-    }
+    const { rollbackAttempted, rollbackSucceeded } = await executeRoleRollback(roleApplied, removeRole);
+    notifyRollbackOutcome(roleApplied, rollbackSucceeded, guildId, userId, roleId);
 
     const recovery = {
         requestId,
@@ -59,12 +125,7 @@ async function coordinatePersistenceFailure({
         updatedAt: now()
     };
 
-    let recoveryPersisted = false;
-    try {
-        recoveryPersisted = await saveRecovery(recovery) === true;
-    } catch {
-        recoveryPersisted = false;
-    }
+    const recoveryPersisted = await persistRecoveryRecord(saveRecovery, recovery, guildId, userId, roleId);
 
     return {
         rollbackAttempted,

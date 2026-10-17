@@ -1,6 +1,6 @@
 # Project Context
 
-Last verified against the owner requirements: 2026-07-27 (`ttt.1` release candidate).
+Last verified against the owner requirements: 2026-09-22.
 
 ## Binding owner intent
 
@@ -17,8 +17,12 @@ Phomueangtai is a personal multi-tool Discord bot. It is not a
 verification-only project. The same runtime contains:
 
 - Discord bot and slash commands
-- voice/session management
-- Dashboard ควบคุมบอท
+- voice/session management with Voice Lean caching and AutoDeaf / Natural timers
+- Master Token Coordinator (Token Hub) with activity locking, 429 backoff, and quarantine
+- Discord Quest automation subsystem (interactive panel, recurring scheduler, admission control)
+- Dashboard ควบคุมบอท with Token Hub controller and Quest monitoring
+- Transient Gateway Crash Shield protecting against Cloudflare and gateway socket blips
+- Memory monitoring and leak prevention
 - Owner-only verification management
 - public member OAuth2 verification
 - MongoDB persistence
@@ -44,8 +48,9 @@ models, routes, utilities, views, and assets live in `discord/verification/`.
 Guild-admin OAuth/session access was removed; management is Owner PIN only.
 Owner Verification is rendered inside the private Dashboard ควบคุมบอท shell. The
 guild chooser and five-section per-guild workspace use the existing Owner PIN,
-navigation, and CSRF boundary; the public `/auth/callback` member page keeps its
-existing independent design. Existing routes stay compatible.
+navigation, and CSRF boundary; the data section contains the Webhook Log Verify
+control panel and OAuth recovery center, while the public `/auth/callback` member
+page keeps its existing independent design. Existing routes stay compatible.
 
 ## Entrypoint and boot
 
@@ -73,16 +78,21 @@ booleans only; detailed diagnostics remain behind Owner authentication.
 | Runtime orchestration | `discord/index.js`, `discord/index/system.js` |
 | Main HTTP APIs and health | `discord/index/server.js` |
 | Bot-control pages/auth | `discord/index/views.js`, `discord/index/auth.js` |
+| Token Hub & Admin routes | `discord/index/adminRoutes.js` |
+| Token Coordinator | `discord/tokens/tokenCoordinator.js` |
+| Memory Monitor | `discord/index/memoryMonitor.js` |
+| Quest automation subsystem | `discord/quest/` |
 | Owner verification bridge | `discord/index/verifyOwner.js` |
-| Persistence | `discord/sessionManager.js` |
+| Persistence | `discord/voiceWorker/sessionManager.js` |
 | Commands | `discord/commands.js`, `discord/commands/` |
-| Voice/session | `discord/voiceWorker.js`, `discord/voiceWorker/`, `discord/sessions/` |
+| Voice/session | `discord/voiceWorker/`, `discord/sessions/` |
 | Moderation cases | `discord/logging/modCaseManager.js` |
 | Protection/role button | `discord/features/` |
 | Verification runtime | `discord/verification/runtime.js`, `discord/verification/lifecycle.js` |
 | Verification routes | `discord/verification/routes/` |
 | Verification persistence | `discord/verification/models/` |
 | Per-IP identity correlation | `discord/verification/models/IpIdentityLink.js`, `IpIdentity*History.js` |
+| OAuth Token Manager | `discord/tokens/oauthTokenManager.js` |
 | OAuth/IP/device/crypto helpers | `discord/verification/utils/` |
 | Verification management UI | `discord/verification/page.js`, `guildPage.js`, `ownerStyles.js`, `public/js/guild-dashboard.js` |
 | Public callback UI | `discord/verification/views/callback.html`, `public/css/`, `public/js/callback.js` |
@@ -162,10 +172,13 @@ migrated or rebuilt through re-verification.
 
 ## Compatibility
 
-The existing Mongoose model and collection names are preserved. Schema changes
-are additive. Historical `adminOAuth` encrypted fields are retained and the
-maintenance lifecycle can refresh them; `LEGACY_ADMIN_OAUTH_REDIRECT_URI` can
-pin their original redirect URI. No admin OAuth route creates new grants.
+The existing Mongoose model and collection names are preserved.
+Under the renovated verification architecture:
+- Raw Discord guild arrays are discarded in memory, storing aggregate `guildSummary: { totalCount, ownedCount, status, fetchedAt, attemptedAt, failureReason }`.
+- Connections store only `{ type, verified }`; extra IDs, names, and metadata are stripped.
+- Member and role assignment is transient via Discord REST API; `lastMember`, `memberSnapshot`, and role history arrays in MongoDB are retired.
+- `requestId` is completely purged from all models and logs.
+- Legacy `adminOAuth` fields are completely retired; all OAuth workflows use unified `oauth`.
 
 Complete OAuth snapshots use versioned normal-item chunks and byte chunks for
 oversized objects. There is no aggregate truncation budget; every document must

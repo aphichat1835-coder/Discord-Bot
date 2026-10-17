@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "patterns": {
+    "welcome_once": {"use": ["new_user", "major_new_experience"], "requires": ["benefit", "short_copy", "dismiss"]},
+    "contextual_hint": {"use": ["point_of_need"], "requires": ["target", "single_action"]},
+    "wizard": {"use": ["required_multi_step_setup"], "requires": ["step", "total", "expectation", "resume"]},
+    "empty_state_guidance": {"use": ["no_content", "first_action"], "requires": ["reason", "cta"]},
+    "checklist": {"use": ["nonlinear_setup"], "requires": ["items", "completion_state"]}
+  },
+  "forbidden": ["repeated_welcome", "passive_long_tour", "surprise_requirement", "animation_without_action"]
+}

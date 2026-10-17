@@ -9,7 +9,7 @@ while IFS= read -r -d '' file; do
         status=1
     fi
 done < <(
-    find discord \
+    find discord database/mongo \
         -type d \( -name node_modules -o -name tests -o -name public -o -name views \) -prune -o \
         -type f -name '*.js' -print0
 )

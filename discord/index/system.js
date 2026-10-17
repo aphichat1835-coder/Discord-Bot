@@ -1,16 +1,15 @@
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT MODIFY: crashShieldReady flag logic.
-DO NOT REMOVE: process.on handlers — critical for stability.
-DO NOT SIMPLIFY: Log capture ring buffer — prevents RAM bloat.
-================================================================================
-*/
+/**
+ * System Stability & Process Lifecycle
+ * - Transient Gateway Crash Shield & global process error handlers.
+ * - In-memory log capture ring buffer (prevents RAM bloat).
+ * - Scheduled cron maintenance tasks and map pruning.
+ */
 
+const webhooks = require("../core/webhooks");
 const {
     sendAlertWebhook,
     buildWebhookEventPayload
-} = require("../core/webhooks");
+} = webhooks;
 const { sanitizeLogText, safeError } = require("../core/safeLogger");
 const { normalizeRuntimeLine } = require("../core/startupLogger");
 const { readFiniteInteger } = require("../core/numbers");
@@ -52,12 +51,110 @@ const TOGGLE_COOLDOWN_MAX_KEYS = readFiniteInteger(process.env.TOGGLE_COOLDOWN_M
 // ════════════════════════════════════════════════════════════════════════════
 //  📜  LOG CAPTURE — Ring Buffer (กัน RAM บวม)
 // ════════════════════════════════════════════════════════════════════════════
+function isMutedLogLine(line) {
+    if (line.includes("[WEBHOOK]") || line.includes("ALERT delivery unavailable")) return true;
+    if (line.includes("[SHADOW")) return true;
+    return line.includes("MongoDB Connection Lost") ||
+        line.includes("MongoDB Error:") ||
+        line.includes("MongoDB save failed:") ||
+        (line.includes("[GATEWAY]") && (line.includes("event=error") || line.includes("event=shardError") || line.includes("event=shardDisconnect") || line.includes("event=shardResume"))) ||
+        line.includes("[SLASH] ❌ Error in") ||
+        line.includes("[CRITICAL] uncaughtException") ||
+        line.includes("[CRITICAL] unhandledRejection");
+}
+
+const LOG_CATEGORY_RULES = Object.freeze([
+    { category: "DATABASE", keywords: ["DATA", "MONGO", "SQLITE"] },
+    { category: "VOICE", keywords: ["VOICE", "WORKER", "SESSION", "AUTODEAF", "NATURAL", "HEARTBEAT"] },
+    { category: "VERIFICATION", keywords: ["VERIFY", "OAUTH", "SNAPSHOT"] },
+    { category: "GATEWAY", keywords: ["GATEWAY", "SHARD"] },
+    { category: "COMMAND", keywords: ["COMMAND", "SLASH", "ROLE"] },
+    { category: "SECURITY", keywords: ["SECURITY", "PROTECTION", "RAID", "SPAM"] },
+    { category: "QUEST", keywords: ["QUEST"] },
+    { category: "MODERATION", keywords: ["MODCASE"] },
+    { category: "RUNTIME", keywords: ["HTTP", "API", "ROUTE"] },
+    { category: "SYSTEM", keywords: ["CRITICAL", "FATAL"] }
+]);
+
+function deriveLogCategory(rawTag) {
+    if (typeof rawTag !== "string") return "RUNTIME";
+    for (const rule of LOG_CATEGORY_RULES) {
+        if (rule.keywords.some(keyword => rawTag.includes(keyword))) {
+            return rule.category;
+        }
+    }
+    return "RUNTIME";
+}
+
 function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
     function pushLog(type, msg) {
         msg = sanitizeLogText(msg);
         if (msg.length > 500) msg = msg.substring(0, 500) + '... [TRUNCATED]';
         webLogs.push({ time: new Date().toLocaleTimeString('th-TH'), type, msg });
         if (webLogs.length > maxLogs) webLogs.shift();
+    }
+
+    const alertDedupe = new Map();
+    const DEDUPE_WINDOW_MS = 2 * 60 * 1000;
+    const MAX_DEDUPE_ENTRIES = 500;
+    let isForwardingAlert = false;
+
+    function forwardConsoleAlert(level, line) {
+        if (isForwardingAlert) return;
+        if (typeof line !== "string" || !line.trim()) return;
+
+        if (isMutedLogLine(line)) return;
+
+        // Determine subsystem category from tags in log text (skipping generic BOT/LEVEL tags)
+        const rawTag = [...line.matchAll(/\[([^[\]]{1,64})\]/g)]
+            .map(m => m[1].trim().toUpperCase())
+            .find(t => !["BOT", "OK", "INFO", "WARN", "FAIL", "ERROR", "CRITICAL"].includes(t.replace(/[^A-Z]/g, ""))) || "RUNTIME";
+        const category = deriveLogCategory(rawTag);
+
+        // Clean message text for dedupe key and embed
+        const cleanMsg = line.replace(/^\[(?:BOT|GATEWAY|DATABASE|WORKER|SESSION|SLASH|SECURITY|VERIFY|QUEST|PROTECTION|RUNTIME|AUTODEAF|NATURAL|HEARTBEAT|MODCASE|ROLE_BTN|HTTP|API)[^\]]*\]\s*/i, "").trim();
+
+        // Fingerprint for deduplication
+        const fingerprint = `${level}:${category}:${cleanMsg.slice(0, 120)}`;
+        const now = Date.now();
+        const lastSent = alertDedupe.get(fingerprint);
+        if (lastSent && (now - lastSent) < DEDUPE_WINDOW_MS) {
+            return;
+        }
+
+        if (alertDedupe.size >= MAX_DEDUPE_ENTRIES) {
+            const oldestKey = alertDedupe.keys().next().value;
+            alertDedupe.delete(oldestKey);
+        }
+        alertDedupe.set(fingerprint, now);
+
+        isForwardingAlert = true;
+        try {
+            const isError = level === "error";
+            const severity = isError ? "ERROR" : "WARNING";
+            const title = isError ? `${category} ERROR DETECTED` : `${category} WARNING DETECTED`;
+            const code = `${category.toLowerCase()}.${isError ? "log_error" : "log_warning"}`;
+
+            webhooks.sendAlertWebhook(webhooks.buildWebhookEventPayload({
+                target: "ALERT",
+                severity,
+                category,
+                code,
+                state: "OPEN",
+                title,
+                description: line.slice(0, 1000),
+                impact: isError ? "พบข้อผิดพลาดในระบบ Runtime หรือฐานข้อมูล ซึ่งอาจกระทบต่อบริการ" : "ระบบตรวจพบการแจ้งเตือนที่ควรเฝ้าระวังความเสถียร",
+                action: "ตรวจสอบข้อความแจ้งเตือนและบริบทการทำงานในระบบ",
+                context: {
+                    "ประเภท": isError ? "ข้อผิดพลาด (Error)" : "คำเตือน (Warning)",
+                    "หมวดหมู่": category
+                }
+            })).catch(() => {});
+        } catch {
+            // Logging must never crash the bot process
+        } finally {
+            isForwardingAlert = false;
+        }
     }
 
     console.log = (...args) => {
@@ -71,12 +168,14 @@ function initLogCapture(maxLogs = MAX_LOGS_DEFAULT) {
         const line = normalizeRuntimeLine('error', msg);
         pushLog('error', line);
         originalError(line);
+        forwardConsoleAlert('error', line);
     };
     console.warn = (...args) => {
         const msg = require('util').format(...args);
         const line = normalizeRuntimeLine('warn', msg);
         pushLog('warn', line);
         originalWarn(line);
+        forwardConsoleAlert('warn', line);
     };
 }
 
@@ -211,19 +310,80 @@ function setFatalShutdownHandler(handler) {
     fatalShutdownHandler = typeof handler === "function" ? handler : null;
 }
 
+const TRANSIENT_GATEWAY_CODES = new Set([
+    "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED",
+    "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "ERR_STREAM_PREMATURE_CLOSE"
+]);
+
+const CLOUDFLARE_5XX_REGEX = /Unexpected server response:\s*(?:520|521|522|523|524|525|502|503|504)/i;
+const WS_HANDSHAKE_TIMEOUT_REGEX = /Opening handshake has timed out|WebSocket was closed before the connection was established|Connection reset by peer|premature close/i;
+const DISCORD_API_5XX_REGEX = /DiscordAPIError.*(?:500|502|503|504|520|521|522|523|524|525)/i;
+const GATEWAY_CONTEXT_REGEX = /websocket|gateway|discord/i;
+
+function _matchesAnyText(regex, ...texts) {
+    return texts.some(text => regex.test(text));
+}
+
+function _isTransientSocketBlip(code, causeCode, stack, msg, causeMsg) {
+    if (!TRANSIENT_GATEWAY_CODES.has(code) && !TRANSIENT_GATEWAY_CODES.has(causeCode)) {
+        return false;
+    }
+    return _matchesAnyText(GATEWAY_CONTEXT_REGEX, stack, msg, causeMsg);
+}
+
+function isTransientGatewayError(err) {
+    if (!err) return false;
+    const msg = String(err?.message || "");
+    const code = String(err?.code || "");
+    const stack = String(err?.stack || "");
+    const causeCode = String(err?.cause?.code || "");
+    const causeMsg = String(err?.cause?.message || "");
+
+    return _matchesAnyText(CLOUDFLARE_5XX_REGEX, msg, causeMsg) ||
+        _isTransientSocketBlip(code, causeCode, stack, msg, causeMsg) ||
+        _matchesAnyText(WS_HANDSHAKE_TIMEOUT_REGEX, msg, causeMsg) ||
+        _matchesAnyText(DISCORD_API_5XX_REGEX, msg, causeMsg);
+}
+
+function isRecoverableRuntimeError(err) {
+    if (!err) return false;
+    if (isTransientGatewayError(err)) return true;
+    const msg = String(err?.message || "");
+    const name = String(err?.name || "");
+
+    // 1. Any DiscordAPIError (e.g. 10062 Unknown interaction, 10008 Unknown Message, 50007 Cannot DM, 50013 Missing Permissions, 40060, etc.)
+    if (name === "DiscordAPIError" || /DiscordAPIError/i.test(msg) || /DiscordAPIError/i.test(name)) {
+        return true;
+    }
+
+    // 2. Common non-fatal Discord interaction/messaging errors
+    if (/Unknown interaction|Unknown message|Cannot send messages to this user|Missing Permissions|Missing Access|Interaction has already been acknowledged/i.test(msg)) {
+        return true;
+    }
+
+    // 3. Transient MongoDB connection/buffering drops (Mongoose will auto-reconnect)
+    if (/MongoNetworkError|buffering timed out|MongoServerSelectionError/i.test(name) ||
+        /MongoNetworkError|buffering timed out|MongoServerSelectionError/i.test(msg)) {
+        return true;
+    }
+
+    return false;
+}
+
 function initCrashShield(config) {
     const criticalAlerts = createCriticalAlertDispatcher();
     process.on("uncaughtException", async (err) => {
+        // Uncaught synchronous exceptions corrupt process memory; they must never be shielded
         originalError(sanitizeLogText(`[CRITICAL] uncaughtException: ${err.message}\n${err.stack || ""}`));
         await criticalAlerts.dispatch("uncaughtException", err, buildWebhookEventPayload({
             target: "ALERT",
             severity: "CRITICAL",
-            category: "SYSTEM",
+            category: "RUNTIME",
             code: "runtime.uncaught_exception",
             state: "OPEN",
-            title: "Runtime เกิด Uncaught Exception",
+            title: "UNCAUGHT EXCEPTION",
             description: `${safeError(err)}\n\n${sanitizeLogText(err.stack || "").substring(0, 800)}`,
-            impact: "Process อาจอยู่ในสถานะไม่สมบูรณ์หรือหยุดทำงานระหว่างเริ่มระบบ",
+            impact: "Process อยู่ในสถานะไม่สมบูรณ์และจำเป็นต้องเริ่มระบบใหม่เพื่อความปลอดภัย",
             action: "ตรวจ Stack Trace และ Runtime Log ทันที"
         }));
         if (!crashShieldReady) {
@@ -236,14 +396,33 @@ function initCrashShield(config) {
     process.on("unhandledRejection", async (reason) => {
         const error = reason instanceof Error ? reason : new Error(String(reason));
         const msg = error.message;
+
+        // Only true transient gateway errors (Cloudflare 5xx, socket disconnect, handshake timeout)
+        // are shielded because Discord.js will automatically resume via shardResume
+        if (isTransientGatewayError(error)) {
+            originalWarn(sanitizeLogText(`[GATEWAY/RUNTIME] ⚠️ Transient gateway rejection shielded from fatal exit (gateway will resume): ${msg}`));
+            await criticalAlerts.dispatch("transientGatewayRejection", error, buildWebhookEventPayload({
+                target: "ALERT",
+                severity: "WARNING",
+                category: "GATEWAY",
+                code: "gateway.transient_rejection_shielded",
+                state: "UPDATE",
+                title: "TRANSIENT GATEWAY REJECTION SHIELDED",
+                description: `${sanitizeLogText(msg).substring(0, 900)}\n\nระบบตรวจพบข้อผิดพลาดเครือข่ายชั่วคราวของ Discord/Gateway และทำการป้องกันไม่ให้ระบบหยุดทำงาน โดย Gateway จะทำการ Reconnect/Resume อัตโนมัติ`,
+                impact: "การเชื่อมต่อ Gateway อาจกระตุกชั่วขณะ แต่ระบบหลักยังคงทำงานต่อเนื่อง",
+                action: "ระบบจะเชื่อมต่อใหม่โดยอัตโนมัติ ไม่จำเป็นต้องเริ่มระบบใหม่"
+            })).catch(() => {});
+            return;
+        }
+
         originalError(sanitizeLogText(`[CRITICAL] unhandledRejection: ${msg}`));
         await criticalAlerts.dispatch("unhandledRejection", error, buildWebhookEventPayload({
             target: "ALERT",
             severity: "CRITICAL",
-            category: "SYSTEM",
+            category: "RUNTIME",
             code: "runtime.unhandled_rejection",
             state: "OPEN",
-            title: "Runtime พบ Promise ที่ไม่มีตัวจัดการข้อผิดพลาด",
+            title: "UNHANDLED REJECTION",
             description: sanitizeLogText(msg).substring(0, 900),
             impact: "งานเบื้องหลังบางส่วนอาจหยุดหรือทิ้งสถานะไม่สมบูรณ์",
             action: "ตรวจ Runtime Log เพื่อหาต้นทางของ Promise"
@@ -339,7 +518,8 @@ function initCronJobs({
     cleanupTimer.unref?.();
     cronTimers.push(cleanupTimer);
 
-    // CRON 90s: Health + DB save (lock ป้องกัน overlap)
+    // CRON 180s: Health + DB save (lock ป้องกัน overlap)
+    // Fix #2: เพิ่มจาก 90s → 180s ให้มากกว่า RECOVERY_COOLDOWN_MS (120s) ป้องกัน recovery queue ซ้อนกัน
     let _cronRunning = false;
     const healthTimer = setInterval(async () => {
         if (_cronRunning) { console.warn("[CRON] ⚠️ Previous cycle still running — skipped."); return; }
@@ -354,7 +534,7 @@ function initCronJobs({
         } finally {
             _cronRunning = false;
         }
-    }, 90000);
+    }, 180000);
     healthTimer.unref?.();
     cronTimers.push(healthTimer);
 }
@@ -397,5 +577,6 @@ module.exports = {
     markAppShuttingDown, isShuttingDown,
     originalLog, originalError, originalWarn,
     initLogCapture, initCrashShield, initCronJobs, stopCronJobs, setFatalShutdownHandler, terminateAfterFatal,
-    criticalFingerprint, createCriticalAlertDispatcher, stopRuntimeCleanups
+    criticalFingerprint, createCriticalAlertDispatcher, stopRuntimeCleanups, isTransientGatewayError,
+    isRecoverableRuntimeError
 };

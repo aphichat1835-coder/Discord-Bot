@@ -3,8 +3,8 @@ const { VOICE_LOG_MAX } = require("./config");
 const voiceEventLog = [];
 
 function pushVoiceLog(type, sessionId, detail = "") {
-    const session = require("../sessionManager").getSession(sessionId);
-    voiceEventLog.push({
+    const session = require("./sessionManager").getSession(sessionId);
+    const entry = {
         ts: Date.now(),
         type,
         sessionId,
@@ -12,10 +12,34 @@ function pushVoiceLog(type, sessionId, detail = "") {
         guild: session?.serverId || null,
         voice: session?.voiceId || null,
         detail
-    });
+    };
+    voiceEventLog.push(entry);
 
     if (voiceEventLog.length > VOICE_LOG_MAX) {
         voiceEventLog.splice(0, voiceEventLog.length - VOICE_LOG_MAX);
+    }
+
+    try {
+        const database = require("../../database/index");
+        if (database?.repositories?.voiceEvent) {
+            let serializedDetail = null;
+            if (typeof detail === "string") {
+                serializedDetail = detail;
+            } else if (detail) {
+                serializedDetail = JSON.stringify(detail);
+            }
+            database.repositories.voiceEvent.record({
+                eventType: type,
+                sessionId,
+                accountId: session?.accountName || null,
+                guildId: session?.serverId || null,
+                voiceId: session?.voiceId || null,
+                detail: serializedDetail,
+                occurredAt: entry.ts
+            });
+        }
+    } catch (_) {
+        // Safe suppression: voice worker must never crash if SQLite is busy or unavailable
     }
 }
 

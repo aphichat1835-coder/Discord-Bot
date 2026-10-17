@@ -1,0 +1,2038 @@
+/* eslint-disable complexity -- Session persistence compatibility is behavior-sensitive; refactor separately. */
+/**
+ * Voice Session & Settings Persistence Manager
+ * - Database Architecture: MONGO_URI is authoritative for sessions and identity; SQLite for operational cache.
+ * - Token Encryption: AES-256-GCM with legacy CBC fallback preserved.
+ * - Pool Sizing: maxPoolSize: 20 in mongoose.connect().
+ * - Models: PanelStateModel and BotSettingsModel schemas.
+ * - Metrics: System telemetry increment counters.
+ */
+
+const mongoose = require("mongoose");
+const crypto = require("node:crypto");
+const config = require("../config.json");
+const { sanitizeLogText } = require("../core/safeLogger");
+const { readFiniteInteger } = require("../core/numbers");
+const webhooks = require("../core/webhooks");
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🗺️  REGION 1: IN-MEMORY STATE
+// ════════════════════════════════════════════════════════════════════════════
+const sessions = new Map();
+const reconnectTracking = new Map();
+const sessionLocks = new Set();
+const settingsCache = new Map();
+const RETIRED_ENTERPRISE_AUDIT_SETTINGS = /^(?:audit_|logChannelMapExtra_)/;
+const INTERNAL_EVENT_SETTINGS = /^internal_event_/;
+const RETIRED_ENTERPRISE_AUDIT_PREFIXES = ["audit_", "logChannelMapExtra_"];
+const INTERNAL_EVENT_PREFIX = "internal_event_";
+function isRetiredEnterpriseAuditSetting(key) {
+    return RETIRED_ENTERPRISE_AUDIT_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+function shouldCacheSettingKey(key) {
+    return !String(key || "").startsWith(INTERNAL_EVENT_PREFIX);
+}
+function numberEnv(name, fallback, min = 1) {
+    const value = Number(process.env[name]);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, value);
+}
+
+function boundedLimit(value, max, fallback = max) {
+    const parsed = Number(value);
+    const next = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.min(max, Math.max(1, Math.floor(next)));
+}
+
+const SESSION_LOAD_MAX = numberEnv("SESSION_LOAD_MAX", 100, 1);
+const APPROVED_GUILDS_LOAD_MAX = numberEnv("APPROVED_GUILDS_LOAD_MAX", 1000, 1);
+const PENDING_GUILDS_LOAD_MAX = numberEnv("PENDING_GUILDS_LOAD_MAX", 500, 1);
+const BOT_SETTINGS_LOAD_MAX = numberEnv("BOT_SETTINGS_LOAD_MAX", 500, 1);
+const PANEL_STATES_LOAD_MAX = numberEnv("PANEL_STATES_LOAD_MAX", 500, 1);
+let lastLoadStats = {
+    loaded: 0,
+    cleaned: 0,
+    active: 0,
+    recoverable: 0,
+    at: null,
+    truncated: false,
+    max: SESSION_LOAD_MAX
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🔐  REGION 2: ENCRYPTION (AES-256-GCM + CBC BACKWARD COMPAT)
+// ════════════════════════════════════════════════════════════════════════════
+const LEGACY_KEY = "default-key-change-me-32-chars!!";
+const IS_PRODUCTION = String(process.env.NODE_ENV || "").trim() === "production";
+const ENCRYPTION_SECRET = process.env.ENCRYPTION_KEY || LEGACY_KEY;
+const CURRENT_ENCRYPTION_KEY = crypto.createHash("sha256").update(ENCRYPTION_SECRET).digest();
+const LEGACY_DERIVED_KEY = process.env.ENCRYPTION_KEY
+    ? Buffer.from(crypto.createHash("sha256").update(process.env.ENCRYPTION_KEY).digest("base64").substring(0, 32))
+    : Buffer.from(LEGACY_KEY);
+const LEGACY_DECRYPTION_KEYS = [LEGACY_DERIVED_KEY, Buffer.from(LEGACY_KEY)]
+    .filter((key, index, keys) => keys.findIndex(candidate => candidate.equals(key)) === index);
+
+if (IS_PRODUCTION && !process.env.ENCRYPTION_KEY) {
+    throw new Error("[SECURITY] ENCRYPTION_KEY is required in production for session encryption.");
+}
+
+function encryptToken(text) {
+    if (!text) return null;
+
+    try {
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv(
+            "aes-256-gcm",
+            CURRENT_ENCRYPTION_KEY,
+            iv,
+            { authTagLength: 16 }
+        );
+
+        let encrypted = cipher.update(text, "utf-8", "hex");
+        encrypted += cipher.final("hex");
+
+        const authTag = cipher.getAuthTag().toString("hex");
+
+        return `v3:gcm:${iv.toString("hex")}:${authTag}:${encrypted}`;
+    } catch (err) {
+        console.error(`[SECURITY] ❌ Failed to encrypt token: ${err.message}`);
+        return null;
+    }
+}
+
+function decryptGcmToken(text, key, versioned) {
+    const parts = text.split(":");
+    const offset = versioned ? 2 : 1;
+    const iv = Buffer.from(parts[offset], "hex");
+    const authTag = Buffer.from(parts[offset + 1], "hex");
+    const encrypted = Buffer.from(parts.slice(offset + 2).join(":"), "hex");
+    if (iv.length !== 12 || authTag.length !== 16 || encrypted.length === 0) {
+        throw new Error("Invalid GCM token payload");
+    }
+    const decipher = crypto.createDecipheriv(
+        "aes-256-gcm",
+        key,
+        iv,
+        { authTagLength: 16 }
+    );
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf-8");
+}
+
+function decryptCbcToken(text, key) {
+    const textParts = text.split(":");
+    const iv = Buffer.from(textParts.shift(), "hex");
+    const encryptedText = Buffer.from(textParts.join(":"), "hex");
+    if (iv.length !== 16 || encryptedText.length === 0) throw new Error("Invalid CBC token payload");
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString("utf-8");
+}
+
+function isPlausiblePlaintext(value) {
+    if (typeof value !== "string" || value.length === 0) return false;
+    for (const character of value) {
+        const code = character.codePointAt(0);
+        const allowedWhitespace = code === 9 || code === 10 || code === 13;
+        if ((code < 32 && !allowedWhitespace) || code === 127) return false;
+    }
+    return true;
+}
+
+function decryptV3GcmToken(text) {
+    try {
+        return { plaintext: decryptGcmToken(text, CURRENT_ENCRYPTION_KEY, true), needsMigration: false };
+    } catch (err) {
+        console.error(`[SECURITY] ❌ GCM decryption failed: ${err.message}`);
+        return null;
+    }
+}
+
+function decryptLegacyGcmToken(text) {
+    let lastError = null;
+    for (const key of LEGACY_DECRYPTION_KEYS) {
+        try {
+            return { plaintext: decryptGcmToken(text, key, false), needsMigration: true };
+        } catch (err) {
+            lastError = err;
+        }
+    }
+    console.error(`[SECURITY] ❌ Legacy GCM decryption failed: ${lastError?.message || "unknown"}`);
+    return null;
+}
+
+function decryptLegacyCbcToken(text) {
+    for (const key of LEGACY_DECRYPTION_KEYS) {
+        try {
+            const plaintext = decryptCbcToken(text, key);
+            if (!isPlausiblePlaintext(plaintext)) continue;
+            return { plaintext, needsMigration: true };
+        } catch (_) {}
+    }
+    return null;
+}
+
+function decryptTokenWithMetadata(text) {
+    if (!text || typeof text !== "string") return null;
+    if (text.startsWith("v3:gcm:")) return decryptV3GcmToken(text);
+    if (text.startsWith("gcm:")) return decryptLegacyGcmToken(text);
+
+    const cbcResult = decryptLegacyCbcToken(text);
+    if (cbcResult) return cbcResult;
+
+    console.error("[SECURITY] ❌ Decryption failed for all compatible Voice token formats");
+    return null;
+}
+
+function decryptToken(text) {
+    return decryptTokenWithMetadata(text)?.plaintext || null;
+}
+
+/*
+ * Existing records are migrated only after authenticated decryption succeeds.
+ * ENCRYPTION_KEY must stay unchanged during this transition.
+ */
+function migrateEncryptedToken(text) {
+    const result = decryptTokenWithMetadata(text);
+    if (!result?.plaintext || result.needsMigration !== true) return { token: text, migrated: false };
+    try {
+        const token = encryptToken(result.plaintext);
+        return token ? { token, migrated: true } : { token: text, migrated: false };
+    } finally {
+        result.plaintext = null;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📊  REGION 3: SYSTEM METRICS
+// ════════════════════════════════════════════════════════════════════════════
+const systemMetrics = {
+    requests: 0,
+    errors: 0,
+    reconnects: 0,
+    uptime: Date.now(),
+
+    increment(metric) {
+        if (this[metric] !== undefined) this[metric]++;
+    }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🗄️  REGION 4: MONGOOSE SCHEMAS
+// ════════════════════════════════════════════════════════════════════════════
+
+// --- Session Schema ---
+const sessionSchema = new mongoose.Schema({
+    sessionId: { type: String, required: true, unique: true },
+    token: String,
+
+    // Voice target
+    serverId: String,
+    voiceId: String,
+    serverName: String,
+    voiceName: String,
+    guildIcon: String,
+
+    /*
+     * tokenTail is kept ONLY for backward compatibility with old records.
+     * Do not display tokenTail in status, DM, dashboard, logs, or UI.
+     */
+    tokenTail: String,
+    tokenHash: String,
+
+    // Owner who started the session
+    ownerId: String,
+    ownerAvatar: String,
+    ownerTag: String,
+
+    // Discord account represented by the supplied token
+    accountId: String,
+    accountUsername: String,
+    accountGlobalName: String,
+    accountTag: String,
+    accountAvatar: String,
+
+    startedAt: { type: Number, default: Date.now },
+    lastActivity: { type: Number, default: Date.now },
+    voiceReadyAt: Number,
+    lifecycleGeneration: String,
+    reconnectCount: { type: Number, default: 0 },
+    tokenInvalid: { type: Boolean, default: false },
+    recoveryState: mongoose.Schema.Types.Mixed,
+    notificationState: mongoose.Schema.Types.Mixed,
+
+    // Optional lifecycle fields. Missing state on old records is treated as active.
+    state: String,
+    stoppedAt: Number,
+    stoppedReason: String,
+    stoppedBy: String,
+    lastStopError: String
+});
+const SessionModel = mongoose.model("Session", sessionSchema);
+
+// --- Approved Guild Schema ---
+const approvedGuildSchema = new mongoose.Schema({
+    guildId: { type: String, required: true, unique: true },
+    approvedAt: { type: Number, default: Date.now }
+});
+const ApprovedGuildModel = mongoose.model("ApprovedGuild", approvedGuildSchema);
+
+// --- Pending Guild Schema ---
+const pendingGuildSchema = new mongoose.Schema({
+    guildId: { type: String, required: true, unique: true },
+    guildName: String,
+    requestedBy: String,
+    requestedAt: { type: Number, default: Date.now }
+});
+const PendingGuildModel = mongoose.model("PendingGuild", pendingGuildSchema);
+
+// --- Panel State Schema (เฟส 2: Panel Persistence หลังบอทรีบูต) ---
+const panelStateSchema = new mongoose.Schema({
+    guildId: { type: String, required: true, unique: true },
+    channelId: String,
+    messageId: String,
+    updatedAt: { type: Number, default: Date.now }
+});
+const PanelStateModel = mongoose.model("PanelState", panelStateSchema);
+
+// --- Bot Settings Schema (เฟส Dashboard Config) ---
+const botSettingsSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true },
+    value: mongoose.Schema.Types.Mixed,
+    updatedAt: { type: Number, default: Date.now }
+});
+const BotSettingsModel = mongoose.model("BotSettings", botSettingsSchema);
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🌐  REGION 5: DATABASE CONNECTION
+// ════════════════════════════════════════════════════════════════════════════
+let dbConnected = false;
+let hadPreviousConnectionLoss = false;
+let lastConnectionLostAlertAt = 0;
+const DB_DUAL_INCIDENT_WINDOW_MS = 15000;
+// Keep the lifecycle generation with a deferred delete. A session id can be
+// reused after a restart, so deleting by id alone could remove a newer session.
+const pendingSessionDeletes = new Map();
+const MONGO_POOL_CONFIG = {
+    maxPoolSize: 20,
+    minPoolSize: 2,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000
+};
+
+mongoose.connection.on("connected", () => {
+    console.log("[DATABASE] 🟢 MongoDB Connection Active.");
+    dbConnected = true;
+    lastConnectionLostAlertAt = 0;
+    flushPendingSessionDeletes().catch((err) => {
+        console.error(`[DATABASE] ❌ Pending session delete flush failed: ${sanitizeLifecycleError(err.message)}`);
+    });
+    if (hadPreviousConnectionLoss) {
+        hadPreviousConnectionLoss = false;
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "SUCCESS",
+            category: "DATABASE",
+            code: "database.connection_restored",
+            state: "RESOLVED",
+            title: "CONNECTION RESTORED",
+            description: "การเชื่อมต่อกับ MongoDB กลับมาใช้งานได้ตามปกติแล้ว",
+            impact: "ระบบกลับมาทำงานและบันทึกข้อมูลได้ตามปกติ",
+            action: "ไม่ต้องดำเนินการใดๆ ระบบจัดการต่อเนื่องอัตโนมัติ"
+        }).catch(() => {});
+    }
+});
+
+mongoose.connection.on("disconnected", () => {
+    console.error("[DATABASE] 🔴 MongoDB Connection Lost.");
+    dbConnected = false;
+    hadPreviousConnectionLoss = true;
+    lastConnectionLostAlertAt = Date.now();
+    webhooks.sendWebhookEvent({
+        target: "ALERT",
+        severity: "CRITICAL",
+        category: "DATABASE",
+        code: "database.connection_lost",
+        state: "OPEN",
+        title: "CONNECTION LOST",
+        description: "การเชื่อมต่อกับ MongoDB ขาดหาย ระบบไม่สามารถบันทึกหรืออ่านข้อมูลได้ชั่วคราว",
+        impact: "Session, Verification, ModCase และ Token state อาจไม่ถูกบันทึก",
+        action: "ตรวจสอบสถานะ MongoDB Server หรือ URL การเชื่อมต่อ",
+        dedupeKey: "database-connection-lost",
+        dedupeMs: 5 * 60 * 1000
+    }).catch(() => {});
+});
+
+mongoose.connection.on("error", (err) => {
+    console.error(`[DATABASE] ❌ MongoDB Error: ${err.message}`);
+    dbConnected = false;
+    hadPreviousConnectionLoss = true;
+    // Dual-incident guard: suppress secondary error alert if connection_lost CRITICAL alert was just dispatched
+    if (Date.now() - lastConnectionLostAlertAt < DB_DUAL_INCIDENT_WINDOW_MS) {
+        return;
+    }
+    webhooks.sendWebhookEvent({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "DATABASE",
+        code: "database.error",
+        state: "OPEN",
+        title: "CONNECTION ERROR",
+        description: `เกิดข้อผิดพลาดในการเชื่อมต่อ MongoDB: ${err?.message || "unknown"}`,
+        impact: "คำสั่งที่ต้องใช้ฐานข้อมูลอาจทำงานล้มเหลว",
+        action: "ตรวจสอบสถานะและการเชื่อมต่อของ MongoDB",
+        context: {
+            "รหัสข้อผิดพลาด": String(err?.code || err?.name || "database_error")
+        },
+        dedupeKey: "database-error",
+        dedupeMs: 5 * 60 * 1000
+    }).catch(() => {});
+});
+
+async function connectDB() {
+    if (!process.env.MONGO_URI) {
+        throw new Error("[DATABASE] ❌ FATAL: Missing MONGO_URI Environment Variable. System cannot start.");
+    }
+
+    await mongoose.connect(process.env.MONGO_URI, {
+        serverSelectionTimeoutMS: MONGO_POOL_CONFIG.serverSelectionTimeoutMS,
+        socketTimeoutMS: MONGO_POOL_CONFIG.socketTimeoutMS,
+        maxPoolSize: MONGO_POOL_CONFIG.maxPoolSize,
+        minPoolSize: MONGO_POOL_CONFIG.minPoolSize
+    });
+
+    dbConnected = true;
+    console.log("[DATABASE] 🟢 MongoDB Connected with Pool(20) enabled.");
+    await flushPendingSessionDeletes();
+}
+
+async function disconnectDB() {
+    try {
+        if (mongoose.connection.readyState !== 0) {
+            await flushPendingSessionDeletes();
+        }
+    } catch (err) {
+        // Silently continue shutdown even if pending delete flush fails
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] Disconnect flushPendingSessionDeletes failed:", err?.message || err);
+        }
+    }
+
+    try {
+        const db = require("../../database");
+        await db.shutdown();
+    } catch (err) {
+        // Silently continue shutdown even if database shutdown fails
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] Database shutdown error during disconnect:", err?.message || err);
+        }
+    }
+
+    if (mongoose.connection.readyState === 0) {
+        dbConnected = false;
+        return;
+    }
+    try {
+        await mongoose.disconnect();
+    } finally {
+        dbConnected = false;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🔑 REGION 6: VOICE SESSION IDENTITY HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+function hashToken(token) {
+    return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function buildVoiceSessionId(tokenHash, serverId, ownerId) {
+    const raw = `${tokenHash}:${serverId}:${ownerId}`;
+    const shortHash = crypto.createHash("sha256").update(raw).digest("hex").slice(0, 24);
+    return `vc_${shortHash}`;
+}
+
+function getSafeSessionId(sessionId) {
+    return String(sessionId || "").slice(0, 32);
+}
+
+function isSameTokenGuildSession(session, tokenHash, serverId) {
+    if (!session) return false;
+
+    if (session.tokenHash && session.tokenHash === tokenHash && String(session.serverId) === String(serverId)) {
+        return true;
+    }
+
+    if (!session.tokenHash && session.token) {
+        const token = decryptToken(session.token);
+        if (!token) return false;
+
+        const existingHash = hashToken(token);
+        session.tokenHash = existingHash;
+
+        return existingHash === tokenHash && String(session.serverId) === String(serverId);
+    }
+
+    return false;
+}
+
+function findActiveVoiceSessionByTokenGuild(tokenHash, serverId) {
+    for (const [id, session] of sessions) {
+        if (isSameTokenGuildSession(session, tokenHash, serverId)) {
+            if (isSessionRunnable(session) || session.stoppedReason === "stop_cleanup_failed") {
+                return { id, session };
+            }
+        }
+    }
+
+    return null;
+}
+
+function isSessionRunnable(session) {
+    if (!session) return false;
+    const state = session.state || "active";
+    return state === "active" && session.tokenInvalid !== true;
+}
+
+function shouldResumeSession(session) {
+    if (!session) return false;
+    return (session.state || "active") === "active" && session.tokenInvalid !== true;
+}
+
+function countActiveSessionsByTokenHash(tokenHash) {
+    let count = 0;
+
+    for (const session of sessions.values()) {
+        if (!session) continue;
+
+        if (session.tokenHash === tokenHash && isSessionRunnable(session)) {
+            count++;
+            continue;
+        }
+
+        if (!session.tokenHash && session.token) {
+            const token = decryptToken(session.token);
+            if (token && hashToken(token) === tokenHash && isSessionRunnable(session)) {
+                session.tokenHash = tokenHash;
+                count++;
+            }
+        }
+    }
+
+    return count;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  💾 REGION 7: SESSION LOAD / SAVE
+// ════════════════════════════════════════════════════════════════════════════
+const LOAD_RECOVERABLE_STOP_CLEANUP_MS = 24 * 60 * 60 * 1000;
+const STALE_STOPPED_SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function applySessionLoadRepairs(loadRepairOps) {
+    if (loadRepairOps.length === 0) return;
+
+    try {
+        const repairResult = await SessionModel.bulkWrite(loadRepairOps, { ordered: false });
+        console.log(`[DATABASE] 🔄 Repaired ${repairResult.modifiedCount || 0} Voice session load record(s).`);
+    } catch (err) {
+        console.warn(`[DATABASE] ⚠️ Voice session load repair will retry on the next load: ${err.message}`);
+    }
+}
+
+async function cleanStaleSessionsAndLegacyModels(now) {
+    const staleCutoff = now - STALE_STOPPED_SESSION_RETENTION_MS;
+    const cleanup = await SessionModel.deleteMany({
+        state: { $in: ["failed", "stopped"] },
+        stoppedAt: { $lte: staleCutoff },
+        stoppedReason: { $ne: "stop_cleanup_failed" }
+    }).catch(err => {
+        console.warn(`[DATABASE] ⚠️ stale stopped session cleanup skipped: ${err.message}`);
+        return null;
+    });
+
+    await Promise.allSettled([
+        ApprovedGuildModel.deleteMany({ _id: { $exists: true } }),
+        PendingGuildModel.deleteMany({ _id: { $exists: true } })
+    ]).catch(() => {});
+
+    return cleanup;
+}
+
+function hydrateLoadedSessionRecord(r) {
+    const state = r.state || "active";
+    const migratedToken = migrateEncryptedToken(r.token);
+    const lifecycleGeneration = r.lifecycleGeneration || crypto.randomUUID();
+
+    let repairOp = null;
+    const repairSet = {};
+    const repairFilter = { _id: r._id };
+
+    if (migratedToken.migrated) {
+        repairSet.token = migratedToken.token;
+        repairFilter.token = r.token;
+    }
+    if (!r.lifecycleGeneration) repairSet.lifecycleGeneration = lifecycleGeneration;
+    if (Object.keys(repairSet).length > 0) {
+        repairOp = {
+            updateOne: {
+                filter: repairFilter,
+                update: { $set: repairSet }
+            }
+        };
+    }
+
+    const sessionData = {
+        sessionId: r.sessionId,
+        token: migratedToken.token,
+        serverId: r.serverId,
+        voiceId: r.voiceId,
+        serverName: r.serverName,
+        voiceName: r.voiceName,
+        guildIcon: r.guildIcon,
+        tokenTail: r.tokenTail,
+        tokenHash: r.tokenHash,
+        ownerId: r.ownerId,
+        ownerAvatar: r.ownerAvatar,
+        ownerTag: r.ownerTag,
+        accountId: r.accountId,
+        accountUsername: r.accountUsername,
+        accountGlobalName: r.accountGlobalName,
+        accountTag: r.accountTag,
+        accountAvatar: r.accountAvatar,
+        startedAt: r.startedAt,
+        lastActivity: r.lastActivity,
+        voiceReadyAt: r.voiceReadyAt || null,
+        lifecycleGeneration,
+        state,
+        stoppedAt: r.stoppedAt || null,
+        stoppedReason: r.stoppedReason || null,
+        stoppedBy: r.stoppedBy || null,
+        lastStopError: r.lastStopError || null,
+        connection: null,
+        reconnecting: false,
+        client: null,
+        reconnectCount: Number(r.reconnectCount || 0),
+        tokenInvalid: r.tokenInvalid === true,
+        recoveryState: r.recoveryState || null,
+        notificationState: r.notificationState || null
+    };
+
+    return { sessionData, repairOp, isActive: state === "active" };
+}
+
+function _processLoadedRecords(records, targetMap) {
+    let activeLoaded = 0;
+    let recoverableLoaded = 0;
+    const loadRepairOps = [];
+
+    for (const r of records) {
+        const { sessionData, repairOp, isActive } = hydrateLoadedSessionRecord(r);
+        if (isActive) activeLoaded++;
+        else recoverableLoaded++;
+
+        if (repairOp) {
+            loadRepairOps.push(repairOp);
+        }
+        targetMap.set(sessionData.sessionId, sessionData);
+    }
+
+    return { activeLoaded, recoverableLoaded, loadRepairOps };
+}
+
+function _reconcileOrphanVoiceRuntimes(activeSessionsMap) {
+    try {
+        const voiceRepo = getVoiceRuntimeRepository();
+        if (voiceRepo && typeof voiceRepo.listActiveSessionRuntimes === "function") {
+            const activeRuntimes = voiceRepo.listActiveSessionRuntimes() || [];
+            let orphanPurged = 0;
+            for (const rt of activeRuntimes) {
+                if (rt?.session_id && !activeSessionsMap.has(rt.session_id)) {
+                    voiceRepo.deleteSessionRuntime(rt.session_id);
+                    orphanPurged++;
+                }
+            }
+            if (orphanPurged > 0) {
+                console.log(`[SESSION] 🧹 Reconciled SQLite voice runtimes: purged ${orphanPurged} orphan record(s).`);
+            }
+        }
+    } catch (reconcileErr) {
+        console.warn(`[SESSION] ⚠️ SQLite voice runtime reconciliation warning: ${reconcileErr.message}`);
+    }
+}
+
+async function loadDatabase() {
+    if (!dbConnected) {
+        console.error("[DATABASE] ⚠️ Cannot load sessions: DB not connected. Boot sequence will retry.");
+        return;
+    }
+
+    try {
+        const now = Date.now();
+        const recoverableCutoff = now - LOAD_RECOVERABLE_STOP_CLEANUP_MS;
+        const cleanup = await cleanStaleSessionsAndLegacyModels(now);
+
+        const sessionLoadFilter = {
+            $or: [
+                { state: "active" },
+                { state: { $exists: false } },
+                { state: null },
+                {
+                    stoppedReason: "stop_cleanup_failed",
+                    stoppedAt: { $gte: recoverableCutoff }
+                }
+            ]
+        };
+        const [records, matchingCount] = await Promise.all([
+            SessionModel.find(sessionLoadFilter)
+                .sort({ lastActivity: -1, startedAt: -1, _id: -1 })
+                .limit(SESSION_LOAD_MAX)
+                .lean(),
+            SessionModel.countDocuments(sessionLoadFilter)
+        ]);
+
+        const { activeLoaded, recoverableLoaded, loadRepairOps } = _processLoadedRecords(records, sessions);
+        await applySessionLoadRepairs(loadRepairOps);
+
+        lastLoadStats = {
+            loaded: records.length,
+            cleaned: cleanup?.deletedCount || 0,
+            active: activeLoaded,
+            recoverable: recoverableLoaded,
+            matching: matchingCount,
+            truncated: matchingCount > records.length,
+            max: SESSION_LOAD_MAX,
+            at: now
+        };
+
+        const deleted = cleanup?.deletedCount ? `, cleaned=${cleanup.deletedCount}` : "";
+        console.log(`[DATABASE] 📂 Loaded ${sessions.size} active/recoverable sessions from MongoDB${deleted}.`);
+
+        // Startup reconciliation: purge orphan SQLite voice runtimes that have no active MongoDB counterpart
+        _reconcileOrphanVoiceRuntimes(sessions);
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load sessions: ${err.message}`);
+        throw err;
+    }
+}
+
+function buildSessionSaveOperation(sessionId, session) {
+    const lifecycleGeneration = session.lifecycleGeneration || null;
+    if (!lifecycleGeneration) return null;
+
+    return {
+        updateOne: {
+            // Periodic persistence is a refresh, never an authority to create
+            // a record. The generation fences a stale save from overwriting a
+            // session recreated with the same deterministic session id.
+            filter: { sessionId, lifecycleGeneration },
+            update: {
+                $set: {
+                    token: session.token,
+
+                    serverId: session.serverId,
+                    voiceId: session.voiceId,
+                    serverName: session.serverName,
+                    voiceName: session.voiceName,
+                    guildIcon: session.guildIcon,
+
+                    tokenTail: session.tokenTail,
+                    tokenHash: session.tokenHash,
+
+                    ownerId: session.ownerId,
+                    ownerAvatar: session.ownerAvatar,
+                    ownerTag: session.ownerTag,
+
+                    accountId: session.accountId,
+                    accountUsername: session.accountUsername,
+                    accountGlobalName: session.accountGlobalName,
+                    accountTag: session.accountTag,
+                    accountAvatar: session.accountAvatar,
+
+                    startedAt: session.startedAt,
+                    lastActivity: session.lastActivity,
+                    voiceReadyAt: session.voiceReadyAt || null,
+                    lifecycleGeneration,
+                    reconnectCount: Number(session.reconnectCount || 0),
+                    tokenInvalid: session.tokenInvalid === true,
+                    recoveryState: session.recoveryState || null,
+                    notificationState: session.notificationState || null,
+                    state: session.state || "active",
+                    stoppedAt: session.stoppedAt || null,
+                    stoppedReason: session.stoppedReason || null,
+                    stoppedBy: session.stoppedBy || null,
+                    lastStopError: session.lastStopError || null
+                }
+            },
+            upsert: false
+        }
+    };
+}
+
+async function saveDatabase(deps = {}) {
+    const connected = deps.dbConnected ?? dbConnected;
+    const sessionStore = deps.sessions || sessions;
+    const sessionModel = deps.sessionModel || SessionModel;
+    if (!connected) return;
+
+    try {
+        if (sessionStore.size === 0) {
+            // An empty in-memory map is not proof that the owner requested a destructive wipe.
+            return;
+        }
+
+        const ops = [];
+
+        for (const [id, session] of sessionStore) {
+            const operation = buildSessionSaveOperation(id, session);
+            if (operation) ops.push(operation);
+        }
+
+        if (ops.length === 0) return;
+        const result = await sessionModel.bulkWrite(ops, { ordered: false });
+        const matched = Number(result?.matchedCount ?? result?.n ?? ops.length);
+        if (matched < ops.length) {
+            console.warn(`[DATABASE] ⚠️ Skipped ${ops.length - matched} stale Voice session save(s).`);
+        }
+    } catch (err) {
+        console.error(`[DATABASE] ❌ MongoDB save failed: ${err.message}`);
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "ERROR",
+            category: "DATABASE",
+            code: "session.persistence_failed",
+            state: "OPEN",
+            title: "SESSION PERSISTENCE FAILED",
+            description: `ไม่สามารถบันทึกสถานะเซสชันเสียงลง MongoDB ได้: ${err?.message || "unknown"}`,
+            impact: "สถานะ Voice Session ล่าสุดอาจไม่ถูกบันทึกหากบอทรีสตาร์ทกะทันหัน",
+            action: "ตรวจสอบการเชื่อมต่อ MongoDB และพื้นที่จัดเก็บ",
+            context: {
+                "รหัสข้อผิดพลาด": String(err?.code || err?.name || "save_failed")
+            },
+            dedupeKey: "session-persistence-failed",
+            dedupeMs: 10 * 60 * 1000
+        }).catch(() => {});
+    }
+}
+// ════════════════════════════════════════════════════════════════════════════
+//  💾 REGION 8: SESSION CRUD
+// ════════════════════════════════════════════════════════════════════════════
+async function createSession(token, serverId, voiceId, serverName, ownerId, ownerAvatar, ownerTag) {
+    if (!dbConnected) {
+        throw new Error("DATABASE_NOT_CONNECTED");
+    }
+
+    const tokenHash = hashToken(token);
+    const legacyTail = String(token || "").slice(-8);
+    const sessionId = buildVoiceSessionId(tokenHash, serverId, ownerId);
+
+    for (const [oldId, oldSession] of Array.from(sessions)) {
+        if (
+            isSameTokenGuildSession(oldSession, tokenHash, serverId) &&
+            oldSession.state === "failed" &&
+            oldSession.stoppedReason === "max_reconnect_attempts"
+        ) {
+            await deleteSession(oldId);
+        }
+    }
+
+    /*
+     * Defensive invariant:
+     * - ensureVoiceSession serializes same token + guild and removes the previous item first.
+     * - Reaching this block means a caller bypassed that replacement flow or a stale race remains.
+     * - Same token + different guild and different token + same guild/channel remain allowed.
+     */
+    const existingSameGuild = findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
+    if (existingSameGuild) {
+        console.log(`[SESSION] ⚠️ Blocked duplicate token/guild voice session: ${sanitizeLogText(getSafeSessionId(existingSameGuild.id))}`);
+        throw new Error("ALREADY_ACTIVE_IN_GUILD");
+    }
+
+    const configuredMaxSessions = readFiniteInteger(
+        await getSetting("maxSessions", config.limits.maxSessions),
+        {
+            fallback: readFiniteInteger(config.limits.maxSessions, { fallback: 1, min: 1, max: 1000 }),
+            min: 1,
+            max: 1000
+        }
+    );
+    const activeSessionCount = Array.from(sessions.values()).filter(isSessionRunnable).length;
+    if (activeSessionCount >= configuredMaxSessions) {
+        console.log(`[SESSION] ⛔ System limit reached for owner=${sanitizeLogText(ownerId || "unknown")}`);
+        webhooks.sendWebhookEvent({
+            target: "ALERT",
+            severity: "WARNING",
+            category: "VOICE",
+            code: "voice.capacity_reached",
+            state: "OPEN",
+            title: "VOICE CAPACITY REACHED",
+            description: `ระบบเปิดเซสชันเสียงเต็มขีดจำกัดแล้ว (${activeSessionCount}/${configuredMaxSessions} เซสชัน)`,
+            impact: "ผู้ใช้ไม่สามารถเพิ่มเซสชันเสียงใหม่ได้จนกว่าจะมีเซสชันเดิมถูกลบหรือหยุดทำงาน",
+            action: "ตรวจสอบจำนวนเซสชันในระบบ หรือพิจารณาปรับเพิ่ม maxSessions ในการตั้งค่า",
+            context: {
+                "จำนวนเซสชันปัจจุบัน": `${activeSessionCount}/${configuredMaxSessions}`,
+                "ผู้ขอดำเนินการ": sanitizeLogText(ownerId || "unknown")
+            },
+            dedupeKey: "voice-capacity-reached",
+            dedupeMs: 5 * 60 * 1000
+        }).catch(() => {});
+        throw new Error("SYSTEM_LIMIT");
+    }
+
+    const encryptedToken = encryptToken(token);
+    if (!encryptedToken) {
+        throw new Error("TOKEN_ENCRYPTION_FAILED");
+    }
+
+    const now = Date.now();
+    const lifecycleGeneration = crypto.randomUUID();
+
+    const sessionData = {
+        sessionId,
+        token: encryptedToken,
+
+        serverId,
+        voiceId,
+        serverName,
+        voiceName: null,
+        guildIcon: null,
+
+        /*
+         * Kept only for compatibility with old records/tools.
+         * Do not show this in status or DM.
+         */
+        tokenTail: legacyTail,
+        tokenHash,
+
+        ownerId,
+        ownerAvatar,
+        ownerTag,
+
+        accountId: null,
+        accountUsername: null,
+        accountGlobalName: null,
+        accountTag: null,
+        accountAvatar: null,
+
+        startedAt: now,
+        lastActivity: now,
+        voiceReadyAt: null,
+        lifecycleGeneration,
+        reconnectCount: 0,
+        tokenInvalid: false,
+        recoveryState: null,
+        notificationState: null,
+        state: "active",
+        stoppedAt: null,
+        stoppedReason: null,
+        stoppedBy: null,
+        lastStopError: null
+    };
+
+    sessions.set(sessionId, {
+        ...sessionData,
+        connection: null,
+        reconnecting: false,
+        client: null
+    });
+
+    console.log(`[SESSION] ✅ Voice session created: ${sanitizeLogText(getSafeSessionId(sessionId))} guild=${sanitizeLogText(serverId)} owner=${sanitizeLogText(ownerId || "unknown")}`);
+    systemMetrics.increment("requests");
+
+    try {
+        await SessionModel.updateOne(
+            { sessionId },
+            { $set: sessionData },
+            { upsert: true }
+        );
+    } catch (e) {
+        sessions.delete(sessionId);
+        console.error(`[DATABASE] ❌ Failed to persist session ${sessionId}: ${sanitizeLifecycleError(e.message)}`);
+        throw new Error("SESSION_PERSIST_FAILED");
+    }
+
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) {
+            repo.upsertSessionRuntime({
+                sessionId,
+                serverId,
+                ownerId,
+                state: "active",
+                lastHeartbeat: Date.now(),
+                lastActivity: Date.now(),
+                reconnectCount: 0,
+                statusLabel: "active"
+            });
+        }
+    } catch (err) {
+        // Ignored: Best-effort upsert of active session runtime state
+    }
+
+    try {
+        const db = require("../../database");
+        db?.repositories?.sessionEvent?.record({
+            sessionId,
+            accountId: ownerId,
+            eventType: "voice_session_created",
+            metadata: { serverId, state: "active" }
+        });
+    } catch (_err) {
+        // Ignored: Session logging to runtime repository is best-effort
+    }
+
+    return sessionId;
+}
+
+function getVoiceRuntimeRepository() {
+    try {
+        const db = require("../../database");
+        return db?.repositories?.voiceSessionRuntime || null;
+    } catch (err) {
+        // Voice runtime repository may not be initialized yet in early boot or isolated test
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] Voice runtime repository unavailable:", err?.message || err);
+        }
+        return null;
+    }
+}
+
+function getSession(sessionId) {
+    return sessions.get(sessionId);
+}
+
+function touchSession(sessionId) {
+    const session = sessions.get(sessionId);
+    if (session) {
+        session.lastActivity = Date.now();
+        try {
+            const repo = getVoiceRuntimeRepository();
+            if (repo) repo.recordHeartbeat(sessionId, session.lastActivity);
+        } catch (_err) {
+            // Ignored: Heartbeat record is best-effort
+        }
+    }
+    return session;
+}
+
+async function updateSessionMetadata(sessionId, metadata = {}) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+
+    const allowedKeys = [
+        "serverName",
+        "voiceName",
+        "guildIcon",
+        "accountId",
+        "accountUsername",
+        "accountGlobalName",
+        "accountTag",
+        "accountAvatar",
+        "lastActivity",
+        "state",
+        "stoppedAt",
+        "stoppedReason",
+        "stoppedBy",
+        "lastStopError"
+    ];
+
+    const update = {};
+
+    for (const key of allowedKeys) {
+        if (Object.hasOwn(metadata, key)) {
+            session[key] = metadata[key] ?? null;
+            update[key] = session[key];
+        }
+    }
+
+    session.lastActivity = Date.now();
+    update.lastActivity = session.lastActivity;
+
+    if (dbConnected && Object.keys(update).length > 0) {
+        try {
+            await SessionModel.updateOne(
+                { sessionId },
+                { $set: update }
+            );
+        } catch (err) {
+            console.error(`[DATABASE] ❌ Failed to update metadata for ${sessionId}: ${err.message}`);
+            systemMetrics.increment("errors");
+        }
+    }
+
+    return true;
+}
+
+async function saveVoiceRuntimeState(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) {
+            repo.upsertSessionRuntime({
+                sessionId,
+                serverId: session.serverId,
+                ownerId: session.ownerId,
+                state: session.state || "active",
+                lastHeartbeat: Date.now(),
+                lastActivity: session.lastActivity || Date.now(),
+                reconnectCount: Number(session.reconnectCount || 0),
+                statusLabel: session.recoveryState?.phase || session.statusLabel || "active"
+            });
+        }
+    } catch (err) {
+        // Best-effort SQLite heartbeat upsert during saveVoiceRuntimeState
+        if (process.env.NODE_ENV !== "test") {
+            console.debug?.("[voiceWorker:sessionManager] SQLite upsertSessionRuntime failed:", err?.message || err);
+        }
+    }
+
+    if (!dbConnected) return false;
+
+    try {
+        const result = await SessionModel.updateOne(
+            { sessionId },
+            {
+                $set: {
+                    lifecycleGeneration: session.lifecycleGeneration || null,
+                    voiceReadyAt: session.voiceReadyAt || null,
+                    reconnectCount: Number(session.reconnectCount || 0),
+                    tokenInvalid: session.tokenInvalid === true,
+                    recoveryState: session.recoveryState || null,
+                    notificationState: session.notificationState || null,
+                    lastActivity: session.lastActivity || Date.now()
+                }
+            }
+        );
+        return (result?.matchedCount ?? result?.n ?? 0) > 0;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to save voice runtime state for ${sessionId}: ${sanitizeLifecycleError(err.message)}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+function sanitizeLifecycleError(value) {
+    return sanitizeLogText(value || "UNKNOWN_ERROR").slice(0, 300);
+}
+
+function cleanupSessionMemory(sessionId, session) {
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+
+    if (session.connection) {
+        try {
+            session.connection.destroy();
+        } catch {}
+        session.connection = null;
+    }
+
+    session.reconnecting = false;
+    sessions.delete(sessionId);
+    reconnectTracking.delete(sessionId);
+    sessionLocks.delete(sessionId);
+}
+
+function queuePendingSessionDelete(sessionId, lifecycleGeneration, pendingDeletes = pendingSessionDeletes) {
+    pendingDeletes.set(sessionId, lifecycleGeneration || null);
+}
+
+function buildPendingSessionDeleteFilter(entries) {
+    return {
+        $or: entries.map(([sessionId, lifecycleGeneration]) => (
+            lifecycleGeneration
+                ? { sessionId, lifecycleGeneration }
+                : { sessionId }
+        ))
+    };
+}
+
+async function flushPendingSessionDeletes(deps = {}) {
+    const connected = deps.dbConnected ?? dbConnected;
+    const pendingDeletes = deps.pendingDeletes || pendingSessionDeletes;
+    const sessionModel = deps.sessionModel || SessionModel;
+    if (!connected || pendingDeletes.size === 0) return;
+
+    const entries = [...pendingDeletes];
+    try {
+        await sessionModel.deleteMany(buildPendingSessionDeleteFilter(entries));
+        const voiceRepo = deps.voiceRuntimeRepo || getVoiceRuntimeRepository();
+        for (const [sessionId] of entries) {
+            pendingDeletes.delete(sessionId);
+            if (voiceRepo && typeof voiceRepo.deleteSessionRuntime === "function") {
+                try { voiceRepo.deleteSessionRuntime(sessionId); } catch (_) {}
+            }
+        }
+        console.log(`[DATABASE] 🧹 Flushed ${entries.length} pending session delete(s).`);
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to flush pending session deletes: ${sanitizeLifecycleError(err.message)}`);
+        systemMetrics.increment("errors");
+    }
+}
+
+async function markSessionFailed(sessionId, reason, stoppedBy = null, err = null) {
+    const session = sessions.get(sessionId);
+    if (!session) {
+        return {
+            ok: false,
+            memoryUpdated: false,
+            dbPersisted: false,
+            safeError: "SESSION_NOT_FOUND"
+        };
+    }
+
+    const now = Date.now();
+    session.state = "failed";
+    session.stoppedAt = now;
+    session.stoppedReason = reason || "unknown_failure";
+    session.stoppedBy = stoppedBy || null;
+    session.lastStopError = sanitizeLifecycleError(err?.message || err || reason || "unknown_failure");
+    session.reconnecting = false;
+    session.lastActivity = now;
+
+    if (!dbConnected) {
+        systemMetrics.increment("errors");
+        return {
+            ok: false,
+            memoryUpdated: true,
+            dbPersisted: false,
+            safeError: "DATABASE_NOT_CONNECTED"
+        };
+    }
+
+    try {
+        const result = await SessionModel.updateOne(
+            { sessionId },
+            {
+                $set: {
+                    state: session.state,
+                    stoppedAt: session.stoppedAt,
+                    stoppedReason: session.stoppedReason,
+                    stoppedBy: session.stoppedBy,
+                    lastStopError: session.lastStopError,
+                    lastActivity: session.lastActivity
+                }
+            }
+        );
+
+        const matched = result?.matchedCount ?? result?.n ?? 0;
+        if (matched < 1) {
+            systemMetrics.increment("errors");
+            return {
+                ok: false,
+                memoryUpdated: true,
+                dbPersisted: false,
+                safeError: "SESSION_NOT_FOUND_IN_DATABASE"
+            };
+        }
+
+        return {
+            ok: true,
+            memoryUpdated: true,
+            dbPersisted: true,
+            safeError: null
+        };
+    } catch (dbErr) {
+        const safeError = sanitizeLifecycleError(dbErr.message);
+        console.error(`[DATABASE] ❌ Failed to mark session ${sessionId} failed: ${safeError}`);
+        systemMetrics.increment("errors");
+        return {
+            ok: false,
+            memoryUpdated: true,
+            dbPersisted: false,
+            safeError
+        };
+    }
+}
+
+function getAllSessions() {
+    return sessions;
+}
+
+function _safeDeleteSessionRuntime(sessionId, context = "cleanup") {
+    try {
+        const repo = getVoiceRuntimeRepository();
+        if (repo) repo.deleteSessionRuntime(sessionId);
+    } catch (err) {
+        if (context === "warning") {
+            console.warn(`[SESSION] ⚠️ Failed to delete session runtime for ${sessionId}: ${err.message}`);
+        }
+    }
+}
+
+function _recordSessionDeletedEvent(sessionId, session) {
+    try {
+        const db = require("../../database");
+        db?.repositories?.sessionEvent?.record({
+            sessionId,
+            eventType: "voice_session_deleted",
+            metadata: { stoppedReason: session?.stoppedReason || "manual_or_error" }
+        });
+    } catch (err) {
+        console.warn(`[SESSION] ⚠️ Failed to record session delete event for ${sessionId}: ${err.message}`);
+    }
+}
+
+function _handleDisconnectedOrFailedDelete(sessionId, session, err = null) {
+    if (err) {
+        console.error(`[DATABASE] ❌ Failed to delete session ${sessionId}; queued retry: ${sanitizeLifecycleError(err.message)}`);
+    } else {
+        console.warn(`[DATABASE] ⚠️ Queued session ${sessionId} delete until database reconnects`);
+    }
+    queuePendingSessionDelete(sessionId, session.lifecycleGeneration);
+    _safeDeleteSessionRuntime(sessionId, "cleanup");
+    cleanupSessionMemory(sessionId, session);
+    systemMetrics.increment("errors");
+    console.log(`[SESSION] 🗑️ Session removed from memory: ${sessionId}`);
+    return true;
+}
+
+async function deleteSession(sessionId, options = {}) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+
+    const expectedGeneration = options.expectedGeneration || null;
+    if (expectedGeneration && session.lifecycleGeneration !== expectedGeneration) {
+        console.warn(`[SESSION] ⚠️ Refused stale cleanup for ${sanitizeLogText(getSafeSessionId(sessionId))}; lifecycle generation changed.`);
+        return false;
+    }
+
+    if (!dbConnected) {
+        return _handleDisconnectedOrFailedDelete(sessionId, session);
+    }
+
+    try {
+        const deleteGeneration = expectedGeneration || session.lifecycleGeneration || null;
+        const deleteFilter = deleteGeneration
+            ? { sessionId, lifecycleGeneration: deleteGeneration }
+            : { sessionId };
+        const result = await SessionModel.deleteOne(deleteFilter);
+        const deleted = result?.deletedCount ?? result?.n ?? 0;
+        if (deleted < 1) {
+            console.warn(`[DATABASE] ⚠️ Session ${sessionId} was already absent in database; clearing memory record`);
+        }
+    } catch (err) {
+        return _handleDisconnectedOrFailedDelete(sessionId, session, err);
+    }
+
+    pendingSessionDeletes.delete(sessionId);
+    cleanupSessionMemory(sessionId, session);
+
+    _safeDeleteSessionRuntime(sessionId, "warning");
+    _recordSessionDeletedEvent(sessionId, session);
+
+    console.log(`[SESSION] 🗑️ Session removed: ${sessionId}`);
+
+    return true;
+}
+async function pauseSession(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) return false;
+
+    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+
+    if (session.connection) {
+        try {
+            session.connection.destroy();
+        } catch {}
+        session.connection = null;
+    }
+
+    session.reconnecting = false;
+    session.lastActivity = Date.now();
+
+    if (dbConnected) {
+        try {
+            await SessionModel.updateOne(
+                { sessionId },
+                { $set: { lastActivity: session.lastActivity } }
+            );
+        } catch (err) {
+            console.error(`[DATABASE] ❌ Failed to pause session ${sessionId}: ${err.message}`);
+            systemMetrics.increment("errors");
+        }
+    }
+
+    return true;
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🛡️ REGION 9: RECONNECT TRACKING / LOCKS
+// ════════════════════════════════════════════════════════════════════════════
+function acquireSessionLock(sessionId) {
+    if (sessionLocks.has(sessionId)) return false;
+    sessionLocks.add(sessionId);
+    return true;
+}
+
+function releaseSessionLock(sessionId) {
+    sessionLocks.delete(sessionId);
+}
+
+function isSessionLocked(sessionId) {
+    return sessionLocks.has(sessionId);
+}
+
+function getReconnectInfo(sessionId) {
+    if (!reconnectTracking.has(sessionId)) {
+        reconnectTracking.set(sessionId, {
+            attempts: 0,
+            lastAttempt: 0,
+            nextAllowedAt: 0
+        });
+    }
+
+    return reconnectTracking.get(sessionId);
+}
+
+function resetReconnectInfo(sessionId) {
+    reconnectTracking.delete(sessionId);
+}
+
+function canAttemptReconnect(sessionId) {
+    const info = getReconnectInfo(sessionId);
+    return Date.now() >= (info.nextAllowedAt || 0);
+}
+
+function recordReconnectAttempt(sessionId) {
+    const info = getReconnectInfo(sessionId);
+    const now = Date.now();
+
+    info.attempts += 1;
+    info.lastAttempt = now;
+
+    const baseDelay = config.reconnect?.baseDelayMs || 5000;
+    const maxDelay = config.reconnect?.maxDelayMs || 300000;
+    const delay = Math.min(maxDelay, baseDelay * Math.pow(2, Math.max(0, info.attempts - 1)));
+
+    info.nextAllowedAt = now + delay;
+
+    reconnectTracking.set(sessionId, info);
+    systemMetrics.increment("reconnects");
+
+    return info;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ✅ REGION 10: APPROVED / PENDING GUILDS
+// ════════════════════════════════════════════════════════════════════════════
+async function getApprovedGuilds() {
+    if (!dbConnected) return [];
+
+    try {
+        const docs = await ApprovedGuildModel.find({})
+            .select("guildId")
+            .sort({ approvedAt: -1, _id: -1 })
+            .limit(APPROVED_GUILDS_LOAD_MAX)
+            .lean();
+        return docs.map(d => d.guildId);
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load approved guilds: ${err.message}`);
+        systemMetrics.increment("errors");
+        return [];
+    }
+}
+
+async function getApprovedGuildDocs(limit = APPROVED_GUILDS_LOAD_MAX) {
+    if (!dbConnected) return [];
+
+    try {
+        return await ApprovedGuildModel.find({})
+            .select("guildId approvedAt")
+            .sort({ approvedAt: -1, _id: -1 })
+            .limit(boundedLimit(limit, APPROVED_GUILDS_LOAD_MAX))
+            .lean();
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load approved guild docs: ${err.message}`);
+        systemMetrics.increment("errors");
+        return [];
+    }
+}
+
+async function isGuildApproved(_guildId) {
+    return true;
+}
+
+async function approveGuild(guildId) {
+    if (!dbConnected) return false;
+
+    try {
+        await ApprovedGuildModel.updateOne(
+            { guildId },
+            { $set: { guildId, approvedAt: Date.now() } },
+            { upsert: true }
+        );
+        await PendingGuildModel.deleteOne({ guildId });
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to approve guild ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function removeApprovedGuild(guildId) {
+    if (!dbConnected) return false;
+
+    try {
+        await ApprovedGuildModel.deleteOne({ guildId });
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to remove approved guild ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function addPendingGuild(guildId, guildName, requestedBy) {
+    if (!dbConnected) return false;
+
+    try {
+        await PendingGuildModel.updateOne(
+            { guildId },
+            {
+                $set: {
+                    guildId,
+                    guildName,
+                    requestedBy,
+                    requestedAt: Date.now()
+                }
+            },
+            { upsert: true }
+        );
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to add pending guild ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function getPendingGuilds() {
+    if (!dbConnected) return [];
+
+    try {
+        return await PendingGuildModel.find({})
+            .select("guildId guildName requestedBy requestedAt")
+            .sort({ requestedAt: -1, _id: -1 })
+            .limit(PENDING_GUILDS_LOAD_MAX)
+            .lean();
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load pending guilds: ${err.message}`);
+        systemMetrics.increment("errors");
+        return [];
+    }
+}
+
+async function removePendingGuild(guildId) {
+    if (!dbConnected) return false;
+
+    try {
+        await PendingGuildModel.deleteOne({ guildId });
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to remove pending guild ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🧾 REGION 12: PANEL STATE
+// ════════════════════════════════════════════════════════════════════════════
+async function savePanelState(guildId, channelId, messageId) {
+    if (!dbConnected) return false;
+
+    try {
+        await PanelStateModel.updateOne(
+            { guildId },
+            {
+                $set: {
+                    guildId,
+                    channelId,
+                    messageId,
+                    updatedAt: Date.now()
+                }
+            },
+            { upsert: true }
+        );
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to save panel state for ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function getPanelState(guildId) {
+    if (!dbConnected) return null;
+
+    try {
+        return await PanelStateModel.findOne({ guildId });
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to get panel state for ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return null;
+    }
+}
+
+async function getPanelStates(limit = PANEL_STATES_LOAD_MAX) {
+    if (!dbConnected) return [];
+
+    try {
+        return await PanelStateModel.find({})
+            .select("guildId channelId messageId updatedAt")
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(boundedLimit(limit, PANEL_STATES_LOAD_MAX))
+            .lean();
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load panel states: ${err.message}`);
+        systemMetrics.increment("errors");
+        return [];
+    }
+}
+
+async function deletePanelState(guildId) {
+    if (!dbConnected) return false;
+
+    try {
+        await PanelStateModel.deleteOne({ guildId });
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to delete panel state for ${guildId}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+//  ⚙️ REGION 15: BOT SETTINGS
+// ════════════════════════════════════════════════════════════════════════════
+async function setSetting(key, value) {
+    if (!dbConnected) return false;
+
+    try {
+        const result = await BotSettingsModel.updateOne(
+            { key },
+            {
+                $set: {
+                    key,
+                    value,
+                    updatedAt: Date.now()
+                }
+            },
+            { upsert: true }
+        );
+        if (result?.acknowledged === false) return false;
+        if (shouldCacheSettingKey(key)) settingsCache.set(key, value);
+        else settingsCache.delete(key);
+
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to set setting ${key}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function getSetting(key, fallback = null) {
+    if (!dbConnected) return fallback;
+
+    try {
+        const doc = await BotSettingsModel.findOne({ key });
+        if (!doc) return fallback;
+        if (shouldCacheSettingKey(key)) settingsCache.set(key, doc.value);
+        return doc.value;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to get setting ${key}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return fallback;
+    }
+}
+
+async function getSettingStrict(key) {
+    if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
+    const doc = await BotSettingsModel.findOne({ key: String(key) }).lean();
+    if (!doc) return { found: false, value: null };
+    if (shouldCacheSettingKey(key)) settingsCache.set(String(key), doc.value);
+    return { found: true, value: doc.value };
+}
+
+async function getLatestSettingByPrefix(prefix) {
+    if (typeof prefix !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(prefix)) {
+        throw new Error("INVALID_SETTING_PREFIX");
+    }
+    if (!dbConnected) throw new Error("DATABASE_NOT_CONNECTED");
+    const docs = await BotSettingsModel.find()
+        .where("key")
+        .gte(prefix)
+        .lt(`${prefix}\uffff`)
+        .sort({ updatedAt: -1, _id: -1 })
+        .limit(1)
+        .lean();
+    const doc = docs[0] || null;
+    return doc ? { key: doc.key, value: doc.value, updatedAt: doc.updatedAt } : null;
+}
+
+async function deleteSetting(key) {
+    if (!dbConnected) return false;
+
+    try {
+        const result = await BotSettingsModel.deleteOne({ key });
+        if (result?.acknowledged === false) return false;
+        settingsCache.delete(key);
+        return true;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to delete setting ${key}: ${err.message}`);
+        systemMetrics.increment("errors");
+        return false;
+    }
+}
+
+async function getAllSettings() {
+    if (!dbConnected) return {};
+
+    try {
+        const docs = await BotSettingsModel.find({
+            $nor: [
+                { key: RETIRED_ENTERPRISE_AUDIT_SETTINGS },
+                { key: INTERNAL_EVENT_SETTINGS }
+            ]
+        })
+            .select("key value updatedAt")
+            .sort({ updatedAt: -1, _id: -1 })
+            .limit(BOT_SETTINGS_LOAD_MAX)
+            .lean();
+        const result = {};
+
+        for (const doc of docs) {
+            const key = String(doc.key || "");
+            if (isRetiredEnterpriseAuditSetting(key) || key.startsWith(INTERNAL_EVENT_PREFIX)) continue;
+            result[doc.key] = doc.value;
+            settingsCache.set(doc.key, doc.value);
+        }
+
+        return result;
+    } catch (err) {
+        console.error(`[DATABASE] ❌ Failed to load all settings: ${err.message}`);
+        systemMetrics.increment("errors");
+        return {};
+    }
+}
+
+function getCachedSetting(key, fallback = null) {
+    return settingsCache.has(key) ? settingsCache.get(key) : fallback;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📊 REGION 16: METRICS / STATUS
+// ════════════════════════════════════════════════════════════════════════════
+function getSystemMetrics() {
+    return {
+        ...systemMetrics,
+        uptimeMs: Date.now() - systemMetrics.uptime,
+        sessions: sessions.size,
+        dbConnected,
+        lockedSessions: sessionLocks.size,
+        reconnectTracking: reconnectTracking.size
+    };
+}
+
+function getSessionDiagnostics() {
+    const byState = {};
+    let runnable = 0;
+    let withClient = 0;
+    let readyClients = 0;
+    let withConnection = 0;
+    let reconnecting = 0;
+
+    for (const session of sessions.values()) {
+        const state = session?.state || "active";
+        byState[state] = (byState[state] || 0) + 1;
+        if (isSessionRunnable(session)) runnable++;
+        if (session?.client) withClient++;
+        if (session?.client?.isReady?.()) readyClients++;
+        if (session?.connection) withConnection++;
+        if (session?.reconnecting) reconnecting++;
+    }
+
+    return {
+        total: sessions.size,
+        runnable,
+        byState,
+        withClient,
+        readyClients,
+        withConnection,
+        reconnecting,
+        lockedSessions: sessionLocks.size,
+        reconnectTracking: reconnectTracking.size,
+        pendingSessionDeletes: pendingSessionDeletes.size,
+        settingsCache: settingsCache.size,
+        limits: {
+            sessionLoadMax: SESSION_LOAD_MAX,
+            approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
+            pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
+            botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
+            panelStatesLoadMax: PANEL_STATES_LOAD_MAX
+        },
+        lastLoad: lastLoadStats
+    };
+}
+
+function getDatabaseStatus() {
+    return {
+        connected: dbConnected,
+        readyState: mongoose.connection.readyState,
+        host: mongoose.connection.host || null,
+        name: mongoose.connection.name || null,
+        pool: MONGO_POOL_CONFIG,
+        models: mongoose.modelNames().length,
+        loadLimits: {
+            sessionLoadMax: SESSION_LOAD_MAX,
+            approvedGuildsLoadMax: APPROVED_GUILDS_LOAD_MAX,
+            pendingGuildsLoadMax: PENDING_GUILDS_LOAD_MAX,
+            botSettingsLoadMax: BOT_SETTINGS_LOAD_MAX,
+            panelStatesLoadMax: PANEL_STATES_LOAD_MAX
+        }
+    };
+}
+
+function buildVoiceSessionAccountSummary(session) {
+    return {
+        ownerId: session.ownerId,
+        ownerTag: session.ownerTag || null,
+        ownerAvatar: session.ownerAvatar || null,
+        accountId: session.accountId || null,
+        accountUsername: session.accountUsername || null,
+        accountGlobalName: session.accountGlobalName || null,
+        accountTag: session.accountTag || null,
+        accountAvatar: session.accountAvatar || null
+    };
+}
+
+function buildVoiceSessionStateSummary(session) {
+    const sessionState = session.state || "active";
+    return {
+        state: sessionState,
+        stoppedAt: session.stoppedAt || null,
+        stoppedReason: session.stoppedReason || null,
+        stoppedBy: session.stoppedBy || null,
+        lastStopError: session.lastStopError || null,
+        clientReady: !!session.client?.isReady?.(),
+        staleSuspected: sessionState === "active" && !session.connection,
+        ghostSuspected: session.stoppedReason === "stop_cleanup_failed",
+        connectionStatus: session.connection?.state?.status || null
+    };
+}
+
+function getVoiceSessionSummary(session) {
+    if (!session) return null;
+
+    return {
+        sessionId: session.sessionId,
+        serverId: session.serverId,
+        voiceId: session.voiceId,
+        serverName: session.serverName || null,
+        voiceName: session.voiceName || null,
+        guildIcon: session.guildIcon || null,
+        ...buildVoiceSessionAccountSummary(session),
+        startedAt: session.startedAt,
+        lastActivity: session.lastActivity,
+        reconnecting: !!session.reconnecting,
+        reconnectCount: session.reconnectCount || 0,
+        tokenInvalid: !!session.tokenInvalid,
+        hasConnection: !!session.connection,
+        ...buildVoiceSessionStateSummary(session)
+    };
+}
+
+function getAllSessionSummaries() {
+    return Array.from(sessions.values()).map(getVoiceSessionSummary);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🧩 REGION 17: COMPATIBILITY HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+function getSessionToken(sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session || !session.token) return null;
+    return decryptToken(session.token);
+}
+
+function getSessionTokenHash(sessionId, sessionOverride = null) {
+    const session = sessionOverride || sessions.get(sessionId);
+    if (!session) return null;
+
+    if (session.tokenHash) return session.tokenHash;
+
+    const token = getSessionToken(sessionId);
+    if (!token) return null;
+
+    const tokenHash = hashToken(token);
+    session.tokenHash = tokenHash;
+
+    return tokenHash;
+}
+
+function getSessionByTokenGuild(tokenHash, serverId) {
+    const found = findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
+    return found?.session || null;
+}
+
+function hasActiveTokenGuildSession(tokenHash, serverId) {
+    return !!findActiveVoiceSessionByTokenGuild(tokenHash, serverId);
+}
+
+function getActiveSessionsByTokenHash(tokenHash) {
+    const result = [];
+
+    for (const session of sessions.values()) {
+        const currentHash = session.tokenHash || getSessionTokenHash(session.sessionId, session);
+        if (currentHash === tokenHash && isSessionRunnable(session)) result.push(session);
+    }
+
+    return result;
+}
+
+function getActiveSessionsByGuild(serverId) {
+    const result = [];
+
+    for (const session of sessions.values()) {
+        if (String(session.serverId) === String(serverId) && isSessionRunnable(session)) {
+            result.push(session);
+        }
+    }
+
+    return result;
+}
+
+function getSessionShortId(sessionId) {
+    return String(sessionId || "").replace(/^vc_/, "").slice(0, 10);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  📤 REGION 18: EXPORTS
+// ════════════════════════════════════════════════════════════════════════════
+module.exports = {
+    // DB
+    connectDB,
+    disconnectDB,
+    loadDatabase,
+    saveDatabase,
+    getDatabaseStatus,
+    getSessionDiagnostics,
+
+    // Session CRUD
+    createSession,
+    getSession,
+    touchSession,
+    updateSessionMetadata,
+    saveVoiceRuntimeState,
+    getAllSessions,
+    getAllSessionSummaries,
+    getVoiceSessionSummary,
+    markSessionFailed,
+    deleteSession,
+    pauseSession,
+
+    // Voice identity helpers
+    hashToken,
+    buildVoiceSessionId,
+    findActiveVoiceSessionByTokenGuild,
+    countActiveSessionsByTokenHash,
+    isSessionRunnable,
+    shouldResumeSession,
+    getSessionToken,
+    getSessionTokenHash,
+    getSessionByTokenGuild,
+    hasActiveTokenGuildSession,
+    getActiveSessionsByTokenHash,
+    getActiveSessionsByGuild,
+    getSessionShortId,
+
+    // Reconnect / locks
+    acquireSessionLock,
+    releaseSessionLock,
+    isSessionLocked,
+    getReconnectInfo,
+    resetReconnectInfo,
+    canAttemptReconnect,
+    recordReconnectAttempt,
+
+    // Backward-compatible aliases for existing project files
+    lockSession: acquireSessionLock,
+    unlockSession: releaseSessionLock,
+    addReconnect: recordReconnectAttempt,
+    clearReconnect: resetReconnectInfo,
+    getToken: getSessionToken,
+
+    // Guild approvals
+    getApprovedGuilds,
+    getApprovedGuildDocs,
+    isGuildApproved,
+    approveGuild,
+    removeApprovedGuild,
+    addPendingGuild,
+    getPendingGuilds,
+    removePendingGuild,
+
+    // Panel state
+    savePanelState,
+    getPanelState,
+    getPanelStates,
+    deletePanelState,
+
+    // Settings
+    setSetting,
+    getSetting,
+    getSettingStrict,
+    getLatestSettingByPrefix,
+    getCachedSetting,
+    deleteSetting,
+    getAllSettings,
+
+    // Metrics
+    systemMetrics,
+    getSystemMetrics,
+
+    // Raw models for existing internal dashboards/tools
+    SessionModel,
+    ApprovedGuildModel,
+    PendingGuildModel,
+    PanelStateModel,
+    BotSettingsModel,
+
+    // Encryption helpers kept for existing code paths
+    encryptToken,
+    decryptToken,
+
+    _test: {
+        shouldCacheSettingKey,
+        INTERNAL_EVENT_SETTINGS,
+        decryptTokenWithMetadata,
+        isPlausiblePlaintext,
+        migrateEncryptedToken,
+        buildSessionSaveOperation,
+        saveDatabase,
+        queuePendingSessionDelete,
+        buildPendingSessionDeleteFilter,
+        flushPendingSessionDeletes,
+        hydrateLoadedSessionRecord,
+        cleanStaleSessionsAndLegacyModels,
+        applySessionLoadRepairs,
+        countActiveSessionsByTokenHash,
+        _processLoadedRecords,
+        _reconcileOrphanVoiceRuntimes,
+        cleanupSessionMemory,
+        _safeDeleteSessionRuntime,
+        _recordSessionDeletedEvent,
+        _handleDisconnectedOrFailedDelete,
+        buildVoiceSessionAccountSummary,
+        buildVoiceSessionStateSummary,
+        isRetiredEnterpriseAuditSetting,
+        boundedLimit,
+        numberEnv,
+        resetDbAlertState: () => { lastConnectionLostAlertAt = 0; }
+    }
+};

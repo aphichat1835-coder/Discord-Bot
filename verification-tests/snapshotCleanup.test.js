@@ -37,11 +37,12 @@ function snapshotModel(candidates = []) {
         ...candidate
     }));
     const matching = filter => documents.filter(document => {
-        const completeMatches = filter?.complete === true
-            ? document.complete === true
-            : filter?.complete?.$ne === true
-                ? document.complete !== true
-                : true;
+        let completeMatches = true;
+        if (filter?.complete === true) {
+            completeMatches = document.complete === true;
+        } else if (filter?.complete?.$ne === true) {
+            completeMatches = document.complete !== true;
+        }
         const cutoff = filter?.$or?.[0]?.updatedAt?.$lt;
         const ageMatches = cutoff === undefined ||
             (document.updatedAt !== undefined && document.updatedAt < cutoff) ||

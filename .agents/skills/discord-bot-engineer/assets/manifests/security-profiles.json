@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "profiles": {
+    "components": ["forged_custom_id", "stale_control", "ownership_bypass", "double_submit"],
+    "moderation": ["permission_bypass", "role_escalation", "scope_confusion", "mass_action_replay"],
+    "verification": ["replay", "enumeration", "identity_confusion", "open_redirect", "excessive_data"],
+    "economy": ["duplicate_credit", "negative_balance", "race", "overflow", "ledger_tamper"],
+    "oauth": ["csrf", "state_replay", "session_fixation", "horizontal_privilege", "token_leak"],
+    "media": ["ssrf", "unbounded_download", "malicious_media", "resource_exhaustion"],
+    "monetization": ["duplicate_fulfillment", "ownership_confusion", "revocation_failure", "event_reorder"],
+    "distributed": ["double_owner", "stale_lease", "poison_job", "retry_side_effect"],
+    "experience": ["mass_mention", "unsafe_markdown", "sensitive_error", "misleading_status"]
+  }
+}

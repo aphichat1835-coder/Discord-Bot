@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "context-ledger",
+  "type": "object",
+  "required": ["version", "request", "repository", "entries", "invalidations"],
+  "properties": {
+    "version": {"const": 1},
+    "request": {"type": "string"},
+    "repository": {"type": "object"},
+    "entries": {"type": "array"},
+    "invalidations": {"type": "array"},
+    "policy": {"type": "string"}
+  },
+  "additionalProperties": true
+}

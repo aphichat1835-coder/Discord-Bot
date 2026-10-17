@@ -1,3 +1,5 @@
+"use strict";
+
 const {
   redactSensitiveDiscordSnapshot
 } = require("./sensitiveAccess");
@@ -137,32 +139,36 @@ function safePolicySnapshot(snapshot = {}) {
     requireEmail: snapshot.requireEmail,
     requireEmailVerified: snapshot.requireEmailVerified,
     requireConnections: snapshot.requireConnections,
-    minConnections: snapshot.minConnections,
     securityRules: snapshot.securityRules && typeof snapshot.securityRules === "object"
       ? snapshot.securityRules
-      : {},
-    allowedCountries: Array.isArray(snapshot.allowedCountries) ? snapshot.allowedCountries.slice(0, 80) : [],
-    blockedCountries: Array.isArray(snapshot.blockedCountries) ? snapshot.blockedCountries.slice(0, 80) : []
+      : {}
   };
+}
+
+function firstTruthy(...values) {
+  for (const v of values) {
+    if (v) return v;
+  }
+  return null;
 }
 
 function safeDiscordIdentity(profile = {}, snapshot = {}) {
   return {
-    userId: profile.userId || profile.id || snapshot.userId || snapshot.id || null,
-    username: profile.username || snapshot.username || "",
-    discriminator: profile.discriminator || snapshot.discriminator || null,
-    globalName: profile.globalName || profile.global_name || snapshot.globalName || snapshot.global_name || null,
-    displayTag: profile.displayTag || profile.tag || snapshot.displayTag || snapshot.tag || null
+    userId: firstTruthy(profile.userId, profile.id, snapshot.userId, snapshot.id),
+    username: firstTruthy(profile.username, snapshot.username) || "",
+    discriminator: firstTruthy(profile.discriminator, snapshot.discriminator),
+    globalName: firstTruthy(profile.globalName, profile.global_name, snapshot.globalName, snapshot.global_name),
+    displayTag: firstTruthy(profile.displayTag, profile.tag, snapshot.displayTag, snapshot.tag)
   };
 }
 
 function safeDiscordVisuals(profile = {}, snapshot = {}) {
   return {
-    avatarHash: profile.avatarHash || profile.avatar || snapshot.avatarHash || snapshot.avatar || null,
-    avatarUrl: profile.avatarUrl || snapshot.avatarUrl || null,
-    bannerHash: profile.bannerHash || profile.banner || snapshot.bannerHash || snapshot.banner || null,
-    bannerUrl: profile.bannerUrl || snapshot.bannerUrl || null,
-    accentColor: profile.accentColor || profile.accent_color || snapshot.accentColor || snapshot.accent_color || null
+    avatarHash: firstTruthy(profile.avatarHash, profile.avatar, snapshot.avatarHash, snapshot.avatar),
+    avatarUrl: firstTruthy(profile.avatarUrl, snapshot.avatarUrl),
+    bannerHash: firstTruthy(profile.bannerHash, profile.banner, snapshot.bannerHash, snapshot.banner),
+    bannerUrl: firstTruthy(profile.bannerUrl, snapshot.bannerUrl),
+    accentColor: firstTruthy(profile.accentColor, profile.accent_color, snapshot.accentColor, snapshot.accent_color)
   };
 }
 
@@ -174,9 +180,12 @@ function coalesceFirstDefined(...values) {
 }
 
 function safeDiscordSecurity(profile = {}, snapshot = {}) {
-  const badgeFlags = Array.isArray(profile.badgeFlags)
-    ? profile.badgeFlags
-    : (Array.isArray(snapshot.badgeFlags) ? snapshot.badgeFlags : []);
+  let badgeFlags = [];
+  if (Array.isArray(profile.badgeFlags)) {
+    badgeFlags = profile.badgeFlags;
+  } else if (Array.isArray(snapshot.badgeFlags)) {
+    badgeFlags = snapshot.badgeFlags;
+  }
 
   return {
     email: coalesceFirstDefined(profile.email, snapshot.email),
@@ -277,14 +286,15 @@ function safeDiscordSnapshot(snapshot = {}, canViewSensitive = false) {
 
 function safeMemberSnapshot(snapshot = {}) {
   const member = snapshot.member?.snapshot || snapshot.member || snapshot;
+  const timeoutUntil = firstTruthy(member.communicationDisabledUntil, member.communication_disabled_until);
 
   return {
-    nick: member.nick || snapshot.nick || null,
-    nickname: member.nick || snapshot.nickname || null,
-    joinedAt: member.joinedAt || member.joined_at || snapshot.joinedAt || null,
+    nick: firstTruthy(member.nick, snapshot.nick),
+    nickname: firstTruthy(member.nick, snapshot.nickname),
+    joinedAt: firstTruthy(member.joinedAt, member.joined_at, snapshot.joinedAt),
     pending: member.pending === true || snapshot.pending === true,
-    timedOut: !!member.communicationDisabledUntil || !!member.communication_disabled_until,
-    communicationDisabledUntil: member.communicationDisabledUntil || member.communication_disabled_until || null,
+    timedOut: Boolean(timeoutUntil),
+    communicationDisabledUntil: timeoutUntil,
     avatar: member.avatar || null,
     avatarUrl: member.avatarUrl || null,
     flags: member.flags || 0,

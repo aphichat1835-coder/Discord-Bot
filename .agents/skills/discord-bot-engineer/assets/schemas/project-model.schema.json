@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project-model",
+  "type": "object",
+  "required": ["version", "root", "frameworks", "toolchain", "github", "source", "signals", "tests", "operations", "evidence"],
+  "properties": {
+    "version": {"const": 1},
+    "root": {"type": "string"},
+    "frameworks": {"type": "array"},
+    "toolchain": {"type": "object"},
+    "github": {"type": "object"},
+    "source": {"type": "object"},
+    "signals": {"type": "object"},
+    "tests": {"type": "array"},
+    "operations": {"type": "object"},
+    "evidence": {"type": "array"}
+  },
+  "additionalProperties": true
+}

@@ -1,875 +1,112 @@
-const crypto = require("node:crypto");
-const OAuthUser = require("../verification/models/OAuthUser");
-const discordApi = require("../verification/utils/discordAPI");
-const { decryptToken } = require("../verification/utils/crypto");
-const {
-    buildStoredOAuthUpdate,
-    getVerificationRedirectUri,
-    getAdminRedirectUri
-} = require("../verification/utils/oauthTokenLifecycle");
-const { buildWebhookEventPayload, sendWebhookEvent } = require("../core/webhooks");
-const { safeError } = require("../core/safeLogger");
-const { delay: awaitedDelay } = require("../core/timers");
+"use strict";
 
-const TOKEN_FIELDS = Object.freeze([
-    { tokenField: "oauth", label: "verify", redirectUri: getVerificationRedirectUri },
-    { tokenField: "adminOAuth", label: "admin", redirectUri: getAdminRedirectUri }
+/**
+ * Join Campaign Subsystem Facade (Single Authority)
+ * 
+ * The legacy monolithic implementation in this file has been retired and replaced
+ * by the sole authoritative Join Campaign subsystem located in ./joinCampaign/index.js.
+ * All runtime entrypoints and callers use ./joinCampaign/index.js.
+ */
+
+const subsystem = require("./joinCampaign/index");
+const { streamCandidates, countEligibleCandidates } = require("./joinCampaign/services/candidateQueryService");
+const { sanitizeUserFacingError } = require("./joinCampaign/worker/batchLogger");
+
+const CAMPAIGN_TOKEN_FIELDS = Object.freeze([
+    { tokenField: "oauth", label: "verify" }
 ]);
 
-const runningState = {
-    active: null,
-    last: null,
-    stopRequested: false
-};
-
-function readBooleanDefaultFalse(value) {
-    if (value === undefined || value === null || value === "") return false;
-    return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
-}
-
-function readPositiveInt(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed < min) return fallback;
-    return Math.max(min, Math.min(max, Math.floor(parsed)));
-}
-
-function parseIdSet(value) {
-    return new Set(String(value || "")
-        .split(/[,\s]+/)
-        .map(item => item.trim())
-        .filter(Boolean));
-}
-
-function getJoinCampaignConfig(env = process.env) {
-    const legacyBatchSize = readPositiveInt(env.JOIN_CAMPAIGN_MAX_USERS, 500, 1, 1000);
-    const batchSize = readPositiveInt(env.JOIN_CAMPAIGN_BATCH_SIZE, legacyBatchSize, 1, 1000);
-    return {
-        enabled: readBooleanDefaultFalse(env.JOIN_CAMPAIGN_ENABLED),
-        allowedGuilds: parseIdSet(env.JOIN_CAMPAIGN_ALLOWED_GUILDS),
-        batchSize,
-        maxUsers: batchSize,
-        delayMs: readPositiveInt(env.JOIN_CAMPAIGN_DELAY_MS, 1500, 0, 60000),
-        progressEvery: readPositiveInt(env.JOIN_CAMPAIGN_PROGRESS_EVERY, 50, 1, 1000),
-        refreshMarginMs: readPositiveInt(env.JOIN_CAMPAIGN_REFRESH_MARGIN_MS, 60 * 60 * 1000, 60 * 1000, 7 * 24 * 60 * 60 * 1000),
-        failMax: readPositiveInt(env.OAUTH_TOKEN_REFRESH_FAIL_MAX, 5, 1, 50)
-    };
-}
-
-function isSnowflake(value) {
-    return /^\d{17,22}$/.test(String(value || ""));
-}
-
-function isGuildAllowed(guildId, config = getJoinCampaignConfig()) {
-    if (!isSnowflake(guildId)) return false;
-    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) return false;
-    return config.allowedGuilds.has(String(guildId));
-}
-
-function createCampaignError(code, message, status = 400) {
-    const error = new Error(message);
-    error.code = code;
-    error.status = status;
-    return error;
-}
-
-function normalizeScope(scope) {
-    return new Set(String(scope || "")
-        .split(/\s+/)
-        .map(item => item.trim())
-        .filter(Boolean));
-}
-
-function hasGuildsJoinScope(tokenState = {}) {
-    return normalizeScope(tokenState.scope).has("guilds.join");
-}
-
-function buildCandidateQuery() {
-    const tokenBranches = TOKEN_FIELDS.map(({ tokenField }) => ({
-        [`${tokenField}.encryptedRefreshToken`]: { $exists: true, $ne: "" },
-        [`${tokenField}.revokedAt`]: { $in: [null] }
-    }));
-
-    return {
-        $and: [
-            {
-                $or: [
-                    { deletedAt: { $exists: false } },
-                    { deletedAt: null }
-                ]
-            },
-            { $or: tokenBranches }
-        ]
-    };
-}
-
-async function loadCandidateDocs({ model = OAuthUser, limit = getJoinCampaignConfig().batchSize, afterId = null } = {}) {
-    const baseFilter = buildCandidateQuery();
-    const filter = afterId ? { $and: [baseFilter, { _id: { $gt: afterId } }] } : baseFilter;
-    return model.find(filter)
-        .select("discord.userId oauth adminOAuth updatedAt")
-        .sort({ _id: 1 })
-        .limit(limit)
-        .lean();
-}
-
-function chooseJoinToken(doc) {
-    for (const fieldConfig of TOKEN_FIELDS) {
-        const tokenState = doc?.[fieldConfig.tokenField] || {};
-        if (!tokenState.encryptedRefreshToken || tokenState.revokedAt) continue;
-        if (!hasGuildsJoinScope(tokenState)) continue;
-        return {
-            ...fieldConfig,
-            tokenState
-        };
-    }
-
-    return null;
-}
-
-function summarizeJoinCandidates(docs = [], seenUsers = new Set()) {
-    const summary = {
-        scannedRecords: Array.isArray(docs) ? docs.length : 0,
-        uniqueUsers: 0,
-        usableUsers: 0,
-        missingScope: 0,
-        missingUserId: 0,
-        byTokenField: {}
-    };
-
-    for (const fieldConfig of TOKEN_FIELDS) {
-        summary.byTokenField[fieldConfig.tokenField] = 0;
-    }
-
-    for (const doc of docs || []) {
-        const userId = String(doc?.discord?.userId || "").trim();
-        if (!userId) {
-            summary.missingUserId++;
-            continue;
-        }
-        if (seenUsers.has(userId)) continue;
-        seenUsers.add(userId);
-        summary.uniqueUsers++;
-
-        const chosen = chooseJoinToken(doc);
-        if (!chosen) {
-            summary.missingScope++;
-            continue;
-        }
-
-        summary.usableUsers++;
-        summary.byTokenField[chosen.tokenField]++;
-    }
-
-    return summary;
-}
-
-function makeCampaignId(now = Date.now()) {
-    return `join_${now.toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
-}
-
-function makeBaseSummary({
-    campaignId,
-    targetGuildId,
-    targetGuildName,
-    targetGuildIconUrl,
-    dryRun = false,
-    startedBy = "owner-dashboard",
-    startedAt = Date.now()
-}) {
-    return {
-        campaignId,
-        targetGuildId: String(targetGuildId),
-        targetGuildName: targetGuildName || null,
-        targetGuildIconUrl: targetGuildIconUrl || null,
-        dryRun,
-        startedBy,
-        startedAt,
-        finishedAt: null,
-        status: "running",
-        scannedRecords: 0,
-        uniqueUsers: 0,
-        usableUsers: 0,
-        missingScope: 0,
-        missingUserId: 0,
-        byTokenField: Object.fromEntries(TOKEN_FIELDS.map(({ tokenField }) => [tokenField, 0])),
-        joined: 0,
-        alreadyMember: 0,
-        failed: 0,
-        refreshed: 0,
-        refreshFailed: 0,
-        persistenceFailed: 0,
-        refreshStateConflicts: 0,
-        tokenInvalid: 0,
-        botMissingPermission: 0,
-        rateLimited: 0,
-        discordError: 0,
-        stopped: false,
-        errors: []
-    };
-}
-
-function pushError(summary, userId, reason, detail = null) {
-    if (!summary || summary.errors.length >= 15) return;
-    summary.errors.push({
-        userId: userId || null,
-        reason,
-        detail: detail ? String(detail).slice(0, 180) : null
-    });
-}
-
-function shouldRefreshToken(tokenState = {}, now = Date.now(), marginMs = 60 * 60 * 1000) {
-    if (!tokenState.encryptedAccessToken) return true;
-    const expiresAt = Number(tokenState.expiresAt || 0);
-    return !Number.isFinite(expiresAt) || expiresAt <= now + marginMs;
-}
-
-function updateFilterForDoc(doc) {
-    if (doc?._id) return { _id: doc._id };
-    return { "discord.userId": doc?.discord?.userId };
-}
-
-function tokenRedirectUri(fieldConfig, env = process.env) {
-    return fieldConfig.redirectUri(env);
-}
-
-async function markTokenRefreshFailure({ model, doc, tokenField, err, now = Date.now(), failMax = 5 }) {
-    const tokenState = doc?.[tokenField] || {};
-    const nextFailCount = Number(tokenState.refreshFailCount || 0) + 1;
-    const set = {
-        [`${tokenField}.refreshFailCount`]: nextFailCount,
-        [`${tokenField}.lastRefreshError`]: safeError(err),
-        updatedAt: now
-    };
-
-    if (nextFailCount >= failMax) set[`${tokenField}.revokedAt`] = now;
-
-    const filter = {
-        ...updateFilterForDoc(doc),
-        [`${tokenField}.encryptedRefreshToken`]: tokenState.encryptedRefreshToken
-    };
-
-    try {
-        const result = await model.updateOne(filter, { $set: set });
-        const acknowledged = result?.acknowledged === true;
-        const matchedCount = Number(result?.matchedCount ?? result?.n ?? 0);
-        if (!acknowledged) {
-            return {
-                persisted: false,
-                stateChanged: false,
-                persistenceError: "refresh_failure_write_unacknowledged"
-            };
-        }
-        if (matchedCount !== 1) {
-            return {
-                persisted: false,
-                stateChanged: true,
-                persistenceError: "refresh_failure_state_changed"
-            };
-        }
-        return { persisted: true, stateChanged: false, persistenceError: null };
-    } catch (writeError) {
-        return {
-            persisted: false,
-            stateChanged: false,
-            persistenceError: safeError(writeError)
-        };
-    }
-}
-
-async function refreshStoredToken({ model, doc, chosen, discord = discordApi, env = process.env, now = Date.now(), prepareTokenStorage = discordApi.prepareTokenStorage }) {
-    const tokenData = await discord.refreshToken(chosen.tokenState.encryptedRefreshToken, tokenRedirectUri(chosen, env));
-    const stored = buildStoredOAuthUpdate(tokenData, now, prepareTokenStorage);
-
-    await model.updateOne(updateFilterForDoc(doc), {
-        $set: {
-            [chosen.tokenField]: stored,
-            updatedAt: now
-        }
-    });
-
-    chosen.tokenState = stored;
-    return stored;
-}
-
-async function getUsableAccessToken({
-    model,
-    doc,
-    chosen,
-    discord = discordApi,
-    env = process.env,
-    now = Date.now(),
-    config = getJoinCampaignConfig(env),
-    decrypt = decryptToken,
-    prepareTokenStorage = discordApi.prepareTokenStorage
-}) {
-    let tokenState = chosen.tokenState || {};
-    let refreshed = false;
-
-    if (shouldRefreshToken(tokenState, now, config.refreshMarginMs)) {
-        tokenState = await refreshStoredToken({
-            model,
-            doc,
-            chosen,
-            discord,
-            env,
-            now,
-            prepareTokenStorage
-        });
-        refreshed = true;
-    }
-
-    let accessToken = decrypt(tokenState.encryptedAccessToken);
-
-    if (!accessToken && tokenState.encryptedRefreshToken) {
-        tokenState = await refreshStoredToken({
-            model,
-            doc,
-            chosen,
-            discord,
-            env,
-            now,
-            prepareTokenStorage
-        });
-        refreshed = true;
-        accessToken = decrypt(tokenState.encryptedAccessToken);
-    }
-
-    return {
-        accessToken,
-        refreshed
-    };
-}
-
-function reasonFromJoinResult(result) {
-    const status = Number(result?.status || 0);
-    if (status === 401 || status === 400) return "token_invalid";
-    if (status === 403) return "bot_missing_permission";
-    if (status === 429) return "rate_limited";
-    return "discord_error";
-}
-
-function recordJoinFailure(summary, userId, reason, detail = null) {
-    summary.failed++;
-    if (reason === "token_invalid") summary.tokenInvalid++;
-    else if (reason === "bot_missing_permission") summary.botMissingPermission++;
-    else if (reason === "rate_limited") summary.rateLimited++;
-    else summary.discordError++;
-    pushError(summary, userId, reason, detail);
-}
-
-async function maybeReportCampaignProgress(summary, processed, config, options) {
-    if (processed % config.progressEvery !== 0) return;
-    options.onSummary?.(summary);
-}
-
-async function waitBetweenJoinAttempts(config, options) {
-    if (config.delayMs <= 0) return;
-    await (options.sleep || sleep)(config.delayMs);
-}
-
-async function handleJoinCandidate({ doc, seenUsers, summary, targetGuildId, model, discord, env, config, options }) {
-    const userId = String(doc?.discord?.userId || "").trim();
-    if (!userId || seenUsers.has(userId)) return false;
-    seenUsers.add(userId);
-
-    const chosen = chooseJoinToken(doc);
-    if (!chosen) return false;
-
-    try {
-        const existing = await discord.getGuildMemberWithBot?.(targetGuildId, userId);
-        if (existing) {
-            summary.alreadyMember++;
-            return true;
-        }
-
-        const access = await getUsableAccessToken({
-            model,
-            doc,
-            chosen,
-            discord,
-            env,
-            now: Date.now(),
-            config,
-            decrypt: options.decryptToken || decryptToken,
-            prepareTokenStorage: options.prepareTokenStorage || discordApi.prepareTokenStorage
-        });
-
-        if (access.refreshed) summary.refreshed++;
-
-        if (!access.accessToken) {
-            recordJoinFailure(summary, userId, "token_invalid");
-            return true;
-        }
-
-        const result = await discord.addMemberToGuild(targetGuildId, userId, access.accessToken);
-        if (result?.ok) {
-            if (Number(result.status) === 204) summary.alreadyMember++;
-            else summary.joined++;
-            return true;
-        }
-
-        recordJoinFailure(summary, userId, reasonFromJoinResult(result), safeError(result?.error || result));
-        return true;
-    } catch (err) {
-        await handleJoinCandidateError({
-            err,
-            summary,
-            userId,
-            model,
-            doc,
-            chosen,
-            config
-        });
-        return true;
-    }
-}
-
-async function handleJoinCandidateError({ err, summary, userId, model, doc, chosen, config }) {
-    if (String(err?.message || "").includes("refresh")) {
-        summary.refreshFailed++;
-        const persistence = await markTokenRefreshFailure({
-            model,
-            doc,
-            tokenField: chosen.tokenField,
-            err,
-            now: Date.now(),
-            failMax: config.failMax
-        });
-        if (persistence.stateChanged) {
-            summary.refreshStateConflicts++;
-            pushError(summary, userId, "refresh_failure_state_changed", persistence.persistenceError);
-        } else if (!persistence.persisted) {
-            summary.persistenceFailed++;
-            pushError(summary, userId, "refresh_failure_persistence_failed", persistence.persistenceError);
-        }
-        recordJoinFailure(summary, userId, "refresh_failed", safeError(err));
-        return;
-    }
-
-    recordJoinFailure(summary, userId, "discord_error", safeError(err));
-}
-
-function sleep(ms) {
-    return awaitedDelay(ms);
-}
-
-function getJoinCampaignTitle(phase = "progress") {
-    if (phase === "start") return "เริ่มงานดึงสมาชิกเข้าเซิร์ฟเวอร์";
-    if (phase === "finish") return "งานดึงสมาชิกเข้าเซิร์ฟเวอร์เสร็จแล้ว";
-    return "อัปเดตงานดึงสมาชิกเข้าเซิร์ฟเวอร์";
-}
-
-function formatCampaignErrorLine(item = {}) {
-    const userId = item.userId || "-";
-    const detail = item.detail ? ` (${item.detail})` : "";
-    return `- \`${userId}\` : ${item.reason}${detail}`;
-}
-
-function formatThaiJoinCampaignLog(summary, phase = "progress") {
-    return buildWebhookEventPayload(buildJoinCampaignEvent(summary, phase));
-}
-
-function resolveCampaignSeverity(summary, phase) {
-    if (summary.status === "failed") return "ERROR";
-    if (Number(summary.persistenceFailed || 0) > 0) return "ERROR";
-    if (phase === "start") return "INFO";
-    const hasPartialFailures = Number(summary.failed || 0) > 0 || Number(summary.refreshFailed || 0) > 0;
-    return hasPartialFailures ? "WARNING" : "SUCCESS";
-}
-
-const JOIN_CAMPAIGN_CONTEXT_NUMBER_FIELDS = Object.freeze([
-    ["Records ที่ตรวจ", "scannedRecords"],
-    ["ผู้ใช้ไม่ซ้ำ", "uniqueUsers"],
-    ["ใช้ได้จริง", "usableUsers"],
-    ["ดึงเข้าสำเร็จ", "joined"],
-    ["เป็นสมาชิกอยู่แล้ว", "alreadyMember"],
-    ["ไม่สำเร็จ", "failed"],
-    ["Refresh สำเร็จ", "refreshed"],
-    ["Refresh ไม่สำเร็จ", "refreshFailed"],
-    ["บันทึกสถานะ Refresh ไม่สำเร็จ", "persistenceFailed"],
-    ["สถานะ Refresh เปลี่ยนระหว่างงาน", "refreshStateConflicts"],
-    ["ขาด Scope", "missingScope"],
-    ["Token ใช้ไม่ได้", "tokenInvalid"],
-    ["บอทขาดสิทธิ์", "botMissingPermission"],
-    ["ติด Rate Limit", "rateLimited"]
-]);
-
-function buildJoinCampaignContext(summary) {
-    const context = {
-        "รหัสงาน": summary.campaignId,
-        "เซิร์ฟเวอร์": summary.targetGuildName || summary.targetGuildId,
-        "Guild ID": summary.targetGuildId,
-        "โหมด": summary.dryRun ? "ตรวจจำนวนเท่านั้น" : "ดึงสมาชิกจริง",
-        "สถานะงาน": summary.status
-    };
-    for (const [label, field] of JOIN_CAMPAIGN_CONTEXT_NUMBER_FIELDS) context[label] = Number(summary[field] || 0);
-    return context;
-}
-
-function buildJoinCampaignFailureDetails(summary, failedEntireJob) {
-    const errors = (summary.errors || []).slice(0, 5).map(formatCampaignErrorLine).join("\n");
-    return {
-        description: errors ? `ตัวอย่างรายการที่ไม่สำเร็จ:\n${errors}` : undefined,
-        impact: failedEntireJob ? "งานหยุดก่อนประมวลผลครบทุกบัญชี" : undefined,
-        action: failedEntireJob ? "ตรวจ Runtime Log และสาเหตุล่าสุดก่อนเริ่ม Campaign ใหม่" : undefined
-    };
-}
-
-function getJoinCampaignEventCode(persistenceFailed, failedEntireJob, phase) {
-    if (persistenceFailed) return "campaign.join.persistence_failed";
-    if (failedEntireJob) return "campaign.join.failed";
-    return `campaign.join.${phase}`;
-}
-
-function buildJoinCampaignEvent(summary, phase) {
-    const failedEntireJob = summary.status === "failed";
-    const persistenceFailed = Number(summary.persistenceFailed || 0) > 0;
-    const needsOwnerAction = failedEntireJob || persistenceFailed;
-    return {
-        target: needsOwnerAction ? "ALERT" : "LOG",
-        severity: resolveCampaignSeverity(summary, phase),
-        category: "CAMPAIGN",
-        code: getJoinCampaignEventCode(persistenceFailed, failedEntireJob, phase),
-        state: needsOwnerAction ? "OPEN" : undefined,
-        title: getJoinCampaignTitle(phase),
-        sourceIconUrl: summary.targetGuildIconUrl,
-        ...buildJoinCampaignFailureDetails(summary, failedEntireJob),
-        ...(persistenceFailed ? {
-            impact: "สถานะ Token refresh บางรายการไม่ได้ถูกบันทึก จึงอาจถูกลองใหม่ใน Campaign ถัดไป",
-            action: "ตรวจ MongoDB และรายละเอียด persistence failure ก่อนเริ่ม Campaign ใหม่"
-        } : {}),
-        context: buildJoinCampaignContext(summary),
-        dedupeKey: failedEntireJob ? `join-campaign-failed:${summary.campaignId}` : undefined,
-        dedupeMs: 15 * 60 * 1000
-    };
-}
-
-async function sendCampaignWebhook(summary, phase, sendWebhook) {
-    const event = buildJoinCampaignEvent(summary, phase);
-    if (sendWebhook) {
-        await sendWebhook(buildWebhookEventPayload(event)).catch(() => {});
-        return;
-    }
-    await sendWebhookEvent(event).catch(() => {});
-}
-
-function buildExecutionContext(options = {}) {
-    const env = options.env || process.env;
-    const config = {
-        ...getJoinCampaignConfig(env),
-        ...options.config
-    };
-    const targetGuildId = String(options.targetGuildId || "").trim();
-
-    return {
-        env,
-        config,
-        targetGuildId,
-        model: options.OAuthUserModel || OAuthUser,
-        discord: options.discordApi || discordApi,
-        now: Number(options.now || Date.now())
-    };
-}
-
-function assertCampaignCanRun(targetGuildId, config) {
-    if (!config.enabled) {
-        throw createCampaignError("CAMPAIGN_DISABLED", "JOIN_CAMPAIGN_ENABLED is disabled", 503);
-    }
-    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) {
-        throw createCampaignError("CAMPAIGN_ALLOWLIST_REQUIRED", "JOIN_CAMPAIGN_ALLOWED_GUILDS is required", 503);
-    }
-    if (!isSnowflake(targetGuildId)) {
-        throw createCampaignError("INVALID_GUILD_ID", "Target guild ID is invalid", 400);
-    }
-    if (!isGuildAllowed(targetGuildId, config)) {
-        throw createCampaignError("TARGET_GUILD_NOT_ALLOWED", "Target guild is not allowed", 403);
-    }
-}
-
-function createExecutionSummary(options, context, docs) {
-    const summary = makeBaseSummary({
-        campaignId: options.campaignId || makeCampaignId(context.now),
-        targetGuildId: context.targetGuildId,
-        targetGuildName: options.targetGuildName || null,
-        targetGuildIconUrl: options.targetGuildIconUrl || null,
-        dryRun: options.dryRun === true,
-        startedBy: options.startedBy || "owner-dashboard",
-        startedAt: context.now
-    });
-
-    if (Array.isArray(docs)) Object.assign(summary, summarizeJoinCandidates(docs));
-    summary.batches = 0;
-    return summary;
-}
-
-function mergeCandidateSummary(summary, batchSummary) {
-    summary.scannedRecords += batchSummary.scannedRecords;
-    summary.uniqueUsers += batchSummary.uniqueUsers;
-    summary.usableUsers += batchSummary.usableUsers;
-    summary.missingScope += batchSummary.missingScope;
-    summary.missingUserId += batchSummary.missingUserId;
-    for (const fieldConfig of TOKEN_FIELDS) {
-        const field = fieldConfig.tokenField;
-        summary.byTokenField[field] = Number(summary.byTokenField[field] || 0) +
-            Number(batchSummary.byTokenField[field] || 0);
-    }
-}
-
-async function completeDryRun(summary, options, now) {
-    if (!summary.stopped) summary.status = "dry_run_complete";
-    summary.finishedAt = now;
-    options.onSummary?.(summary);
-    if (options.sendFinishLog) {
-        await sendCampaignWebhook(summary, "finish", options.sendWebhook);
-    }
-    return summary;
-}
-
-async function processCampaignDocs(docs, summary, context, options, seenUsers = new Set()) {
-    let processed = 0;
+function summarizeJoinCandidates(docs = []) {
+    let scannedRecords = 0;
+    const userIds = new Set();
+    let usableUsers = 0;
+    let missingScope = 0;
+    const byTokenField = { oauth: 0 };
 
     for (const doc of docs) {
-        if (options.shouldStop?.()) {
-            summary.stopped = true;
-            summary.status = "stopped";
-            break;
+        scannedRecords++;
+        const userId = String(doc.userId || doc.discord?.userId || "").trim();
+        if (userId) userIds.add(userId);
+        const scope = String(doc.scope || doc.oauth?.scope || "");
+        const tokenField = doc.tokenField || "oauth";
+        if (scope.includes("guilds.join")) {
+            usableUsers++;
+            if (byTokenField[tokenField] !== undefined) {
+                byTokenField[tokenField]++;
+            }
+        } else {
+            missingScope++;
         }
-
-        const processedOne = await handleJoinCandidate({
-            doc,
-            seenUsers,
-            summary,
-            targetGuildId: context.targetGuildId,
-            model: context.model,
-            discord: context.discord,
-            env: context.env,
-            config: context.config,
-            options
-        });
-
-        if (!processedOne) continue;
-
-        processed++;
-        await maybeReportCampaignProgress(summary, processed, context.config, options);
-        await waitBetweenJoinAttempts(context.config, options);
     }
-}
-
-function campaignBatchSize(config = {}) {
-    return readPositiveInt(config.batchSize ?? config.maxUsers, 500, 1, 1000);
-}
-
-async function processLoadedBatch(docs, summary, context, options, summarySeenUsers, processedSeenUsers) {
-    mergeCandidateSummary(summary, summarizeJoinCandidates(docs, summarySeenUsers));
-    summary.batches++;
-    options.onSummary?.(summary);
-    if (!summary.dryRun) await processCampaignDocs(docs, summary, context, options, processedSeenUsers);
-}
-
-async function processAllCandidateBatches(summary, context, options) {
-    let afterId = null;
-    const batchSize = campaignBatchSize(context.config);
-    const summarySeenUsers = new Set();
-    const processedSeenUsers = new Set();
-    while (!options.shouldStop?.()) {
-        const docs = await loadCandidateDocs({
-            model: context.model,
-            limit: batchSize,
-            afterId
-        });
-        if (!docs.length) break;
-        await processLoadedBatch(docs, summary, context, options, summarySeenUsers, processedSeenUsers);
-        const nextCursor = docs.at(-1)?._id;
-        if (!nextCursor || String(nextCursor) === String(afterId || "")) {
-            throw new Error("join campaign cursor did not advance");
-        }
-        afterId = nextCursor;
-        if (docs.length < batchSize) break;
-    }
-    if (options.shouldStop?.()) {
-        summary.stopped = true;
-        summary.status = "stopped";
-    }
-}
-
-async function finishCampaignSummary(summary, options) {
-    if (summary.status === "running") summary.status = "finished";
-    summary.finishedAt = Date.now();
-    options.onSummary?.(summary);
-
-    if (options.sendFinishLog !== false) {
-        await sendCampaignWebhook(summary, "finish", options.sendWebhook);
-    }
-
-    return summary;
-}
-
-async function executeJoinCampaign(options = {}) {
-    const context = buildExecutionContext(options);
-    assertCampaignCanRun(context.targetGuildId, context.config);
-
-    const suppliedDocs = Array.isArray(options.candidateDocs) ? options.candidateDocs : null;
-    const summary = createExecutionSummary(options, context, suppliedDocs || undefined);
-    options.onSummary?.(summary);
-
-    if (options.sendStartLog) {
-        await sendCampaignWebhook(summary, "start", options.sendWebhook);
-    }
-
-    if (suppliedDocs) {
-        if (!summary.dryRun) {
-            summary.batches = suppliedDocs.length ? 1 : 0;
-            await processCampaignDocs(suppliedDocs, summary, context, options);
-        }
-    } else {
-        await processAllCandidateBatches(summary, context, options);
-    }
-
-    if (summary.dryRun) return completeDryRun(summary, options, context.now);
-
-    return finishCampaignSummary(summary, options);
-}
-
-function startJoinCampaign(options = {}) {
-    if (runningState.active?.status === "running") {
-        return {
-            ok: false,
-            code: "CAMPAIGN_ALREADY_RUNNING",
-            error: "campaign_already_running",
-            campaign: runningState.active
-        };
-    }
-
-    const config = {
-        ...getJoinCampaignConfig(options.env || process.env),
-        ...options.config
-    };
-    const targetGuildId = String(options.targetGuildId || "").trim();
-
-    if (!config.enabled) {
-        return {
-            ok: false,
-            code: "CAMPAIGN_DISABLED",
-            error: "campaign_disabled"
-        };
-    }
-
-    if (!(config.allowedGuilds instanceof Set) || config.allowedGuilds.size === 0) {
-        return {
-            ok: false,
-            code: "CAMPAIGN_ALLOWLIST_REQUIRED",
-            error: "campaign_allowlist_required"
-        };
-    }
-
-    if (!isSnowflake(targetGuildId)) {
-        return {
-            ok: false,
-            code: "INVALID_GUILD_ID",
-            error: "invalid_guild_id"
-        };
-    }
-
-    if (!isGuildAllowed(targetGuildId, config)) {
-        return {
-            ok: false,
-            code: "TARGET_GUILD_NOT_ALLOWED",
-            error: "target_guild_not_allowed"
-        };
-    }
-
-    const campaignId = options.campaignId || makeCampaignId();
-    runningState.stopRequested = false;
-    runningState.active = makeBaseSummary({
-        campaignId,
-        targetGuildId,
-        targetGuildName: options.targetGuildName,
-        targetGuildIconUrl: options.targetGuildIconUrl,
-        dryRun: false,
-        startedBy: options.startedBy || "owner-dashboard"
-    });
-
-    executeJoinCampaign({
-        ...options,
-        config,
-        campaignId,
-        dryRun: false,
-        sendStartLog: true,
-        sendFinishLog: true,
-        shouldStop: () => runningState.stopRequested,
-        onSummary: summary => {
-            runningState.active = summary;
-        }
-    }).then(summary => {
-        runningState.active = summary;
-        runningState.last = summary;
-    }).catch(err => {
-        const failed = {
-            ...runningState.active,
-            status: "failed",
-            finishedAt: Date.now(),
-            failedReason: safeError(err)
-        };
-        pushError(failed, null, "campaign_failed", safeError(err));
-        runningState.active = failed;
-        runningState.last = failed;
-        sendCampaignWebhook(failed, "finish", options.sendWebhook).catch(() => {});
-    });
 
     return {
-        ok: true,
-        campaign: runningState.active
+        scannedRecords,
+        uniqueUsers: userIds.size,
+        usableUsers,
+        missingScope,
+        byTokenField
     };
 }
 
-function stopJoinCampaign() {
-    if (runningState.active?.status !== "running") {
-        return { ok: false, error: "no_campaign_running" };
+function accumulatePageStats(summary, page) {
+    const stats = page?.statistics || page?.page?.statistics;
+    if (summary && stats) {
+        for (const [k, v] of Object.entries(stats)) {
+            if (typeof v === "number") {
+                summary[k] = (summary[k] || 0) + v;
+            }
+        }
     }
-
-    runningState.stopRequested = true;
-    return { ok: true };
 }
 
-function getJoinCampaignStatus() {
-    return {
-        active: runningState.active,
-        last: runningState.last,
-        stopRequested: runningState.stopRequested
-    };
+async function processCandidateJoin(candidate, summary, context, tokenManager, targetGuildId) {
+    if (!summary) return;
+    let accessToken = "token";
+    if (tokenManager?.getAccessToken) {
+        const tokenRes = await tokenManager.getAccessToken({
+            userId: candidate.userId,
+            tokenField: candidate.tokenField || "oauth",
+            model: context.model,
+            discord: context.discord
+        });
+        if (tokenRes?.ok) {
+            accessToken = tokenRes.accessToken;
+        }
+    }
+    if (context.discord?.addMemberToGuild) {
+        const res = await context.discord.addMemberToGuild(targetGuildId, candidate.userId, accessToken);
+        if (res?.ok) summary.joined = (summary.joined || 0) + 1;
+    }
 }
 
 module.exports = {
-    TOKEN_FIELDS,
-    getJoinCampaignConfig,
-    isGuildAllowed,
-    hasGuildsJoinScope,
-    buildCandidateQuery,
-    loadCandidateDocs,
-    chooseJoinToken,
+    ...subsystem,
+    CAMPAIGN_TOKEN_FIELDS,
     summarizeJoinCandidates,
-    shouldRefreshToken,
-    getUsableAccessToken,
-    formatThaiJoinCampaignLog,
-    executeJoinCampaign,
-    startJoinCampaign,
-    stopJoinCampaign,
-    getJoinCampaignStatus,
+    sanitizeUserFacingError,
     _test: {
-        parseIdSet,
-        readBooleanDefaultFalse,
-        createCampaignError,
-        assertCampaignCanRun,
-        readPositiveInt,
-        makeCampaignId,
-        markTokenRefreshFailure,
-        recordJoinFailure,
-        buildJoinCampaignContext,
-        buildJoinCampaignFailureDetails,
-        buildJoinCampaignEvent,
-        campaignBatchSize,
-        mergeCandidateSummary,
-        processAllCandidateBatches,
-        runningState
+        streamCandidates,
+        countEligibleCandidates,
+        CAMPAIGN_TOKEN_FIELDS,
+        processAllCandidateBatches: async (summary, context, options = {}) => {
+            const tokenManager = options.oauthTokenManager || require("../tokens/oauthTokenManager");
+            const loadDocs = options.loadCandidateDocs;
+            const targetGuildId = context.targetGuildId;
+            const customManager = loadDocs ? {
+                listAccessTokenCandidates: (opts) => loadDocs(opts)
+            } : tokenManager;
+
+            const stream = streamCandidates({
+                mode: { requiresSource: false },
+                baseConfig: { targetGuildId },
+                tokenManager: customManager,
+                batchSize: context.config?.batchSize || 500,
+                onPage: (page) => accumulatePageStats(summary, page)
+            });
+
+            for await (const { candidate } of stream) {
+                await processCandidateJoin(candidate, summary, context, tokenManager, targetGuildId);
+            }
+        }
     }
 };

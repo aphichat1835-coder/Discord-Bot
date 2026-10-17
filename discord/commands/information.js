@@ -1,11 +1,9 @@
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT REMOVE: /ping dashboard — shows Latency, RAM, CPU, Sessions.
-DO NOT REMOVE: /userinfo account-age context — new account detection without claiming certainty.
-DO NOT SIMPLIFY: /serverinfo member fetch — bot/human split required.
-================================================================================
-*/
+/**
+ * Information Commands Module (/ping, /userinfo, /serverinfo, /user avatar)
+ * - /ping: Real-time latency, process memory (RSS), CPU, and voice subsystem diagnostics.
+ * - /userinfo: Account age context, risk assessment, and server-specific permission breakdown.
+ * - /serverinfo: Accurate human/bot member separation and guild metrics.
+ */
 
 const os = require("node:os");
 const mongoose = require("mongoose");
@@ -176,6 +174,7 @@ async function handle(interaction, client, sessionManager) {
     const cmd = interaction.commandName;
     if (cmd === "serverinfo") return handleServerInfo(interaction);
     if (cmd === "userinfo")   return handleUserInfo(interaction);
+    if (cmd === "user")       return handleUser(interaction);
     if (cmd === "ping")       return handlePing(interaction, client, sessionManager);
 }
 
@@ -217,13 +216,12 @@ function buildServerLoadingEmbed(interaction) {
     const guildName = markdownText(interaction.guild?.name, "เซิร์ฟเวอร์นี้", 100);
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)
-        .setTitle(`${config.emojis.signal || "🛰️"} กำลังสำรวจเซิร์ฟเวอร์`)
+        .setTitle(`${config.emojis?.signal || "🛰️"} กำลังสำรวจเซิร์ฟเวอร์`)
         .setDescription(`กำลังเปิดภาพรวมของ **${guildName}** และตรวจข้อมูลล่าสุดที่บอทมองเห็น`)
         .addField(
             "ขอบเขตที่กำลังตรวจสอบ",
             "`MEMBERS` คนและบอท\n`CHANNELS` ช่องและหมวดหมู่\n`SECURITY` การยืนยัน 2FA และตัวกรองสื่อ"
         )
-        .setFooter({ text: "เซิร์ฟเวอร์ขนาดใหญ่อาจใช้เวลานานขึ้นเล็กน้อย" })
         .setTimestamp();
     const icon = interaction.guild?.iconURL?.({ forceStatic: false, size: 256 });
     if (icon) embed.setThumbnail(icon);
@@ -236,13 +234,12 @@ function buildUserLoadingEmbed(interaction) {
     const targetLabel = user?.globalName || user?.username || "สมาชิก";
     const embed = new MessageEmbed()
         .setColor(config.system.themeColors.info)
-        .setTitle(`${config.emojis.search || "🔍"} กำลังเปิดแฟ้มข้อมูลสมาชิก`)
+        .setTitle(`${config.emojis?.search || "🔍"} กำลังเปิดแฟ้มข้อมูลสมาชิก`)
         .setDescription(`**${markdownText(targetLabel, "สมาชิก", 100)}**\nกำลังโหลดโปรไฟล์ล่าสุดจาก Discord และจับคู่กับข้อมูลในเซิร์ฟเวอร์นี้`)
         .addField(
             "กำลังจัดเรียงข้อมูล",
-            `${config.emojis.loading || "⏳"} โปรไฟล์และอายุบัญชี • ยศและสิทธิ์ • Timeout และสถานะสมาชิก`
+            `${config.emojis?.loading || "⏳"} โปรไฟล์และอายุบัญชี • ยศและสิทธิ์ • Timeout และสถานะสมาชิก`
         )
-        .setFooter({ text: "แสดงเฉพาะข้อมูลที่บอทเข้าถึงได้ • ผลลัพธ์จะมาแทนที่ข้อความนี้" })
         .setTimestamp();
     const avatar = user?.displayAvatarURL?.({ forceStatic: false, size: 256 });
     if (avatar) embed.setThumbnail(avatar);
@@ -252,7 +249,7 @@ function buildUserLoadingEmbed(interaction) {
 function buildPingLoadingEmbed() {
     return new MessageEmbed()
         .setColor(config.system.themeColors.warning)
-        .setTitle(`${config.emojis.ping || "🏓"} กำลังจับสัญญาณระบบ`)
+        .setTitle(`${config.emojis?.ping || "🏓"} กำลังจับสัญญาณระบบ`)
         .setDescription(
             "```text\n" +
             "LATENCY   กำลังวัดการตอบกลับ\n" +
@@ -260,7 +257,6 @@ function buildPingLoadingEmbed() {
             "VOICE     กำลังอ่านสถานะ\n" +
             "```"
         )
-        .setFooter({ text: "ค่าทั้งหมดวัดใหม่จากการเรียกคำสั่งครั้งนี้" })
         .setTimestamp();
 }
 
@@ -376,13 +372,13 @@ function buildServerGeneralField(guild, ownerId, memberCounts) {
 
     const memberLines =
         `> **สมาชิกทั้งหมด:** **${totalMembers}** คน\n` +
-        `> • 👥 คนจริง: **${humanCount}** คน\n` +
+        `> • ${config.emojis?.members || "👥"} คนจริง: **${humanCount}** คน\n` +
         `> • 🤖 บอท: **${botCount}** ตัว${botBreakdown}`;
 
     return {
         name: "🏠 ข้อมูลทั่วไป & สมาชิก",
         value:
-            `> **เจ้าของ:** ${ownerValue}\n` +
+            `> **${config.emojis?.owner || "👑"} เจ้าของ:** ${ownerValue}\n` +
             `> **วันที่สร้าง:** ${discordTimestamp(guild.createdTimestamp, "F")} (${discordTimestamp(guild.createdTimestamp, "R")})\n` +
             `> **ภาษาเริ่มต้น:** **${markdownText(guild.preferredLocale || "ไม่ทราบ", "ไม่ทราบ", 40)}**\n` +
             memberLines,
@@ -459,7 +455,6 @@ function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
             buildServerSecurityAndBoostField(guild, extra),
             buildServerSystemAndFeaturesField(guild)
         )
-        .setFooter({ text: `เรียกดูโดย ${safeText(guild.members?.me?.user?.tag || "Phomueangtai", "Phomueangtai", 120)} • ข้อมูลอาจเปลี่ยนหลังเรียกคำสั่ง` })
         .setTimestamp();
 
     const iconUrl = guild.iconURL?.({ forceStatic: false, size: 1024 });
@@ -515,7 +510,7 @@ function buildServerInfoActionRow(guild) {
 async function handleServerInfo(interaction) {
     if (!interaction.member?.permissions?.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({
-            content: "> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น",
+            content: `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`,
             ephemeral: true
         });
     }
@@ -651,7 +646,7 @@ function getJoinPosition(member) {
 
 function memberStaffLabel(member) {
     if (!member) return "ไม่พบข้อมูลสมาชิก";
-    if (member.guild?.ownerId === member.id) return "👑 เจ้าของเซิร์ฟเวอร์ (Server Owner)";
+    if (member.guild?.ownerId === member.id) return `${config.emojis?.owner || "👑"} เจ้าของเซิร์ฟเวอร์ (Server Owner)`;
     const hasModPerms = Boolean(
         member.permissions?.has?.(PermissionFlagsBits.Administrator) ||
         member.permissions?.has?.(PermissionFlagsBits.ManageGuild) ||
@@ -660,7 +655,9 @@ function memberStaffLabel(member) {
         member.permissions?.has?.(PermissionFlagsBits.ModerateMembers) ||
         member.permissions?.has?.(PermissionFlagsBits.ManageMessages)
     );
-    return hasModPerms ? "🛡️ ทีมงานดูแลเซิร์ฟเวอร์ (Staff / Mod)" : "👤 สมาชิกทั่วไป (Member)";
+    return hasModPerms
+        ? `${config.emojis?.shield || "🛡️"} ทีมงานดูแลเซิร์ฟเวอร์ (Staff / Mod)`
+        : `${config.emojis?.user || "👤"} สมาชิกทั่วไป (Member)`;
 }
 
 function highestRoleLabel(member) {
@@ -674,7 +671,7 @@ function highestRoleLabel(member) {
 function memberBoostDetail(member) {
     if (!member?.premiumSinceTimestamp) return "ไม่ได้ Boost เซิร์ฟเวอร์นี้";
     const days = Math.max(0, Math.floor((Date.now() - member.premiumSinceTimestamp) / 86400000));
-    return `กำลัง Boost เซิร์ฟเวอร์นี้ 🚀 (นาน **${formatCount(days)} วัน** • ตั้งแต่ ${discordTimestamp(member.premiumSinceTimestamp, "R")})`;
+    return `กำลัง Boost เซิร์ฟเวอร์นี้ ${config.emojis?.boost || "🚀"} (นาน **${formatCount(days)} วัน** • ตั้งแต่ ${discordTimestamp(member.premiumSinceTimestamp, "R")})`;
 }
 
 function memberState(member) {
@@ -704,7 +701,7 @@ function buildUserInfoActionRow(user, member) {
             new MessageButton()
                 .setStyle("LINK")
                 .setLabel("รูปในเซิร์ฟเวอร์")
-                .setEmoji("🏠")
+                .setEmoji(config.emojis?.server_icon || "🏠")
                 .setURL(serverAvatar)
         );
     }
@@ -723,7 +720,7 @@ function buildUserInfoActionRow(user, member) {
             new MessageButton()
                 .setStyle("LINK")
                 .setLabel("โปรไฟล์ Discord")
-                .setEmoji("👤")
+                .setEmoji(config.emojis?.user || "👤")
                 .setURL(`https://discord.com/users/${user.id}`)
         );
     }
@@ -804,7 +801,7 @@ function buildUserInfoEmbed(interaction, user, member) {
 
     const embed = new MessageEmbed()
         .setColor(age.color)
-        .setTitle(`👤 ข้อมูลสมาชิก • ${safeText(displayName, "ไม่ทราบชื่อ", 180)}`)
+        .setTitle(`${config.emojis?.user || "👤"} ข้อมูลสมาชิก • ${safeText(displayName, "ไม่ทราบชื่อ", 180)}`)
         .setDescription(`${profileIcon} **${markdownText(displayName, "ไม่ทราบชื่อ", 100)}** • ${markdownText(tag, "ไม่ทราบ", 100)}\n${userMention}`)
         .addFields(
             buildUserAccountDetailsField(user, age),
@@ -812,7 +809,6 @@ function buildUserInfoEmbed(interaction, user, member) {
             buildUserRolesAndPermsField(member),
             buildUserStatusAndActivityField(member)
         )
-        .setFooter({ text: `เรียกดูโดย ${safeText(interaction.user?.tag || interaction.user?.username, "สมาชิก", 120)} • ข้อมูลเรียลไทม์` })
         .setTimestamp();
 
     const avatar = member?.displayAvatarURL?.({ forceStatic: false, size: 1024 }) ||
@@ -850,6 +846,117 @@ async function handleUserInfo(interaction) {
         components: components.length > 0 ? components : [],
         allowedMentions: { parse: [] }
     });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  🖼️  USER AVATAR (/user avatar)
+// ════════════════════════════════════════════════════════════════════════════
+function buildAvatarEmbed(user) {
+    const isAnimated = Boolean(user?.avatar && String(user.avatar).startsWith("a_"));
+    const avatarUrl = user.displayAvatarURL({
+        extension: isAnimated ? "gif" : "png",
+        size: 4096,
+        forceStatic: !isAnimated
+    });
+
+    return new MessageEmbed()
+        .setColor(config.system?.themeColors?.primary || 0x5865F2)
+        .setImage(avatarUrl);
+}
+
+function buildAvatarActionRow(user) {
+    const isAnimated = Boolean(user?.avatar && String(user.avatar).startsWith("a_"));
+    const pngUrl = user.displayAvatarURL({ extension: "png", size: 4096, forceStatic: true });
+    const jpgUrl = user.displayAvatarURL({ extension: "jpg", size: 4096, forceStatic: true });
+    const webpUrl = user.displayAvatarURL({ extension: "webp", size: 4096, forceStatic: true });
+    const gifUrl = isAnimated
+        ? user.displayAvatarURL({ extension: "gif", size: 4096, forceStatic: false })
+        : pngUrl;
+
+    const row = new MessageActionRow().addComponents(
+        new MessageButton().setStyle("LINK").setLabel("PNG").setURL(pngUrl),
+        new MessageButton().setStyle("LINK").setLabel("JPG").setURL(jpgUrl),
+        new MessageButton().setStyle("LINK").setLabel("WEBP").setURL(webpUrl),
+        new MessageButton().setStyle("LINK").setLabel("GIF").setURL(gifUrl).setDisabled(!isAnimated)
+    );
+
+    return [row];
+}
+
+async function resolveAvatarTarget(interaction) {
+    const selectedUser = interaction.options?.getUser?.("member") || null;
+    const targetId = selectedUser?.id || interaction.user?.id;
+    const fallbackUser = selectedUser || interaction.user;
+    if (!targetId) return null;
+    if (interaction.client?.users?.fetch) {
+        return await interaction.client.users.fetch(targetId, { force: true }).catch(() => fallbackUser);
+    }
+    return fallbackUser;
+}
+
+async function handleUserAvatar(interaction) {
+    markCommandAccepted(interaction);
+    try {
+        if (typeof interaction.editReply === "function") {
+            await interaction.reply({
+                content: `${config.emojis?.loading || "⏳"} กำลังโหลด...`,
+                fetchReply: true
+            });
+            const user = await resolveAvatarTarget(interaction);
+            if (!user || typeof user.displayAvatarURL !== "function") {
+                return interaction.editReply({
+                    content: `> ${config.emojis?.error || "❌"} ไม่พบข้อมูลผู้ใช้ที่ระบุ`
+                });
+            }
+
+            const embed = buildAvatarEmbed(user);
+            const components = buildAvatarActionRow(user);
+
+            return interaction.editReply({
+                content: null,
+                embeds: [embed],
+                components,
+                allowedMentions: { parse: [] }
+            });
+        }
+
+        const user = await resolveAvatarTarget(interaction);
+        if (!user || typeof user.displayAvatarURL !== "function") {
+            return interaction.reply({
+                content: `> ${config.emojis?.error || "❌"} ไม่พบข้อมูลผู้ใช้ที่ระบุ`,
+                ephemeral: true
+            });
+        }
+
+        const embed = buildAvatarEmbed(user);
+        const components = buildAvatarActionRow(user);
+
+        return interaction.reply({
+            embeds: [embed],
+            components,
+            allowedMentions: { parse: [] }
+        });
+    } catch (err) {
+        console.error(`[INFORMATION] ❌ Failed to fetch user avatar: ${err?.message || err}`);
+        if (interaction.deferred || interaction.replied) {
+            return interaction.followUp({
+                content: `> ${config.emojis?.error || "❌"} เกิดข้อผิดพลาดในการดึงรูปโปรไฟล์`,
+                ephemeral: true
+            }).catch(() => null);
+        }
+        return interaction.reply({
+            content: `> ${config.emojis?.error || "❌"} เกิดข้อผิดพลาดในการดึงรูปโปรไฟล์`,
+            ephemeral: true
+        }).catch(() => null);
+    }
+}
+
+async function handleUser(interaction) {
+    const subcommand = interaction.options?.getSubcommand?.(false);
+    if (subcommand === "avatar") {
+        return handleUserAvatar(interaction);
+    }
+    return null;
 }
 
 function makeProgressBar(percent, length = 8) {
@@ -896,14 +1003,16 @@ function buildPingEmbed(stats) {
     const hostUsedPercent = Number.isFinite(stats.hostUsedPercent) ? stats.hostUsedPercent : calculatedHostPercent;
     const cpuCores = stats.cpuCores || os.cpus()?.length || 1;
 
-    const dbFallbackStatus = stats.databaseReady ? "พร้อมใช้งาน (Connected)" : "ไม่ได้เชื่อมต่อ";
+    const dbFallbackStatus = stats.databaseReady
+        ? `${config.emojis?.armed_on || config.emojis?.status_online || "🟢"} พร้อมใช้งาน (Connected)`
+        : `${config.emojis?.armed_off || config.emojis?.status_offline || "🔴"} ไม่ได้เชื่อมต่อ`;
     const mongoStatus = stats.mongoPingMs != null
-        ? `${stats.mongoPingMs} ms`
+        ? `${config.emojis?.armed_on || config.emojis?.status_online || "🟢"} ${stats.mongoPingMs} ms`
         : dbFallbackStatus;
 
     const embed = new MessageEmbed()
         .setColor(state.color)
-        .setTitle("🏓 รายงานสถานะบอทและประสิทธิภาพระบบ (System Diagnostics)")
+        .setTitle(`${config.emojis?.ping || "🏓"} รายงานสถานะบอทและประสิทธิภาพระบบ (System Diagnostics)`)
         .setDescription(`สถานะปัจจุบัน: **${state.label}** • อัปเดตล่าสุด <t:${Math.floor(Date.now() / 1000)}:T>\n> ข้อมูลสถิติเครือข่าย ฮาร์ดแวร์โฮสต์ และ Voice Subsystem แบบเรียลไทม์`)
         .addFields(
             {
@@ -911,7 +1020,7 @@ function buildPingEmbed(stats) {
                 value:
                     `• คำสั่งตอบกลับ: **${formatLatency(stats.interactionLatency)}**\n` +
                     `• WebSocket **${formatLatency(stats.websocketLatency)}**\n` +
-                    `• MongoDB Database: **${mongoStatus}**\n` +
+                    `• ระบบฐานข้อมูล (Database): **${mongoStatus}**\n` +
                     `• คลัสเตอร์ Shard: **${formatCount(stats.shardId)}** จาก **${formatCount(stats.shardCount)}**`,
                 inline: false
             },
@@ -939,11 +1048,10 @@ function buildPingEmbed(stats) {
                     `• Voice Sessions: ใช้งาน **${formatCount(stats.sessions.active)}** • กำลังกู้คืน **${formatCount(stats.sessions.recovering)}**\n` +
                     `  (ล้มเหลว **${formatCount(stats.sessions.failed)}** • จัดเก็บทั้งหมด **${formatCount(stats.sessions.total)}**)\n` +
                     `• ฐานข้อมูล: **${stats.databaseReady ? "พร้อมใช้งาน" : "ยังไม่พร้อม"}**\n` +
-                    `• Telemetry: คำขอ **${formatCount(stats.requests)}** • Error events **${formatCount(stats.errors)}** • Reconnect **${formatCount(stats.reconnects)}**`,
+                    `• สถิติการทำงาน: คำขอ **${formatCount(stats.requests)}** • ข้อผิดพลาด **${formatCount(stats.errors)}** • เชื่อมต่อใหม่ **${formatCount(stats.reconnects)}**`,
                 inline: false
             }
         )
-        .setFooter({ text: "RAM คือ Process RSS จริง • CPU เป็นค่าที่วัดระหว่างตอบคำสั่งครั้งนี้" })
         .setTimestamp();
 
     if (stats.botAvatarUrl) {
@@ -995,34 +1103,45 @@ function resolveReportedMemberCount(client) {
     return client.guilds.cache.reduce((total, guild) => total + (Number(guild?.memberCount) || 0), 0);
 }
 
-function buildPingStats({ interaction, client, sessionManager, sent, cpuStart, cpuEnd, elapsedMicroseconds, mongoPingMs }) {
-    const interactionLatency = Math.max(0, Number(sent?.createdTimestamp ?? Date.now()) - Number(interaction.createdTimestamp ?? Date.now()));
+function resolveLatencyStats(sent, interaction, client, mongoPingMs) {
+    const sentTime = Number(sent?.createdTimestamp ?? Date.now());
+    const interactionTime = Number(interaction.createdTimestamp ?? Date.now());
+    const interactionLatency = Math.max(0, sentTime - interactionTime);
     const rawWsLatency = Number(client?.ws?.ping);
     const websocketLatency = Number.isFinite(rawWsLatency) && rawWsLatency >= 0 ? rawWsLatency : null;
+    return { interactionLatency, websocketLatency, mongoPingMs };
+}
 
-    const startedAt = Number(sessionManager?.systemMetrics?.uptime || Date.now());
+function resolveMetricCounters(metrics) {
+    const dbConnected = Boolean(metrics?.dbConnected) || (mongoose.connection?.readyState === 1);
+    return {
+        databaseReady: dbConnected,
+        requests: Number(metrics?.requests ?? 0),
+        errors: Number(metrics?.errors ?? 0),
+        reconnects: Number(metrics?.reconnects ?? 0)
+    };
+}
+
+function buildPingStats({ interaction, client, sessionManager, sent, cpuStart, cpuEnd, elapsedMicroseconds, mongoPingMs }) {
+    const latencies = resolveLatencyStats(sent, interaction, client, mongoPingMs);
+    const startedAt = Number(sessionManager?.systemMetrics?.uptime ?? Date.now());
     const hostStats = collectHostResourceStats(cpuStart, cpuEnd, elapsedMicroseconds);
-    const guildCount = client?.guilds?.cache?.size || 0;
+    const guildCount = Number(client?.guilds?.cache?.size ?? 0);
     const reportedMemberCount = resolveReportedMemberCount(client);
     const metrics = sessionManager?.getSystemMetrics?.() || sessionManager?.systemMetrics || {};
     const botAvatarUrl = client?.user?.displayAvatarURL?.({ size: 1024, forceStatic: false }) || null;
 
     return {
-        interactionLatency,
-        websocketLatency,
-        mongoPingMs,
-        shardId: Number(interaction.guild?.shardId || 0),
-        shardCount: Number(client?.ws?.shards?.size || 1),
+        ...latencies,
+        shardId: Number(interaction.guild?.shardId ?? 0),
+        shardCount: Number(client?.ws?.shards?.size ?? 1),
         startedAt,
         uptimeSeconds: Math.max(0, Math.floor((Date.now() - startedAt) / 1000)),
         ...hostStats,
         guildCount,
         reportedMemberCount,
         sessions: collectSessionStats(sessionManager),
-        databaseReady: Boolean(metrics.dbConnected || mongoose.connection?.readyState === 1),
-        requests: Number(metrics.requests || 0),
-        errors: Number(metrics.errors || 0),
-        reconnects: Number(metrics.reconnects || 0),
+        ...resolveMetricCounters(metrics),
         botAvatarUrl
     };
 }
@@ -1031,7 +1150,7 @@ async function handlePing(interaction, client, sessionManager) {
     markCommandAccepted(interaction);
     if (!isConfiguredOwner(config, interaction.user?.id)) {
         return interaction.reply({
-            content: "> 🔒 คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น",
+            content: `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้สงวนสิทธิ์เฉพาะ **เจ้าของบอท (Bot Owner)** เท่านั้น`,
             ephemeral: true
         });
     }
@@ -1096,6 +1215,11 @@ module.exports = {
         collectSessionStats,
         cpuPercent,
         latencyState,
-        buildPingEmbed
+        buildPingEmbed,
+        buildAvatarEmbed,
+        buildAvatarActionRow,
+        resolveAvatarTarget,
+        handleUserAvatar,
+        handleUser
     }
 };

@@ -34,17 +34,71 @@ const EVENT_STATE_LABELS = Object.freeze({
     RESOLVED: "แก้ไขแล้ว"
 });
 const EVENT_CATEGORY_LABELS = Object.freeze({
-    SYSTEM: "ระบบ",
-    SECURITY: "ความปลอดภัย",
-    GUILD: "เซิร์ฟเวอร์",
-    OWNER: "การทำงานของเจ้าของ",
-    COMMAND: "คำสั่ง",
-    BACKUP: "สำรองและกู้คืน",
-    CAMPAIGN: "Join Campaign",
-    VOICE: "Voice Session",
-    MODERATION: "การดูแลสมาชิก",
-    VERIFICATION: "การยืนยันตัวตน",
-    DATA: "ความถูกต้องของข้อมูล"
+    SYSTEM: "SYSTEM",
+    RUNTIME: "RUNTIME",
+    GATEWAY: "GATEWAY",
+    DATABASE: "DATABASE",
+    COMMAND: "COMMAND",
+    GUILD: "GUILD",
+    OWNER: "OWNER",
+    MODERATION: "MODERATION",
+    VOICE: "VOICE",
+    VOICE_ADMIN: "VOICE ADMIN",
+    VERIFICATION: "VERIFICATION",
+    TOKEN: "TOKEN",
+    SECURITY: "SECURITY",
+    TRACE: "TRACE",
+    QUEST: "QUEST",
+    CHANNEL: "CHANNEL",
+    WEBHOOK: "WEBHOOK",
+    DATA: "DATA",
+    CAMPAIGN: "CAMPAIGN"
+});
+const LOG_CATEGORY_COLORS = Object.freeze({
+    GUILD: 0x00F5D4,          // Electric Mint / Turquoise
+    MODERATION: 0xFF5722,     // Vibrant Coral Orange
+    OWNER: 0xFFD700,          // Radiant Gold
+    ADMIN: 0xFFA000,          // Vibrant Amber
+    QUEST: 0x9D4EDD,          // Cyber Violet / Neon Purple
+    TOKEN: 0x00BBF9,          // Vivid Cyan / Electric Diamond
+    SECURITY: 0xF72585,       // Hot Neon Pink
+    PROTECTION: 0xF72585,     // Hot Neon Pink
+    TRACE: 0xE0AAFF,          // Lavender Neon
+    VOICE: 0x38B6FF,          // Sky Electric Blue
+    VOICE_ADMIN: 0x0077B6,    // Ocean Deep Blue
+    VERIFICATION: 0x48CAE4,   // Crystal Ice Blue
+    COMMAND: 0x7209B7,        // Electric Indigo
+    DATABASE: 0x06D6A0,       // Neon Emerald Mint
+    GATEWAY: 0x4361EE,        // Vivid Cobalt
+    RUNTIME: 0x3A86FF,        // Vivid Azure
+    CHANNEL: 0x2EC4B6,        // Teal Sea
+    CAMPAIGN: 0xFF006E,       // Electric Rose
+    DATA: 0x2A9D8F,           // Ocean Pine
+    WEBHOOK: 0x8338EC,        // Neon Grape
+    SYSTEM: 0x00D2FF          // Vibrant Aqua Blue
+});
+const LOG_CATEGORY_EMOJIS = Object.freeze({
+    GUILD: "🏰",
+    MODERATION: "⚖️",
+    OWNER: "👑",
+    ADMIN: "⚙️",
+    QUEST: "🚀",
+    TOKEN: "🔑",
+    SECURITY: "🛡️",
+    PROTECTION: "🛡️",
+    TRACE: "🔍",
+    VOICE: "🔊",
+    VOICE_ADMIN: "🎙️",
+    VERIFICATION: "📋",
+    COMMAND: "⚡",
+    DATABASE: "💾",
+    GATEWAY: "🌐",
+    RUNTIME: "⚡",
+    CHANNEL: "💬",
+    WEBHOOK: "📡",
+    DATA: "📊",
+    CAMPAIGN: "🎯",
+    SYSTEM: "✨"
 });
 const DISCORD_WEBHOOK_HOSTS = new Set([
     "discord.com",
@@ -261,6 +315,14 @@ function formatEventContextValue(value) {
     return normalizeEventContextText(value, { escapeMarkdown: !isSafeDisplayUrl(value) });
 }
 
+/**
+ * Resolves the webhook delivery destination ("LOG" or "ALERT").
+ *
+ * Routing Authority Hierarchy:
+ * 1. Explicit `target`: Caller-specified "LOG" or "ALERT" takes absolute precedence.
+ * 2. Action Required / Critical Severities: `actionRequired === true` or severity in {"ERROR", "CRITICAL"} routes to "ALERT".
+ * 3. Default: All other routine events route to "LOG".
+ */
 function resolveWebhookEventTarget(event = {}) {
     const explicitTarget = normalizeEventToken(event.target, "");
     if (explicitTarget === "LOG" || explicitTarget === "ALERT") return explicitTarget;
@@ -319,15 +381,215 @@ function appendEventField(fields, name, value, inline) {
     });
 }
 
-function buildEventFields(event, state) {
-    const fields = [];
-    appendEventField(fields, "สถานะ", state ? EVENT_STATE_LABELS[state] || state : null, true);
-    appendEventField(fields, "ผลกระทบ", event.impact, false);
-    appendEventField(fields, "สิ่งที่ควรทำ", event.action, false);
-
-    for (const [name, value] of Object.entries(event.context || {})) {
-        appendEventField(fields, String(name || "รายละเอียด").slice(0, 100), value, true);
+function buildWebhookEventTitle(event, presentation, category, target = "LOG") {
+    const severity = normalizeEventToken(event?.severity, WEBHOOK_SEVERITIES.INFO);
+    let emoji = presentation?.emoji || "🔵";
+    if (target === "LOG" && severity === "INFO") {
+        const categoryToken = normalizeEventToken(event?.category, category);
+        emoji = LOG_CATEGORY_EMOJIS[categoryToken] || "✨";
     }
+
+    let title = String(event?.title || "").trim();
+    if (!title) {
+        return `${emoji} ${category}`;
+    }
+    title = title.replace(/^(?:SHADOW REPORT:\s*|COMMAND LOG:\s*|ACTION:\s*|REPORT:\s*)/i, "");
+    title = title.replace(/^(?:[🔵🟢🟠🔴🚨]|[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}])+\s*/u, "");
+    const escapedCat = String(category).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+    title = title.replace(new RegExp(String.raw`^${escapedCat}\s*[·•]\s*`, "i"), "");
+    title = title.replace(/^[A-Z_]{3,15}\s*[·•]\s*/, "");
+    title = title.trim();
+
+    // If title redundantly begins with the category name (e.g. "GATEWAY SHARD ERROR" in category "GATEWAY"),
+    // strip the redundant category prefix to yield e.g. "SHARD ERROR".
+    const redundantCategoryRegex = new RegExp(String.raw`^${escapedCat}\s+(?=\S)`, "i");
+    if (redundantCategoryRegex.test(title)) {
+        title = title.replace(redundantCategoryRegex, "").trim();
+    }
+
+    return `${emoji} ${category} · ${title}`;
+}
+
+function resolveWebhookEventColor(event, severity, categoryToken, target) {
+    if (Number.isFinite(Number(event?.color))) {
+        return Number(event.color);
+    }
+    // High-severity events retain standard priority colors across all targets
+    if (severity === "CRITICAL") return Colors.DarkRed;
+    if (severity === "ERROR") return Colors.Red;
+    if (severity === "WARNING") return Colors.Yellow;
+
+    // For ALERT targets, preserve standard presentation colors
+    if (target === "ALERT") {
+        return (EVENT_PRESENTATION[severity] || EVENT_PRESENTATION.INFO).color;
+    }
+
+    // For LOG targets:
+    if (severity === "SUCCESS") {
+        return 0x00E676; // Vivid Emerald Green (clean, punchy neon)
+    }
+
+    // Default INFO severity in LOG: vibrant category-specific neon color
+    return LOG_CATEGORY_COLORS[categoryToken] || 0x00D2FF;
+}
+
+
+function normalizeFieldName(name) {
+    return String(name ?? "").trim().toLowerCase();
+}
+
+function deleteMatchingFromContext(context, normalizedTarget) {
+    for (const key of Object.keys(context)) {
+        if (normalizeFieldName(key) === normalizedTarget) {
+            delete context[key];
+        }
+    }
+}
+
+function getAndDeleteFromContext(context, normalizedTarget) {
+    let foundValue;
+    for (const key of Object.keys(context)) {
+        if (normalizeFieldName(key) === normalizedTarget) {
+            if (foundValue === undefined && context[key] !== undefined && context[key] !== null && context[key] !== "") {
+                foundValue = context[key];
+            }
+            delete context[key];
+        }
+    }
+    return foundValue;
+}
+
+function deduplicateExplicitFields(rawExplicit) {
+    const deduplicatedExplicit = [];
+    const explicitMap = new Map();
+    for (const f of rawExplicit) {
+        const key = normalizeFieldName(f.name);
+        if (!key) continue;
+        if (!explicitMap.has(key)) {
+            const entry = { name: f.name, value: f.value, inline: f.inline };
+            explicitMap.set(key, entry);
+            deduplicatedExplicit.push(entry);
+        }
+    }
+    return { deduplicatedExplicit, explicitMap };
+}
+
+function createCanonicalFieldExtractor(deduplicatedExplicit, explicitMap, context, consumedNames) {
+    return function extractCanonicalField(name, fallbackVal, aliases = []) {
+        const namesToTry = [name, ...aliases];
+        const lowerNames = namesToTry.map(normalizeFieldName);
+
+        function consumeAllAliases() {
+            for (const lower of lowerNames) {
+                explicitMap.delete(lower);
+                deleteMatchingFromContext(context, lower);
+                consumedNames.add(lower);
+            }
+        }
+
+        // 1. Explicit event.fields takes highest precedence.
+        for (const f of deduplicatedExplicit) {
+            const lower = normalizeFieldName(f.name);
+            if (lowerNames.includes(lower) && explicitMap.has(lower)) {
+                const entry = explicitMap.get(lower);
+                consumeAllAliases();
+                return { value: entry.value, inline: entry.inline };
+            }
+        }
+
+        // 2. Top-level event value
+        if (fallbackVal !== undefined && fallbackVal !== null && fallbackVal !== "") {
+            consumeAllAliases();
+            return { value: fallbackVal, inline: undefined };
+        }
+
+        // 3. Context entry matching canonical field name or any alias
+        for (const lower of lowerNames) {
+            const contextVal = getAndDeleteFromContext(context, lower);
+            if (contextVal !== undefined) {
+                consumeAllAliases();
+                return { value: contextVal, inline: undefined };
+            }
+        }
+        return null;
+    };
+}
+
+function _appendCanonical(fields, extractCanonicalField, name, fallbackVal, defaultInline = true, aliases = []) {
+    const field = extractCanonicalField(name, fallbackVal, aliases);
+    if (field) {
+        appendEventField(fields, name, field.value, field.inline ?? defaultInline);
+    }
+}
+
+function appendAlertCanonicalFields(fields, event, state, extractCanonicalField) {
+    const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
+    const targetVal = event.targetUser || event.targetMember;
+
+    _appendCanonical(fields, extractCanonicalField, "สถานะ", state ? (EVENT_STATE_LABELS[state] || state) : null, true);
+    _appendCanonical(fields, extractCanonicalField, "ผลกระทบ", event.impact, false);
+    _appendCanonical(fields, extractCanonicalField, "สิ่งที่ควรทำ", event.action, false);
+    _appendCanonical(fields, extractCanonicalField, "เซิร์ฟเวอร์", serverVal, true);
+    _appendCanonical(fields, extractCanonicalField, "เป้าหมาย", targetVal, true, ["ผู้ใช้เป้าหมาย"]);
+    _appendCanonical(fields, extractCanonicalField, "รหัสข้อผิดพลาด", event.errorCode, true);
+    _appendCanonical(fields, extractCanonicalField, "รายละเอียด", event.details, false);
+}
+
+function appendLogCanonicalFields(fields, event, extractCanonicalField) {
+    const actorVal = event.actor || event.operator || event.user;
+    const serverVal = event.server || (event.guildName ? `${event.guildName} (${event.guildId})` : event.guildId);
+    const targetVal = event.targetUser || event.targetMember;
+    const actionVal = event.actionName || event.operation;
+    const resultVal = event.result || event.outcome;
+    const detailsVal = event.details || event.reason;
+
+    _appendCanonical(fields, extractCanonicalField, "ผู้ดำเนินการ", actorVal, true, ["ผู้สั่งการ", "ผู้กระทำ"]);
+    _appendCanonical(fields, extractCanonicalField, "เซิร์ฟเวอร์", serverVal, true);
+    _appendCanonical(fields, extractCanonicalField, "เป้าหมาย", targetVal, true);
+    _appendCanonical(fields, extractCanonicalField, "การกระทำ", actionVal, true);
+    _appendCanonical(fields, extractCanonicalField, "ผลลัพธ์", resultVal, true);
+    _appendCanonical(fields, extractCanonicalField, "รายละเอียด", detailsVal, false, ["เหตุผล", "reason"]);
+}
+
+function appendRemainingCustomFields(fields, deduplicatedExplicit, explicitMap, context, consumedNames) {
+    for (const f of deduplicatedExplicit) {
+        const lower = normalizeFieldName(f.name);
+        if (explicitMap.has(lower)) {
+            explicitMap.delete(lower);
+            deleteMatchingFromContext(context, lower);
+            consumedNames.add(lower);
+            appendEventField(fields, f.name, f.value, f.inline ?? true);
+        }
+    }
+
+    for (const [rawName, rawValue] of Object.entries(context)) {
+        const lower = normalizeFieldName(rawName);
+        if (!lower || consumedNames.has(lower) || rawValue === undefined || rawValue === null || rawValue === "") {
+            continue;
+        }
+        consumedNames.add(lower);
+        appendEventField(fields, String(rawName || "รายละเอียด").trim().slice(0, 100), rawValue, true);
+    }
+}
+
+function buildEventFields(event, state, target) {
+    const fields = [];
+    const context = { ...event.context };
+    const rawExplicit = Array.isArray(event.fields)
+        ? event.fields.filter(f => f?.name && f?.value != null && f?.value !== "")
+        : [];
+
+    const { deduplicatedExplicit, explicitMap } = deduplicateExplicitFields(rawExplicit);
+    const consumedNames = new Set();
+    const extractCanonicalField = createCanonicalFieldExtractor(deduplicatedExplicit, explicitMap, context, consumedNames);
+
+    if (target === "ALERT") {
+        appendAlertCanonicalFields(fields, event, state, extractCanonicalField);
+    } else {
+        appendLogCanonicalFields(fields, event, extractCanonicalField);
+    }
+
+    appendRemainingCustomFields(fields, deduplicatedExplicit, explicitMap, context, consumedNames);
     return fields.slice(0, FIELD_COUNT_MAX);
 }
 
@@ -347,23 +609,22 @@ function buildEventAuthor(target, sourceIconUrl) {
 function buildWebhookEventPayload(event = {}) {
     const severity = normalizeEventToken(event.severity, WEBHOOK_SEVERITIES.INFO);
     const presentation = EVENT_PRESENTATION[severity] || EVENT_PRESENTATION.INFO;
-    const category = normalizeEventToken(event.category, "SYSTEM");
-    const categoryLabel = EVENT_CATEGORY_LABELS[category] || category;
-    const state = event.state ? normalizeEventToken(event.state, "UPDATE") : null;
-    const code = normalizeWebhookEventCode(event.code);
-    const fields = buildEventFields(event, state);
-
+    const categoryToken = normalizeEventToken(event.category, "SYSTEM");
+    const displayCategory = EVENT_CATEGORY_LABELS[categoryToken] || categoryToken.replaceAll("_", " ");
     const target = resolveWebhookEventTarget({ ...event, severity });
+    const state = event.state ? normalizeEventToken(event.state, "UPDATE") : null;
+    const fields = buildEventFields(event, state, target);
+
     const sourceIconUrl = normalizeDiscordMediaUrl(event.sourceIconUrl);
     const thumbnailUrl = normalizeDiscordMediaUrl(event.thumbnailUrl);
+    const color = resolveWebhookEventColor(event, severity, categoryToken, target);
     return {
         embeds: [{
-            color: presentation.color,
+            color,
             author: buildEventAuthor(target, sourceIconUrl),
-            title: `${presentation.emoji} ${presentation.label} · ${String(event.title || categoryLabel)}`,
+            title: buildWebhookEventTitle(event, presentation, displayCategory, target),
             description: event.description ? String(event.description) : undefined,
             fields,
-            footer: { text: `${categoryLabel} • ${code}` },
             ...(thumbnailUrl ? { thumbnail: { url: thumbnailUrl } } : {}),
             timestamp: resolveEventTimestamp(event.timestamp).toISOString()
         }]
@@ -390,8 +651,12 @@ function serializePrivateEvent(event) {
     });
 }
 
-function buildWebhookEventPayloads(event = {}) {
+function buildWebhookEventPayloads(event = {}, options = {}) {
     const primary = buildWebhookEventPayload(event);
+    const allowContinuation = options.includeContinuation === true || event.includeContinuation === true;
+    if (!allowContinuation) {
+        return [primary];
+    }
     let serialized;
     try {
         serialized = serializePrivateEvent(event);
@@ -413,7 +678,6 @@ function buildWebhookEventPayloads(event = {}) {
                 author: primary.embeds[0].author,
                 title: "Owner event continuation",
                 fields,
-                footer: primary.embeds[0].footer,
                 timestamp: primary.embeds[0].timestamp
             }]
         });
@@ -668,8 +932,12 @@ class WebhookDispatcher {
                 const delivery = await first;
                 if (delivery.state === "timed_out") {
                     this.trackTimedOutOperation(operation, outcome, metrics, item.url);
-                    // The underlying HTTP request cannot be cancelled safely. Treat it as
-                    // accepted-but-pending so callers and dedupe logic do not send a duplicate.
+                    // Reliability Policy Note (P2):
+                    // An outbound HTTP request to Discord that exceeds timeoutMs cannot be cancelled
+                    // safely over TCP/TLS without risking duplicate execution if Discord accepted the
+                    // request despite network latency. We treat it as accepted-but-pending (returning true)
+                    // so callers and dedupe logic do not send an immediate duplicate. Late reconciliation
+                    // will update metrics (lateSucceeded / lateFailed) when the underlying socket resolves.
                     return true;
                 }
                 if (delivery.state === "failed") throw delivery.error;
@@ -795,43 +1063,92 @@ function buildDuplicateSummaryPayload(entry, ttlMs, stopping = false) {
     });
 }
 
-async function sendDedupedWebhook(target, payload, options) {
-    const baseKey = truncate(options.dedupeKey, 200) || "routine-event";
-    const key = `${dedupeDestinationKey(target, options)}:${baseKey}`;
-    const ttlMs = Math.max(1000, Number(options.dedupeMs || 5 * 60 * 1000));
-    const existing = routineDedupe.get(key);
-    if (existing) {
-        const firstDelivered = await existing.pending;
-        if (!firstDelivered) return sendDedupedWebhook(target, payload, options);
+function _cleanDedupeEntry(key, entry) {
+    if (routineDedupe.get(key) === entry) {
+        if (entry.timer) clearTimeout(entry.timer);
+        routineDedupe.delete(key);
+    }
+}
+
+async function _handleExistingDedupe(key, existing) {
+    let firstDelivered = false;
+    try {
+        firstDelivered = await existing.pending;
+    } catch {
+        firstDelivered = false;
+    }
+    if (firstDelivered) {
         existing.duplicates++;
-        return true;
+        return { handled: true, success: true };
     }
-    const entry = {
-        target,
-        duplicates: 0,
-        timer: null,
-        label: truncate(options.summaryLabel || "routine event", 120),
-        category: normalizeEventToken(options.summaryCategory, "SYSTEM"),
-        eventCode: normalizeWebhookEventCode(options.eventCode || "webhook.event"),
-        options,
-        pending: null
-    };
-    routineDedupe.set(key, entry);
-    trimRoutineDedupe();
-    entry.pending = sendWebhook(target, payload, options);
-    const sent = await entry.pending;
-    if (!sent) {
-        routineDedupe.delete(key);
-        return false;
-    }
+    // Delivery of the prior in-flight entry failed. Clean it up before retrying.
+    _cleanDedupeEntry(key, existing);
+    return { handled: false };
+}
+
+function _armDedupeTimer(key, entry, ttlMs) {
     entry.timer = setTimeout(() => {
-        routineDedupe.delete(key);
+        if (routineDedupe.get(key) === entry) {
+            routineDedupe.delete(key);
+        }
         if (entry.duplicates > 0) {
             sendWebhook(entry.target, buildDuplicateSummaryPayload(entry, ttlMs), entry.options).catch(() => {});
         }
     }, ttlMs);
     entry.timer.unref?.();
+}
+
+async function _dispatchDedupeEntry(key, entry, target, payload, options, ttlMs) {
+    routineDedupe.set(key, entry);
+    trimRoutineDedupe();
+
+    let sent = false;
+    try {
+        const sendPromise = sendWebhook(target, payload, options);
+        entry.pending = sendPromise;
+        sent = await sendPromise;
+    } catch {
+        sent = false;
+    }
+
+    if (!sent) {
+        _cleanDedupeEntry(key, entry);
+        return false;
+    }
+
+    _armDedupeTimer(key, entry, ttlMs);
     return true;
+}
+
+async function sendDedupedWebhook(target, payload, options) {
+    const baseKey = truncate(options.dedupeKey, 200) || "routine-event";
+    const key = `${dedupeDestinationKey(target, options)}:${baseKey}`;
+    const ttlMs = Math.max(1000, Number(options.dedupeMs || 5 * 60 * 1000));
+    let attempts = 0;
+
+    while (attempts++ < 3) {
+        const existing = routineDedupe.get(key);
+        if (existing) {
+            const result = await _handleExistingDedupe(key, existing);
+            if (result.handled) return result.success;
+            continue;
+        }
+
+        const entry = {
+            target,
+            duplicates: 0,
+            timer: null,
+            label: truncate(options.summaryLabel || "routine event", 120),
+            category: normalizeEventToken(options.summaryCategory, "SYSTEM"),
+            eventCode: normalizeWebhookEventCode(options.eventCode || "webhook.event"),
+            options,
+            pending: null
+        };
+
+        return _dispatchDedupeEntry(key, entry, target, payload, options, ttlMs);
+    }
+
+    return false;
 }
 
 function sendWebhook(target, payload, options = {}) {
@@ -874,9 +1191,10 @@ function sendWebhookEvent(event, options = {}) {
         dedupeMs: options.dedupeMs || event.dedupeMs,
         summaryLabel: options.summaryLabel || event.summaryLabel || event.title,
         summaryCategory: options.summaryCategory || event.summaryCategory || event.category,
-        eventCode: options.eventCode || event.eventCode || event.code
+        eventCode: options.eventCode || event.eventCode || event.code,
+        includeContinuation: options.includeContinuation ?? event.includeContinuation
     };
-    const payload = buildWebhookEventPayloads({ ...event, target });
+    const payload = buildWebhookEventPayloads({ ...event, target }, eventOptions);
     return target === "ALERT"
         ? sendAlertWebhook(payload, eventOptions)
         : sendLogWebhook(payload, eventOptions);
@@ -911,7 +1229,7 @@ function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, ti
     const context = { "บัญชีบอท": clientTag || "unknown" };
     if (safeBase) {
         context.Dashboard = safeBase;
-        if (includeShadowPortal) context["เครื่องมือขั้นสูง"] = `${safeBase}/shadow`;
+        if (includeShadowPortal) context["Shadow Portal"] = `${safeBase}/shadow`;
     } else {
         context.Dashboard = "ยังไม่ได้ตั้งค่า public URL ที่ถูกต้อง";
     }
@@ -920,8 +1238,8 @@ function buildStartupNotice({ clientTag, baseUrl, includeShadowPortal = true, ti
         severity: "SUCCESS",
         category: "SYSTEM",
         code: "system.ready",
-        title: "บอทพร้อมใช้งานแล้ว",
-        description: "ขั้นตอนเริ่มต้นหลักเสร็จสมบูรณ์",
+        title: "BOT READY",
+        description: "ระบบเริ่มต้นหลักเสร็จสมบูรณ์และบอทพร้อมให้บริการ",
         context,
         timestamp
     });
@@ -947,6 +1265,7 @@ module.exports = {
     resolveWebhookEventTarget,
     buildWebhookEventPayload,
     buildWebhookEventPayloads,
+    buildWebhookEventTitle,
     sendWebhook,
     sendLogWebhook,
     sendAlertWebhook,
@@ -955,6 +1274,7 @@ module.exports = {
     shutdownWebhookDispatcher,
     buildStartupNotice,
     _test: {
+        defaultDispatcher,
         failureCode,
         retryable,
         withTimeout,
@@ -965,6 +1285,10 @@ module.exports = {
         normalizeWebhookEventCode,
         normalizeEventContextText,
         escapeDiscordMarkdown,
-        buildEventFields
+        buildEventFields,
+        buildWebhookEventTitle,
+        resolveWebhookEventColor,
+        LOG_CATEGORY_COLORS,
+        LOG_CATEGORY_EMOJIS
     }
 };

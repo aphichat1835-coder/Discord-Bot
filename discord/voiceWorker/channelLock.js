@@ -1,11 +1,12 @@
 "use strict";
 
 const { VoiceConnectionStatus } = require("@discordjs/voice");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { st } = require("./state");
 const { sanitizeLogText } = require("../core/safeLogger");
 const { getSessionShortId, isSessionRunnable } = require("./session");
 const dmService = require("../dm");
+const config = require("../config.json");
 
 const MOVE_DEBOUNCE_MS = 3 * 60 * 1000; // 3 minutes trailing debounce
 
@@ -37,8 +38,8 @@ async function sendMoveNotification(sessionId, deps = {}) {
         : `ตั้งแต่ ${firstTime} ถึง ${lastTime}`;
 
     const fields = [
-        { name: "🏠 เซิร์ฟเวอร์", value: `**${markdownText(record.guildName)}**\n${code(record.guildId)}`, inline: true },
-        { name: "🔊 ห้องเป้าหมาย", value: `**${markdownText(record.targetChannelName)}**\n${code(record.targetChannelId)}`, inline: true },
+        { name: `${config.emojis?.server_icon || "🏠"} เซิร์ฟเวอร์`, value: `**${markdownText(record.guildName)}**\n${code(record.guildId)}`, inline: true },
+        { name: `${config.emojis?.voice_ch || "🔊"} ห้องเป้าหมาย`, value: `**${markdownText(record.targetChannelName)}**\n${code(record.targetChannelId)}`, inline: true },
         { name: "📍 ห้องที่โดนลากไป (ล่าสุด)", value: `**${markdownText(record.lastMovedToChannelName)}**\n${code(record.lastMovedToChannelId)}`, inline: true },
         { name: "🔁 จำนวนครั้งที่โดนลาก", value: `**${record.moveCount}** ครั้ง`, inline: true },
         { name: "⏱️ เวลาที่เกิดเหตุ", value: timeRange, inline: true },
@@ -47,7 +48,7 @@ async function sendMoveNotification(sessionId, deps = {}) {
 
     const embed = buildDmEmbed({
         tone: "warning",
-        title: "🧲 แจ้งเตือน: ตรวจพบการย้ายห้องเสียง (ดึงกลับแล้ว)",
+        title: `${config.emojis?.intrusion_icon || "🧲"} แจ้งเตือน: ตรวจพบการย้ายห้องเสียง (ดึงกลับแล้ว)`,
         summary: "ตรวจพบว่ามีคนย้ายบัญชีออกจากห้องเสียงเป้าหมาย และระบบได้ดึงกลับห้องเดิมเรียบร้อยแล้ว ขณะนี้สถานการณ์ในห้องเสียงกลับมานิ่งเกิน 3 นาทีแล้ว",
         profile: {
             id: record.accountId,
@@ -59,8 +60,7 @@ async function sendMoveNotification(sessionId, deps = {}) {
         details: "ระบบทำการล็อกตำแหน่งและบินกลับห้องเป้าหมายเดิมทันทีทุกครั้ง และหน่วงเวลาส่งสรุป 3 นาทีหลังเหตุการณ์สงบลงเพื่อป้องกันข้อความสแปม",
         nextAction: "ไม่ต้องดำเนินการใดๆ บัญชียังคงออนไลน์อยู่ในห้องเป้าหมายตามปกติ หากมีการแกล้งลากบ่อยครั้ง อาจพิจารณาปรับสิทธิ์ Move Members ในเซิร์ฟเวอร์",
         referenceId: getSessionShortId(sessionId),
-        timestamp: record.lastMovedAt,
-        footer: "Phomueangtai • ระบบล็อกช่องเสียง"
+        timestamp: record.lastMovedAt
     });
 
     const eventKey = `voice:moved:${sessionId}:${record.lastMovedAt}`;
@@ -156,20 +156,49 @@ function isVoiceMoveEventApplicable(sessionId, client, newState, deps = {}) {
     return session;
 }
 
-function executeFlybackRejoin(session, sessionId) {
-    const conn = session.connection;
+const FLYBACK_THROTTLE_MS = 1500;
+const flybackTimestamps = new Map();
+const flybackTimers = new Map();
+
+function executeFlybackRejoin(session, sessionId, deps = {}) {
+    const conn = session?.connection;
     if (!conn || conn.state?.status === VoiceConnectionStatus.Destroyed) {
         return;
     }
 
-    try {
-        conn.rejoin({
-            channelId: session.voiceId,
-            selfMute: true,
-            selfDeaf: true
-        });
-    } catch (err) {
-        console.warn(`[WORKER] ⚠️ Flyback rejoin failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
+    const now = Date.now();
+    const lastFlyback = flybackTimestamps.get(sessionId) || 0;
+    const elapsed = now - lastFlyback;
+    const throttleMs = Number.isFinite(Number(deps.throttleMs)) ? Number(deps.throttleMs) : FLYBACK_THROTTLE_MS;
+
+    const performRejoin = () => {
+        flybackTimestamps.set(sessionId, Date.now());
+        flybackTimers.delete(sessionId);
+        try {
+            conn.rejoin({
+                channelId: session.voiceId,
+                selfMute: true,
+                selfDeaf: true
+            });
+        } catch (err) {
+            console.warn(`[WORKER] ⚠️ Flyback rejoin failed for ${sanitizeLogText(sessionId)}: ${err.message}`);
+        }
+    };
+
+    if (elapsed >= throttleMs) {
+        if (flybackTimers.has(sessionId)) {
+            clearTimeout(flybackTimers.get(sessionId));
+            flybackTimers.delete(sessionId);
+        }
+        performRejoin();
+    } else if (!flybackTimers.has(sessionId)) {
+        const setTimer = deps.setTimeout || setTimeout;
+        const remaining = throttleMs - elapsed;
+        const timer = setTimer(() => {
+            performRejoin();
+        }, remaining);
+        timer.unref?.();
+        flybackTimers.set(sessionId, timer);
     }
 }
 
@@ -181,12 +210,18 @@ function handleVoiceStateUpdate(sessionId, client, oldState, newState, deps = {}
     const toName = newState.channel?.name || newState.channelId || "ห้องใหม่";
     console.log(`[WORKER] 🧲 Bot moved from ${fromName} to ${toName} — flying back to target channel ${session.voiceName || session.voiceId} (${sanitizeLogText(sessionId)})`);
 
-    executeFlybackRejoin(session, sessionId);
+    executeFlybackRejoin(session, sessionId, deps);
     recordMoveIncident(sessionId, session, client, oldState, newState, deps);
     return true;
 }
 
 function cancelMoveTracking(sessionId) {
+    if (flybackTimers.has(sessionId)) {
+        clearTimeout(flybackTimers.get(sessionId));
+        flybackTimers.delete(sessionId);
+    }
+    flybackTimestamps.delete(sessionId);
+
     const record = moveTracking.get(sessionId);
     if (record) {
         if (record.timer) clearTimeout(record.timer);
@@ -197,6 +232,12 @@ function cancelMoveTracking(sessionId) {
 }
 
 function clearAllMoveTrackers() {
+    for (const timer of flybackTimers.values()) {
+        clearTimeout(timer);
+    }
+    flybackTimers.clear();
+    flybackTimestamps.clear();
+
     for (const record of moveTracking.values()) {
         if (record.timer) clearTimeout(record.timer);
     }

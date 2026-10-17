@@ -1,16 +1,14 @@
 const { MessageEmbed } = require("../core/discordCompat");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 function getVoiceWorker() {
-    return require("../voiceWorker");
+    return require("../voiceWorker/index");
 }
-const utility = require("./utility");
 const verification = require("./verification");
 const {
     IDS,
     isVerifyButton,
-    isRestoreConfirm,
     isStatusPage,
     getStatusPage,
     isStatusStop,
@@ -76,13 +74,6 @@ function getPanelDeps(deps = {}) {
     };
 }
 
-function handleRestoreCancel(interaction) {
-    return interaction.update({
-        components: [],
-        embeds: [buildPanelErrorEmbed(`> ${config.emojis.stop} ยกเลิกการกู้คืน`)]
-    });
-}
-
 async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
     await interaction.deferReply({ ephemeral: true });
 
@@ -94,7 +85,7 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
 
     if (allSessions.length === 0) {
         return interaction.editReply({
-            content: `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในขอบเขตที่คุณควบคุมได้`
+            content: `> ${config.emojis?.warning || "⚠️"} ไม่มีผู้ใช้งานที่กำลังทำงานอยู่ในขอบเขตที่คุณควบคุมได้`
         });
     }
 
@@ -115,8 +106,8 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
 
     return interaction.editReply({
         content: failed > 0
-            ? `> ${config.emojis.warning} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
-            : `> ${config.emojis.stop} ปิดผู้ใช้งานในขอบเขตนี้ ${stopped} รายการเรียบร้อย`
+            ? `> ${config.emojis?.warning || "⚠️"} หยุดสำเร็จ ${stopped} รายการ / ล้มเหลว ${failed} รายการ`
+            : `> ${config.emojis?.stop || "⏹️"} ปิดผู้ใช้งานในขอบเขตนี้ ${stopped} รายการเรียบร้อย`
     });
 }
 
@@ -135,7 +126,7 @@ async function handleStatusButton(interaction, customId, shadowMasterId, panelDe
     );
 
     if (allSessions.length === 0) {
-        const content = `> ${config.emojis.warning} ไม่มีผู้ใช้งานที่ออนอยู่ในขอบเขตที่คุณดูได้`;
+        const content = `> ${config.emojis?.warning || "⚠️"} ไม่มีผู้ใช้งานที่ออนอยู่ในขอบเขตที่คุณดูได้`;
         if (isStatusPage(customId)) {
             return interaction.update({ content, embeds: [], components: [] });
         }
@@ -166,7 +157,7 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
 
     if (!targetSession || !canControlSession(interaction, targetSession, shadowMasterId)) {
         return interaction.editReply({
-            embeds: [buildPanelErrorEmbed(`> ${config.emojis.no_entry} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)],
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis?.no_entry || "⛔"} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)],
             components: []
         });
     }
@@ -178,7 +169,7 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
     });
     if (!stopped) {
         return interaction.editReply({
-            embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis?.warning || "⚠️"} หยุดรายการนี้ไม่สำเร็จ กรุณาตรวจสอบ Dashboard`)],
             components: []
         });
     }
@@ -193,7 +184,7 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
 
     if (allSessions.length === 0) {
         return interaction.editReply({
-            embeds: [buildPanelSuccessEmbed(`> ${config.emojis.success} ลบผู้ใช้งานสำเร็จ (ไม่มีรายการเหลือ)`)],
+            embeds: [buildPanelSuccessEmbed(`> ${config.emojis?.success || "✅"} ลบผู้ใช้งานสำเร็จ (ไม่มีรายการเหลือ)`)],
             components: []
         });
     }
@@ -213,7 +204,7 @@ async function handleStatusReconnectButton(interaction, customId, shadowMasterId
 
     if (!targetSession || !canControlSession(interaction, targetSession, shadowMasterId)) {
         return interaction.editReply({
-            embeds: [buildPanelErrorEmbed(`> ${config.emojis.no_entry} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)],
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis?.no_entry || "⛔"} ไม่พบรายการนี้ หรือคุณไม่มีสิทธิ์ควบคุม session นี้`)],
             components: []
         });
     }
@@ -221,7 +212,7 @@ async function handleStatusReconnectButton(interaction, customId, shadowMasterId
     const res = await getVoiceWorker().forceReconnectSession(sId);
     if (!res?.ok) {
         return interaction.followUp({
-            content: `> ${config.emojis.warning} ไม่สามารถเชื่อมต่อใหม่ได้: ${res?.error || "ข้อผิดพลาดไม่ทราบสาเหตุ"}`,
+            content: `> ${config.emojis?.warning || "⚠️"} ไม่สามารถเชื่อมต่อใหม่ได้: ${res?.error || "ข้อผิดพลาดไม่ทราบสาเหตุ"}`,
             ephemeral: true
         });
     }
@@ -238,7 +229,7 @@ async function handleStatusReconnectButton(interaction, customId, shadowMasterId
     const current = allSessions[pageIndex] || allSessions[0];
     if (!current) {
         return interaction.editReply({
-            embeds: [buildPanelErrorEmbed(`> ${config.emojis.warning} ไม่พบรายการที่เชื่อมต่อ`)],
+            embeds: [buildPanelErrorEmbed(`> ${config.emojis?.warning || "⚠️"} ไม่พบรายการที่เชื่อมต่อ`)],
             components: []
         });
     }
@@ -255,14 +246,6 @@ async function handleButton(interaction, client, shadowMasterId, deps = {}) {
 
     if (isVerifyButton(customId)) {
         return await verification.handleVerifyButton(interaction);
-    }
-
-    if (isRestoreConfirm(customId)) {
-        return await utility.handleRestoreConfirm(interaction, sessionManager);
-    }
-
-    if (customId === IDS.BTN_RESTORE_CANCEL) {
-        return handleRestoreCancel(interaction);
     }
 
     if (customId === IDS.BTN_START) {
@@ -311,11 +294,11 @@ function readStartModalFields(interaction) {
 
 function validateStartFields({ token, tokens, serverId, voiceId } = {}) {
     if (!PANEL_FIELD_ID_REGEX.test(serverId)) {
-        return `> ${config.emojis.error} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
+        return `> ${config.emojis?.error || "❌"} ไอดีเซิร์ฟเวอร์ไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
     if (!PANEL_FIELD_ID_REGEX.test(voiceId)) {
-        return `> ${config.emojis.error} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
+        return `> ${config.emojis?.error || "❌"} ไอดีช่องเสียงไม่ถูกต้อง (ต้องเป็นตัวเลข 17-22 หลัก)`;
     }
 
     let tokenList = [];
@@ -325,15 +308,15 @@ function validateStartFields({ token, tokens, serverId, voiceId } = {}) {
         tokenList = [token];
     }
     if (!tokenList.length) {
-        return `> ${config.emojis.error} กรุณากรอกอย่างน้อย 1 Token ในแบบฟอร์ม`;
+        return `> ${config.emojis?.error || "❌"} กรุณากรอกอย่างน้อย 1 Token ในแบบฟอร์ม`;
     }
 
     if (tokenList.length > 10) {
-        return `> ${config.emojis.error} ระบบรองรับการกรอกสูงสุดไม่เกิน 10 Token ต่อรอบ`;
+        return `> ${config.emojis?.error || "❌"} ระบบรองรับการกรอกสูงสุดไม่เกิน 10 Token ต่อรอบ`;
     }
 
     if (tokenList.every(t => !validateTokenFormat(t))) {
-        return `> ${config.emojis.error} รูปแบบ Token ไม่ถูกต้อง`;
+        return `> ${config.emojis?.error || "❌"} รูปแบบ Token ไม่ถูกต้อง`;
     }
 
     return null;
@@ -343,7 +326,7 @@ async function ensureStartAllowed(interaction, serverId, shadowMasterId) {
     if (isOwnerGlobalControl(interaction, shadowMasterId)) return null;
 
     if (serverId !== interaction.guild?.id) {
-        return `> ${config.emojis.no_entry} สมาชิกเริ่ม session ได้เฉพาะเซิร์ฟเวอร์ที่กำลังกดแผงนี้เท่านั้น`;
+        return `> ${config.emojis?.no_entry || "⛔"} สมาชิกเริ่ม session ได้เฉพาะเซิร์ฟเวอร์ที่กำลังกดแผงนี้เท่านั้น`;
     }
 
     return null;
@@ -488,23 +471,23 @@ function formatSingleTokenResult(success, failure, voiceLabel) {
             ? "แทนรายการเดิมด้วยคำสั่งล่าสุดแล้ว"
             : "เริ่ม session ใหม่แล้ว";
 
-        return `> ${config.emojis.success} เริ่มระบบสำเร็จ! ${actionText}\n` +
+        return `> ${config.emojis?.success || "✅"} เริ่มระบบสำเร็จ! ${actionText}\n` +
             `> บัญชีที่ออน: **${success.accountLabel}**\n` +
             `> ช่องเสียง: ${voiceLabel}`;
     }
 
-    return `> ${config.emojis.error} ${failure?.reason || "เกิดข้อผิดพลาดในการเริ่ม session"}`;
+    return `> ${config.emojis?.error || "❌"} ${failure?.reason || "เกิดข้อผิดพลาดในการเริ่ม session"}`;
 }
 
 function formatMultiTokenResult(tokensCount, successes, failures, voiceLabel) {
-    let responseContent = `> ${config.emojis.success} เริ่มระบบสำเร็จ! (${successes.length}/${tokensCount} บัญชี)\n`;
+    let responseContent = `> ${config.emojis?.success || "✅"} เริ่มระบบสำเร็จ! (${successes.length}/${tokensCount} บัญชี)\n`;
 
     if (successes.length > 0) {
         responseContent += `> บัญชีที่ออน:\n` + successes.map(s => `• **${s.accountLabel}**`).join("\n") + "\n";
     }
 
     if (failures.length > 0) {
-        responseContent += `> ${config.emojis.warning || "⚠️"} รายการที่ล้มเหลว (${failures.length} บัญชี):\n` +
+        responseContent += `> ${config.emojis?.warning || "⚠️"} รายการที่ล้มเหลว (${failures.length} บัญชี):\n` +
             failures.map(f => `• ลำดับที่ ${f.index}: ${f.reason}`).join("\n") + "\n";
     }
 

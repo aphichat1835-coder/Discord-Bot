@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "scenarios": [
+    {"id": "authorized-success", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}, {"action": "effect", "idempotency_key": "job:1"}, {"action": "succeeded"}], "expect": {"state": "succeeded"}},
+    {"id": "permission-denied", "steps": [{"action": "reply"}, {"action": "authorize", "allowed": false}], "expect": {"state": "permission_denied"}},
+    {"id": "partial-batch", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}, {"action": "effect", "idempotency_key": "batch:1"}, {"action": "partial"}], "expect": {"state": "partial"}},
+    {"id": "cancel-before-effect", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}, {"action": "cancel"}], "expect": {"state": "cancelled"}},
+    {"id": "external-timeout", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}, {"action": "timed_out"}], "expect": {"state": "timed_out"}},
+    {"id": "failure-after-auth", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}, {"action": "failed"}], "expect": {"state": "failed"}}
+  ]
+}

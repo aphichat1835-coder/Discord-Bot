@@ -1,5 +1,5 @@
 const { VoiceConnectionStatus } = require("@discordjs/voice");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("./sessionManager");
 const { st, autoDeafTimers, autoDeafRunning } = require("./state");
 const { delay, randomJitter } = require("./config");
 const { isSessionRunnable } = require("./session");
@@ -36,7 +36,7 @@ async function doAutoDeafToggle(sessionId) {
 
         const currentSession = sessionManager.getSession(sessionId);
         const currentConn = currentSession?.connection;
-        if (!currentSession || !currentConn || currentConn.state.status !== VoiceConnectionStatus.Ready) {
+        if (!currentSession || currentConn?.state?.status !== VoiceConnectionStatus.Ready) {
             console.log(`[AUTODEAF] ⚠️ Session gone during undeaf — ${sanitizeLogText(sessionId)}`);
             return;
         }

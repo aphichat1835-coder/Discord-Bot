@@ -6,6 +6,10 @@ const {
     CURRENT_PREFIX,
     _test
 } = require("../discord/verification/services/encryptionMigration");
+const {
+    decryptToken,
+    decryptIP
+} = require("../discord/verification/utils/crypto");
 
 function legacyServiceKey(secret) {
     return Buffer.from(
@@ -116,6 +120,10 @@ describe("encryption migration", () => {
         expect(oauthDocs[0].oauth.encryptedRefreshToken).toMatch(/^v3:gcm:/);
         expect(verifyDocs[0].ipInfo.encryptedRawIp).toMatch(/^v3:gcm:/);
         expect(identityDocs[0].encryptedRawIp).toMatch(/^v3:gcm:/);
+        expect(decryptToken(oauthDocs[0].oauth.encryptedAccessToken)).toBe("access-token-value");
+        expect(decryptToken(oauthDocs[0].oauth.encryptedRefreshToken)).toBe("refresh-token-value");
+        expect(decryptIP(verifyDocs[0].ipInfo.encryptedRawIp)).toBe("203.0.113.10");
+        expect(decryptIP(identityDocs[0].encryptedRawIp)).toBe("2001:db8::10");
     });
 
     test("dry-run reports legacy data without changing it", async () => {
@@ -180,6 +188,7 @@ describe("encryption migration", () => {
         expect(first.failedFields).toBe(1);
         expect(second.migratedFields).toBe(1);
         expect(oauthDocs[1].oauth.encryptedAccessToken).toMatch(/^v3:gcm:/);
+        expect(decryptToken(oauthDocs[1].oauth.encryptedAccessToken)).toBe("later-access-token");
         errorSpy.mockRestore();
     });
 });

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "recipes": {
+    "result": ["headline", "summary", "facts", "actions"],
+    "inspector": ["section_with_thumbnail", "facts", "separator", "detail", "actions"],
+    "operation": ["headline", "status", "progress", "separator", "result_counts", "actions", "detail"],
+    "workflow": ["headline", "summary", "separator", "step_or_status", "actions", "detail"],
+    "media_control": ["section_with_thumbnail", "progress", "separator", "queue_context", "actions"],
+    "transaction": ["headline", "summary", "separator", "facts", "warning", "actions", "receipt"],
+    "alert": ["headline", "warning", "facts", "separator", "safe_action", "actions", "evidence"]
+  },
+  "limits": {"total_components": 40, "section_text_children": 3, "action_row_buttons": 5, "gallery_items": 10, "button_label": 80, "custom_id": 100, "media_description": 1024}
+}

@@ -1,0 +1,22 @@
+name: Discord feature request
+description: Propose an observable Discord product outcome.
+title: "[Feature]: "
+labels: ["enhancement", "needs-design"]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: User problem and affected audience}
+    validations: {required: true}
+  - type: textarea
+    id: outcome
+    attributes: {label: Observable successful outcome}
+    validations: {required: true}
+  - type: textarea
+    id: scope
+    attributes: {label: Scope, constraints, and non-goals}
+  - type: textarea
+    id: surface
+    attributes: {label: Commands, events, components, dashboard, and UX states}
+  - type: textarea
+    id: risk
+    attributes: {label: Permissions, data, concurrency, abuse, migration, and rollback considerations}

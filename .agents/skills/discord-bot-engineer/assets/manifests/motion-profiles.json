@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "profiles": {
+    "none": {"purpose": "static_truth", "allowed": []},
+    "productive": {"purpose": "feedback_and_continuity", "allowed": ["micro_interaction", "feedback_status", "structural_transition", "loading"]},
+    "guided": {"purpose": "orientation_and_learning", "allowed": ["structural_transition", "guided_onboarding", "spatial_continuity", "animated_empty_state"]},
+    "expressive": {"purpose": "rare_brand_moment", "allowed": ["emotional_branding", "choreographed_sequence"], "forbidden_contexts": ["error", "security", "moderation", "partial_failure", "frequent_action"]}
+  },
+  "rules": {"discord_native_motion": false, "rapid_message_edits": "forbidden", "reduced_motion_static_equivalent": true, "motion_only_meaning": "forbidden"}
+}

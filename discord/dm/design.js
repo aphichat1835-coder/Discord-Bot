@@ -87,7 +87,6 @@ function buildDmEmbed(options = {}) {
     const profile = options.profile || profileFromUser(null);
     const title = safeText(options.title, "🔔 การแจ้งเตือน", 256);
     const summary = safeText(options.summary, "มีการเปลี่ยนแปลงที่ควรตรวจสอบ", 2048);
-    const footer = safeText(options.footer, "Phomueangtai • แจ้งเตือนส่วนตัว", 2048);
     const fieldCandidates = [profileField(profile), ...normalizeFields(options.fields)];
     if (options.details) fieldCandidates.push({ name: "📋 รายละเอียด", value: markdownText(options.details, "-", 1024) });
     if (options.nextAction) fieldCandidates.push({ name: "💡 สิ่งที่ควรทำ", value: safeText(options.nextAction, "-", 1024) });
@@ -95,15 +94,14 @@ function buildDmEmbed(options = {}) {
         { name: "🧾 รหัสอ้างอิง", value: code(options.referenceId || "ไม่มี"), inline: true },
         { name: "🕒 เวลา", value: `<t:${Math.floor(timestamp / 1000)}:F>`, inline: true }
     );
-    const fields = fitFields(fieldCandidates, title.length + summary.length + footer.length);
+    const fields = fitFields(fieldCandidates, title.length + summary.length);
 
     const embed = new MessageEmbed()
         .setColor(COLORS[options.tone] || COLORS.info)
         .setTitle(title)
         .setDescription(summary)
         .addFields(fields)
-        .setTimestamp(timestamp)
-        .setFooter({ text: footer });
+        .setTimestamp(timestamp);
 
     if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
     return embed;

@@ -1,0 +1,49 @@
+{
+  "common": {
+    "cancel": "ยกเลิก",
+    "canceled": "การดำเนินการถูกยกเลิกแล้ว",
+    "confirm": "ยืนยัน",
+    "failed": "การดำเนินการล้มเหลว",
+    "loading": "กำลังประมวลผล กรุณารอสักครู่…",
+    "success": "ดำเนินการสำเร็จเรียบร้อยแล้ว"
+  },
+  "errors": {
+    "bot_missing_permissions": "บอทต้องการสิทธิ์: {permission} เพื่อดำเนินการนี้",
+    "cooldown": "กรุณารออีก {seconds} วินาที ก่อนลองใหม่อีกครั้ง",
+    "dm_not_supported": "คำสั่งนี้ไม่สามารถใช้งานในข้อความส่วนตัว (DM) ได้",
+    "guild_only": "คำสั่งนี้ใช้งานได้เฉพาะภายในเซิร์ฟเวอร์เท่านั้น",
+    "internal_error": "เกิดข้อผิดพลาดที่ไม่คาดคิด รหัสอ้างอิง: {error_id}",
+    "invalid_input": "ข้อมูลที่ระบุไม่ถูกต้อง: {reason}",
+    "missing_permissions": "ขาดสิทธิ์การใช้งานที่จำเป็น: {permission}",
+    "not_found": "ไม่พบรายการ '{item_id}' ที่ระบุ",
+    "rate_limited": "มีการส่งคำขอถี่เกินไป กรุณารอสักครู่",
+    "unauthorized": "คุณไม่มีสิทธิ์ในการดำเนินการนี้"
+  },
+  "commands": {
+    "help": {
+      "description": "ดูรายการคำสั่งทั้งหมดและคู่มือการใช้งาน",
+      "title": "เมนูช่วยเหลือ {bot_name}"
+    },
+    "ping": {
+      "description": "ตรวจสอบความหน่วงและการตอบสนองของบอทและ API",
+      "response": "🏓 Pong! ความหน่วง: {latency_ms}ms | API: {api_ms}ms"
+    }
+  },
+  "moderation": {
+    "ban_success": "แบนผู้ใช้ {user} เรียบร้อยแล้ว เหตุผล: {reason}",
+    "kick_success": "เตะผู้ใช้ {user} ออกจากเซิร์ฟเวอร์เรียบร้อยแล้ว",
+    "purge_complete": "ลบข้อความสำเร็จ {count} ข้อความ",
+    "purge_progress": "กำลังลบข้อความ {current} จาก {total} ข้อความ…",
+    "timeout_success": "จำกัดการใช้งานผู้ใช้ {user} เป็นเวลา {duration} นาที"
+  },
+  "tickets": {
+    "already_exists": "คุณมีตั๋วติดต่อที่เปิดอยู่แล้ว: {channel}",
+    "closed": "ตั๋ว #{ticket_id} ถูกปิดโดย {user}",
+    "created": "เปิดตั๋วติดต่อเรียบร้อยแล้ว: {channel}"
+  },
+  "economy": {
+    "balance": "ยอดเงินคงเหลือของ {user}: {amount} {currency}",
+    "insufficient_funds": "ยอดเงินไม่เพียงพอ คุณต้องการ {required} {currency} แต่มีอยู่เพียง {available}",
+    "transfer_success": "โอนเงินจำนวน {amount} {currency} ให้กับ {recipient} สำเร็จ"
+  }
+}

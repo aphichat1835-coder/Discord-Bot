@@ -1,0 +1,21 @@
+{
+  "name": "discordjs-starter",
+  "version": "1.0.0",
+  "description": "Production-ready Discord.js TypeScript bot template adhering to discord-bot-engineer invariants",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}

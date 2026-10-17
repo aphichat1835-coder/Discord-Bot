@@ -6,10 +6,11 @@ const config = require("../config.json");
 const { getVoiceStatusLabel } = require("../sessions/voiceLabels");
 const { isStatusReconnect, getStatusReconnectSessionId, PREFIXES } = require("../commands/customIds");
 const { buildVoiceStatusControls } = require("../commands/panelViews");
-const voiceWorker = require("../voiceWorker");
+const voiceWorker = require("../voiceWorker/index");
 const { handleStatusReconnectButton } = require("../commands/panelInteractions")._test;
 const { serializeVoiceSession } = require("../index/sessionSerializer");
-const { resolveHibernatePauseMs } = require("../voiceWorker/lifecycle")._test;
+const lifecycle = require("../voiceWorker/lifecycle");
+const { resolveHibernatePauseMs } = lifecycle._test;
 
 test("resolveHibernatePauseMs: returns 10m for cycle 2 and 5m for other cycles", () => {
     assert.equal(resolveHibernatePauseMs(1), 5 * 60 * 1000);
@@ -217,7 +218,7 @@ test("panelInteractions: handleStatusReconnectButton permission check and respon
     };
 
     // Run with mock sessionManager
-    const sessionManager = require("../sessionManager");
+    const sessionManager = require("../voiceWorker/sessionManager");
     const origGetSession = sessionManager.getSession;
     sessionManager.getSession = (id) => id === "sess-target" ? targetSession : null;
 
@@ -350,4 +351,87 @@ test("dashboard: handleReconnectSession handles auth, validation, not found, fai
     assert.equal(okRes.statusCode, 200);
     assert.equal(okRes.payload.success, true);
     assert.equal(okRes.payload.ready, true);
+});
+
+test("ghost connection detection: isSessionConnectionReady flags ghost connections", () => {
+    const { isSessionConnectionReady } = lifecycle._test;
+
+    // Normal ready: client is ready, conn status is ready, voiceInfo is in target guild
+    const normalReady = {
+        client: { isReady: () => true },
+        connection: { state: { status: "ready" } }
+    };
+    assert.equal(
+        isSessionConnectionReady(normalReady, "ready", {
+            getSelfVoiceStateInfo: () => ({ inspectable: true, inTargetGuild: true })
+        }),
+        true
+    );
+
+    // Ghost ready: client is ready, conn claims ready, but Discord Gateway says user is NOT in voice at all!
+    const ghostReady = {
+        client: { isReady: () => true },
+        connection: { state: { status: "ready" } }
+    };
+    assert.equal(
+        isSessionConnectionReady(ghostReady, "ready", {
+            getSelfVoiceStateInfo: () => ({ inspectable: true, inTargetGuild: false })
+        }),
+        false,
+        "isSessionConnectionReady must detect ghost connection when user is not in voice on Discord"
+    );
+});
+
+test("ghost connection cleanup: cleanupStaleConnectionIfPresent destroys ghost ready connection", () => {
+    const { cleanupStaleConnectionIfPresent } = lifecycle._test;
+
+    let destroyed = false;
+    const mockConn = {
+        joinConfig: { guildId: "g-1", channelId: "vc-1" },
+        state: { status: "ready" },
+        destroy: () => { destroyed = true; }
+    };
+    const session = {
+        connection: mockConn,
+        client: { isReady: () => true }
+    };
+
+    // Ghost connection: inspectable is true, but inTargetGuild is false (user not in voice on Discord)
+    const reused = cleanupStaleConnectionIfPresent(session, "g-1", "vc-1", "test-sess", {
+        getSelfVoiceStateInfo: () => ({ inspectable: true, inTargetGuild: false })
+    });
+
+    assert.equal(reused, false, "Must not reuse ghost connection");
+    assert.equal(destroyed, true, "Must destroy stale ghost connection");
+    assert.equal(session.connection, null, "Must null out session.connection");
+});
+
+test("urgent recovery: processSessionHealthCheck bypasses cooldown on urgentRecovery", () => {
+    const { processSessionHealthCheck } = lifecycle._test;
+
+    const session = {
+        state: "active",
+        connection: { state: { status: "disconnected" } },
+        client: { isReady: () => true },
+        urgentRecovery: true
+    };
+
+    let scheduled = false;
+    const deps = {
+        isSessionRunnable: () => true,
+        getSessionTokenHash: () => "hash-abc",
+        getSessionClientFromPool: () => session.client,
+        touchSession: () => {},
+        recoveryTimestamps: new Map([["sess-urgent", Date.now()]]), // On cooldown!
+        recoveryCooldownMs: 120000,
+        isSessionLocked: () => false,
+        scheduleHealthRecovery: () => { scheduled = true; return true; },
+        readyStatus: "ready",
+        getSelfVoiceStateInfo: () => ({ inspectable: true, inTargetGuild: false })
+    };
+
+    const result = processSessionHealthCheck("sess-urgent", session, Date.now(), deps);
+    assert.equal(result, true);
+    assert.equal(scheduled, true, "urgentRecovery must bypass 2-minute cooldown to recover in 2-5s");
+    assert.equal(session.urgentRecovery, false, "urgentRecovery flag must be consumed and reset");
 });

@@ -100,9 +100,8 @@ test("coverage report paths stay inside the repository and require LCOV files", 
 test("Voice coverage is scoped to the voice/session runtime instead of unrelated imports", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const pkg = require("../../package.json");
     const command = pkg.scripts["test:coverage:voice"];
-    assert.match(command, /--test-coverage-include='discord\/voiceWorker\.js'/);
     assert.match(command, /--test-coverage-include='discord\/voiceWorker\/\*\*\/\*\.js'/);
-    assert.match(command, /--test-coverage-include='discord\/sessionManager\.js'/);
+    assert.match(command, /--test-coverage-include='discord\/voiceWorker\/sessionManager\.js'/);
     assert.match(command, /--test-coverage-include='discord\/sessions\/\*\*\/\*\.js'/);
     assert.equal(command.includes("--test-coverage-exclude"), false);
 });

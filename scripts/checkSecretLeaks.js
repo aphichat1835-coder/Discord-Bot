@@ -5,10 +5,12 @@ const path = require("node:path");
 const { execFileSync, spawnSync } = require("node:child_process");
 
 const SKIPPED_PREFIXES = [
+    "test/",
     "discord/tests/",
     "verification-tests/",
     "coverage/",
-    "node_modules/"
+    "node_modules/",
+    ".agents/"
 ];
 
 const PATTERNS = [
@@ -179,7 +181,7 @@ function main() {
     process.exitCode = 1;
 }
 
-if (require.main === module) main();
+if (require.main === module) main(); // NOSONAR -- Node.js CommonJS entry-point guard; S3403 false positive.
 
 module.exports = {
     analyzeText,

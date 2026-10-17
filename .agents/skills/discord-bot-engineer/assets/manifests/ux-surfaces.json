@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "surfaces": {
+    "plain": {"interactive": false, "motion": false, "best_for": ["short_fact", "conversation", "simple_error"]},
+    "embed": {"interactive": false, "motion": false, "accent_rail": true, "best_for": ["structured_read_only", "summary", "notification"]},
+    "legacy_components": {"interactive": true, "motion": false, "best_for": ["compact_actions", "selection"]},
+    "components_v2": {"interactive": true, "motion": false, "layout": ["section", "text_display", "thumbnail", "media_gallery", "file", "separator", "container"], "best_for": ["structured_interaction", "control_panel", "workflow"]},
+    "modal": {"interactive": true, "motion": false, "best_for": ["focused_input", "short_form", "confirmation_detail"]},
+    "ephemeral": {"interactive": true, "motion": false, "best_for": ["actor_specific", "private_error", "setup"]},
+    "dashboard": {"interactive": true, "motion": true, "best_for": ["dense_management", "persistent_state", "search", "multi_step"]}
+  }
+}

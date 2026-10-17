@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const protection = require("../features/protection");
 
 test("protection config clamps numeric values, validates actions, and normalizes domains", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

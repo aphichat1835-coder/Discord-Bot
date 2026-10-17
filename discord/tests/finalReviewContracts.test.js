@@ -60,7 +60,7 @@ function createFeatureDashboardContext(fetchImpl) {
 function createCampaignDashboardContext(fetchImpl) {
     const page = source("joinCampaignPage");
     const start = page.indexOf("function esc(v){");
-    const end = page.indexOf("async function dryRun()", start);
+    const end = page.indexOf("refreshStatus();", start);
     assert.ok(start >= 0 && end > start, "campaign polling script markers must exist");
     const freshness = createElement();
     const context = {

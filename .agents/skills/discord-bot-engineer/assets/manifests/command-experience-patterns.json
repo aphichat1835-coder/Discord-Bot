@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "patterns": {
+    "information": {"panel": "detail_inspector", "recipe": "inspector", "hierarchy": ["identity", "primary_facts", "secondary_facts", "metadata"], "states": ["loading", "ready", "empty", "failed"]},
+    "moderation": {"panel": "destructive_confirmation", "recipe": "operation", "hierarchy": ["target_and_scope", "permission_or_warning", "status", "result_counts", "recovery"], "states": ["confirming", "working", "partial", "succeeded", "failed", "cancelled"]},
+    "setup": {"panel": "onboarding_wizard", "recipe": "workflow", "hierarchy": ["benefit", "step", "requirement", "primary_action", "help"], "states": ["idle", "validating", "saving", "succeeded", "failed"]},
+    "music": {"panel": "operational_status", "recipe": "media_control", "hierarchy": ["now_playing", "progress", "queue_context", "controls"], "states": ["empty", "loading", "playing", "paused", "failed"]},
+    "economy": {"panel": "review_summary", "recipe": "transaction", "hierarchy": ["amount_and_parties", "balance_impact", "confirmation", "receipt"], "states": ["review", "working", "succeeded", "failed", "timed_out"]},
+    "security": {"panel": "requirements", "recipe": "alert", "hierarchy": ["severity", "affected_scope", "known_truth", "safe_action", "evidence"], "states": ["detected", "investigating", "contained", "resolved", "unknown"]},
+    "ticket": {"panel": "queue_job", "recipe": "workflow", "hierarchy": ["status", "owner", "summary", "actions", "history"], "states": ["open", "claimed", "waiting", "closed", "failed"]},
+    "generic": {"panel": "result", "recipe": "result", "hierarchy": ["outcome", "primary_facts", "next_action"], "states": ["working", "succeeded", "empty", "failed"]}
+  }
+}

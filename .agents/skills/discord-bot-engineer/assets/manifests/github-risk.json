@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "signals": {
+    "critical": ["production_deploy", "release_publish", "oauth", "economy", "monetization", "database_migration", "workflow_write_token"],
+    "high": ["moderation", "permissions", "workflow_change", "security_config", "dependency_major", "command_registration", "branch_rules"],
+    "medium": ["interaction_handler", "dependency_minor", "dashboard_behavior", "test_infrastructure"],
+    "low": ["copy_only", "documentation", "non_behavioral_format"]
+  }
+}

@@ -152,7 +152,7 @@ test("exhausted voice recovery triggers deleteSession to prevent ghost retention
 });
 
 test("stopSession on already-failed session force-deletes cleanly without STOP_FAILED error", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const sessionManager = require("../sessionManager");
+    const sessionManager = require("../voiceWorker/sessionManager");
     const testSessionId = "session-already-failed-test";
     const testSession = {
         sessionId: testSessionId,

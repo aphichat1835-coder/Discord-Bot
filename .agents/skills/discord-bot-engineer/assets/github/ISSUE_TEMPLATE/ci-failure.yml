@@ -1,0 +1,27 @@
+name: CI or quality-gate failure
+description: Report GitHub Actions, Codacy, SonarCloud, CodeFactor, CodeQL, or Dependabot failure.
+title: "[CI]: "
+labels: ["ci", "needs-triage"]
+body:
+  - type: input
+    id: run
+    attributes: {label: Pull request or workflow/check URL}
+    validations: {required: true}
+  - type: input
+    id: sha
+    attributes: {label: Failing head SHA}
+    validations: {required: true}
+  - type: dropdown
+    id: source
+    attributes: {label: Source, options: [GitHub Actions, Codacy, SonarCloud, CodeFactor, CodeQL, Dependabot, Other]}
+    validations: {required: true}
+  - type: textarea
+    id: failure
+    attributes: {label: First causal failure and redacted log excerpt}
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes: {label: Local reproduction command and result}
+  - type: textarea
+    id: changes
+    attributes: {label: Relevant changed files and suspected introducing commit}

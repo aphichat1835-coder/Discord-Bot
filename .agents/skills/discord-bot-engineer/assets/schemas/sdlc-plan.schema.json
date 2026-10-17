@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sdlc-plan",
+  "type": "object",
+  "required": ["version", "request", "lifecycle", "risk", "phases", "required_gates", "traceability", "change_control", "environment_lifecycle", "claim_policy"],
+  "properties": {
+    "version": {"const": 1},
+    "request": {"type": "string", "minLength": 1},
+    "lifecycle": {"enum": ["patch", "feature", "migration", "incident", "retirement"]},
+    "risk": {"enum": ["low", "medium", "high", "critical"]},
+    "phases": {"type": "array", "items": {"type": "string"}},
+    "required_gates": {"type": "object"},
+    "traceability": {"type": "array"},
+    "change_control": {"type": "object"},
+    "environment_lifecycle": {"type": "array"},
+    "claim_policy": {"type": "string"}
+  },
+  "additionalProperties": true
+}

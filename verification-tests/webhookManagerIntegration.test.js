@@ -1,0 +1,2175 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+
+const Database = require("better-sqlite3");
+const { applyPragmas } = require("../database/sqlite/pragmas");
+const { runStartupCheck } = require("../database/sqlite/maintenance/startupCheck");
+const { VerificationWebhookRepository } = require("../database/sqlite/repositories/core/VerificationWebhookRepository");
+const {
+    buildWebhookPayload,
+    chunkLinesToFields,
+    chunkStringToFields,
+    splitEmbedFields,
+    fitEmbedsIntoMessages,
+    deliverWebhookEvent,
+    postWebhookMessage,
+    isPermanentWebhookError,
+    isEligibleVerifyLog,
+    VerificationWebhookManager
+} = require("../discord/verification/services/webhook/verificationWebhookManager");
+
+test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "webhook-int-test-"));
+    const testDbPath = path.join(tempDir, "test.sqlite");
+
+    const db = new Database(testDbPath);
+    applyPragmas(db, { isNew: true });
+    runStartupCheck(db, {
+        dbPath: testDbPath,
+        migrationsDir: path.resolve(__dirname, "../database/sqlite/migrations"),
+        backupDir: path.join(tempDir, "backups"),
+        assetDir: path.join(tempDir, "cache-assets")
+    });
+
+    const repo = new VerificationWebhookRepository(db);
+    const manager = new VerificationWebhookManager(repo);
+
+    t.after(async () => {
+        try {
+            if (manager.activeWorkers && manager.activeWorkers.size > 0) {
+                await Promise.allSettled(Array.from(manager.activeWorkers.values()));
+            }
+            for (const timer of manager.retryTimers.values()) {
+                clearTimeout(timer);
+            }
+        } catch (_) {}
+        try {
+            db.close();
+        } catch (_) {}
+        try {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch (_) {}
+    });
+
+    await t.test("1. P0-1: Live dispatch rejects blocked, failed, or unassigned events", async () => {
+        // Blocked event
+        const blockedRes = await manager.dispatchLiveEvent({
+            guildId: "123456",
+            userId: "user_blocked",
+            logId: "log_blocked",
+            eventData: { result: "blocked" }
+        });
+        assert.equal(blockedRes, null, "Blocked event must not be dispatched");
+
+        // Failed event
+        const failedRes = await manager.dispatchLiveEvent({
+            guildId: "123456",
+            userId: "user_failed",
+            logId: "log_failed",
+            eventData: { result: "failed" }
+        });
+        assert.equal(failedRes, null, "Failed event must not be dispatched");
+
+        // Unassigned role event
+        const unassignedRes = await manager.dispatchLiveEvent({
+            guildId: "123456",
+            userId: "user_no_role",
+            logId: "log_no_role",
+            eventData: { result: "success", roleAssignResult: { ok: false } }
+        });
+        assert.equal(unassignedRes, null, "Event with failed role assignment must not be dispatched");
+    });
+
+    const runNonce = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    await t.test("2. P1-3: Deterministic deliveryId and SQLite unique constraint deduplicate events", () => {
+        const guildId = "g1_" + runNonce;
+        const eventId = "log_succ_001_" + runNonce;
+        const userId = "user_001_" + runNonce;
+        const destinationVersion = 1;
+
+        const deliveryId = `del_${guildId}_v${destinationVersion}_${eventId}`;
+
+        // First insert
+        const res1 = repo.enqueueDelivery({
+            deliveryId,
+            guildId,
+            destinationVersion,
+            eventId,
+            userId
+        });
+        assert.equal(res1.changes, 1, "First delivery should be enqueued");
+
+        // Duplicate insert with same guild, version, and event
+        const res2 = repo.enqueueDelivery({
+            deliveryId,
+            guildId,
+            destinationVersion,
+            eventId,
+            userId
+        });
+        assert.equal(res2.changes, 0, "Duplicate delivery must be ignored cleanly (INSERT OR IGNORE)");
+
+        const existing = repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+        assert.ok(existing);
+        assert.equal(existing.delivery_id, deliveryId);
+    });
+
+    await t.test("3. P1-6: Recovery identifies and resets stuck SENDING deliveries", () => {
+        const guildId = "g2_" + runNonce;
+        const eventId = "stuck_event_01_" + runNonce;
+        const deliveryId = "del_stuck_01_" + runNonce;
+
+        repo.enqueueDelivery({
+            deliveryId,
+            guildId,
+            destinationVersion: 1,
+            eventId,
+            userId: "user_stuck"
+        });
+
+        // Simulate delivery claimed and marked SENDING in the past (e.g. 10 minutes ago)
+        const tenMinsAgo = Date.now() - 600000;
+        db.prepare(`
+            UPDATE verification_webhook_deliveries
+            SET status = 'SENDING', last_attempt_at = ?
+            WHERE delivery_id = ?
+        `).run(tenMinsAgo, deliveryId);
+
+        // Run recovery with maxAgeMs = 300000 (5 mins)
+        const recoveredCount = repo.recoverStuckSendingDeliveries(300000);
+        assert.ok(recoveredCount >= 1, "Should recover at least 1 stuck delivery");
+
+        const row = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(deliveryId);
+        assert.equal(row.status, "RETRY", "Recovered delivery status must be RETRY");
+        assert.equal(row.error_code, "sending_stuck_recovered");
+    });
+
+    await t.test("4. P1-7: Retry query finds minimum next_retry_at for worker scheduling", () => {
+        const guildId = "g3_" + runNonce;
+        const eventId1 = "retry_event_01_" + runNonce;
+        const deliveryId1 = "del_retry_01_" + runNonce;
+        const futureRetry = Date.now() + 15000;
+
+        repo.enqueueDelivery({
+            deliveryId: deliveryId1,
+            guildId,
+            destinationVersion: 1,
+            eventId: eventId1,
+            userId: "user_retry"
+        });
+        repo.markDeliveryRetry(deliveryId1, 15000, "temp_error", "Simulated temporary failure");
+
+        const nextRetry = repo.getNextRetryTimestamp(guildId);
+        assert.ok(nextRetry);
+        assert.ok(nextRetry >= Date.now());
+        assert.ok(nextRetry <= futureRetry + 2000);
+    });
+
+    await t.test("5. P1-5: Job lifecycle supports version tracking and cancellation on URL change", () => {
+        const guildId = "g4_" + runNonce;
+        const jobId = "job_v1_" + runNonce;
+
+        const job = repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 50
+        });
+        assert.equal(job.status, "RUNNING");
+        assert.equal(job.destination_version, 1);
+
+        // Simulate webhook URL change: cancels active jobs
+        repo.cancelOrFailOldJobs(guildId, "webhook_url_changed");
+
+        const updatedJob = repo.getJobById(jobId);
+        assert.equal(updatedJob.status, "FAILED");
+        assert.equal(updatedJob.error_message, "webhook_url_changed");
+    });
+
+    await t.test("6. P1-1: Backfill job completion distinguishes COMPLETED vs COMPLETED_WITH_FAILURES", () => {
+        const guildId = "g5_" + runNonce;
+        const jobCleanId = "job_clean_" + runNonce;
+        const jobFailedId = "job_with_failures_" + runNonce;
+
+        repo.createJob({ jobId: jobCleanId, guildId, destinationVersion: 1, mode: "BACKFILL_LIVE", totalEligible: 10 });
+        repo.completeJob(jobCleanId, "COMPLETED");
+        const cleanJob = repo.getJobById(jobCleanId);
+        assert.equal(cleanJob.status, "COMPLETED");
+
+        // Release job lock by completing
+        const activeCheck = repo.getActiveJob(guildId);
+        assert.equal(activeCheck, null);
+
+        repo.createJob({ jobId: jobFailedId, guildId, destinationVersion: 1, mode: "BACKFILL_LIVE", totalEligible: 10 });
+        repo.completeJob(jobFailedId, "COMPLETED_WITH_FAILURES");
+        const failedJob = repo.getJobById(jobFailedId);
+        assert.equal(failedJob.status, "COMPLETED_WITH_FAILURES");
+    });
+
+    await t.test("7. P1-8: Embed chunking and splitting preserves long data without truncation", () => {
+        // Generate 35 connections (exceeding typical single field limit)
+        const connections = Array.from({ length: 35 }, (_, i) => ({
+            type: `Platform_${i + 1}`,
+            name: `UserAccount_${i + 1}`,
+            verified: i % 2 === 0
+        }));
+
+        // Generate long findings string
+        const findings = Array.from({ length: 20 }, (_, i) => `SecurityFinding_${i + 1}: Flagged behavioral anomaly score`);
+
+        const [embed1] = buildWebhookPayload({
+            eventId: "event_large_test",
+            profile: {
+                id: "998877665544",
+                username: "SuperActiveUser",
+                displayTag: "SuperActiveUser#0001",
+                badgeFlags: ["HYPESQUAD_BRAVERY", "VERIFIED_DEVELOPER"]
+            },
+            connections,
+            guildSummary: { totalGuilds: 150, ownerGuildsCount: 5 },
+            findings,
+            ipInfo: {
+                ipHash: "hash123",
+                city: "Bangkok",
+                country: "Thailand",
+                isp: "True Internet",
+                isVPN: false
+            },
+            device: {
+                browser: "Chrome 120",
+                os: "Windows 11",
+                userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 ExtremelyLongHeaderStringForVerificationTestingOnly"
+            },
+            tokens: {
+                accessToken: "token_abc_123",
+                refreshToken: "refresh_xyz_456"
+            },
+            roleId: "role_999",
+            roleName: "Member",
+            result: "success"
+        });
+
+        // Assert no field was truncated with "..."
+        for (const f of embed1.fields) {
+            assert.ok(f.value.length <= 1024, `Field ${f.name} value must not exceed 1024 chars`);
+            assert.ok(!f.value.endsWith("..."), `Field ${f.name} must not be truncated with ellipsis`);
+        }
+
+        // Test field splitting for embeds having > 25 fields
+        const split1 = splitEmbedFields(embed1);
+        for (const emb of split1) {
+            assert.ok(emb.fields.length <= 25, "Embed must have at most 25 fields");
+        }
+
+        // Test message packaging
+        const messages = fitEmbedsIntoMessages(split1);
+        assert.ok(messages.length >= 1, "Must generate valid message packages");
+        for (const msg of messages) {
+            assert.ok(Array.isArray(msg.embeds));
+            assert.ok(msg.embeds.length <= 10);
+        }
+
+        // Assert footers are removed across the system
+        assert.equal(embed1.footer, undefined);
+    });
+
+    await t.test("8. P1-9: Historical connectionsSnapshot is preserved over current state", () => {
+        const historicalConnections = [
+            { type: "Steam", verified: true },
+            { type: "GitHub", verified: false }
+        ];
+
+        const [embed1] = buildWebhookPayload({
+            eventId: "event_history_01",
+            profile: { id: "user_hist_01", username: "HistUser" },
+            connections: historicalConnections,
+            result: "success"
+        });
+
+        const connField = embed1.fields.find(f => f.name.includes("บัญชีนอกที่เชื่อมต่อ") || f.name.includes("บัญชีที่เชื่อมต่อ"));
+        assert.ok(connField);
+        assert.match(connField.value, /Steam/);
+        assert.match(connField.value, /GitHub/);
+    });
+
+    await t.test("9. Orchestrator Live Dispatch 4 Scenarios & Fail-Closed Guard", async () => {
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const originalFindOne = GuildConfig.findOne;
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: async () => ({
+                        verification: {
+                            webhookLog: {
+                                enabled: true,
+                                url: "https://discord.com/api/webhooks/999999999/abcdefghijklmnopqrstuvwxyz0123456789_ABCDEFGH",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        try {
+            // Scenario 1: Verification success & role assigned ok
+            const res1 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_1_" + runNonce,
+                userId: "user_orch_1",
+                logId: "log_orch_1",
+                eventData: {
+                    result: "success",
+                    roleAssignResult: { ok: true }
+                }
+            });
+            assert.ok(res1, "Scenario 1: Should return deliveryId for success + role ok");
+            assert.match(res1, /^del_/);
+
+            // Scenario 2: Verification success but log/eventData is not success or missing
+            const res2 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_2_" + runNonce,
+                userId: "user_orch_2",
+                eventData: null,
+                logId: null
+            });
+            assert.equal(res2, null, "Scenario 2: Should return null when eventData and logId are null");
+
+            // Scenario 3: Verification success with alreadyHadRole: true
+            const res3 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_3_" + runNonce,
+                userId: "user_orch_3",
+                logId: "log_orch_3",
+                eventData: {
+                    result: "success",
+                    roleAssignResult: { ok: true, alreadyHadRole: true }
+                }
+            });
+            assert.ok(res3, "Scenario 3: Should return deliveryId for alreadyHadRole: true");
+
+            // Scenario 4: Role assignment failed (ok: false)
+            const res4 = await manager.dispatchLiveEvent({
+                guildId: "g_orch_4_" + runNonce,
+                userId: "user_orch_4",
+                logId: "log_orch_4",
+                eventData: {
+                    result: "success",
+                    roleAssignResult: { ok: false, error: "role_failed" }
+                }
+            });
+            assert.equal(res4, null, "Scenario 4: Should return null when role assignment failed");
+        } finally {
+            GuildConfig.findOne = originalFindOne;
+        }
+    });
+
+    await t.test("10. Atomic Job Lease Protection prevents lease on FAILED or COMPLETED jobs", () => {
+        const gLease = "g_lease_" + runNonce;
+        const jId = "j_lease_" + runNonce;
+        repo.createJob({ jobId: jId, guildId: gLease, destinationVersion: 1, mode: "BACKFILL_LIVE" });
+
+        // Acquire lease on RUNNING job succeeds
+        const acquired = repo.acquireJobLease(jId, "token_1", 30000);
+        assert.equal(acquired, true, "Should acquire lease on RUNNING job");
+
+        // Renew lease on RUNNING job succeeds
+        const renewed = repo.renewJobLease(jId, "token_1", 30000);
+        assert.equal(renewed, true, "Should renew lease on RUNNING job");
+
+        // Mark job FAILED
+        repo.failJob(jId, "manual_failure_test");
+
+        // Attempting to acquire lease on FAILED job must fail
+        const failedAcquire = repo.acquireJobLease(jId, "token_2", 30000);
+        assert.equal(failedAcquire, false, "Must not acquire lease on FAILED job");
+
+        // Attempting to renew lease on FAILED job must fail
+        const failedRenew = repo.renewJobLease(jId, "token_1", 30000);
+        assert.equal(failedRenew, false, "Must not renew lease on FAILED job");
+    });
+
+    await t.test("11. Webhook URL Change & Version Cancellation cascades to old deliveries", () => {
+        const gVer = "g_ver_" + runNonce;
+        const jVer = "j_ver_" + runNonce;
+        repo.createJob({ jobId: jVer, guildId: gVer, destinationVersion: 1, mode: "BACKFILL_LIVE" });
+
+        // Enqueue version 1 delivery
+        const d1 = "del_v1_" + runNonce;
+        repo.enqueueDelivery({
+            deliveryId: d1,
+            jobId: jVer,
+            guildId: gVer,
+            destinationVersion: 1,
+            eventId: "ev_v1_" + runNonce,
+            userId: "u_v1"
+        });
+
+        // URL changes -> new version is 2, cancel older jobs and deliveries
+        repo.cancelOrFailOldJobs(gVer, "webhook_url_changed", 2);
+
+        const jRow = repo.getJobById(jVer);
+        assert.equal(jRow.status, "FAILED");
+
+        const dRow = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d1);
+        assert.equal(dRow.status, "FAILED");
+        assert.equal(dRow.error_code, "destination_version_changed");
+    });
+
+    await t.test("12. SQLite Queue Recovery returns affected guildIds and coerces to number", () => {
+        const gRec1 = "g_rec1_" + runNonce;
+        const gRec2 = "g_rec2_" + runNonce;
+        const dRec1 = "d_rec1_" + runNonce;
+        const dRec2 = "d_rec2_" + runNonce;
+
+        repo.enqueueDelivery({ deliveryId: dRec1, guildId: gRec1, destinationVersion: 1, eventId: "e1", userId: "u1" });
+        repo.enqueueDelivery({ deliveryId: dRec2, guildId: gRec2, destinationVersion: 1, eventId: "e2", userId: "u2" });
+
+        // Set both to SENDING 10 minutes ago
+        const past = Date.now() - 600000;
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING', last_attempt_at = ? WHERE delivery_id IN (?, ?)").run(past, dRec1, dRec2);
+
+        const result = repo.recoverStuckSendingDeliveries(300000);
+        // Numeric coercion works
+        assert.ok(result >= 2, "Numeric comparison (>= 2) should pass");
+        assert.ok(Number(result) >= 2, "Number(result) should be at least 2");
+
+        // guildIds is an array containing both guilds
+        assert.ok(Array.isArray(result.guildIds));
+        assert.ok(result.guildIds.includes(gRec1));
+        assert.ok(result.guildIds.includes(gRec2));
+    });
+
+    await t.test("13. Comprehensive Discord Limits: field name/value clamping and embed/message batching", () => {
+        // 1. Extreme field name length (>256 chars)
+        const longName = "A".repeat(400);
+        const nameFields = chunkLinesToFields(longName, ["Normal value line"]);
+        for (const f of nameFields) {
+            assert.ok(f.name.length <= 256, "Field name must never exceed 256 characters");
+            assert.ok(f.name.length <= 250, "Field name should be clamped within 250 chars");
+        }
+
+        // 2. Extreme string length (>3000 chars) in single value
+        const longString = "B".repeat(3500);
+        const strFields = chunkStringToFields("LongStringTest", longString, 1000);
+        assert.ok(strFields.length >= 4, "Should chunk 3500 chars into at least 4 fields");
+        for (const f of strFields) {
+            assert.ok(f.value.length <= 1000, "Field value chunk must not exceed 1000 chars");
+        }
+
+        // 3. Huge single line (>2500 chars) in chunkLinesToFields
+        const hugeLine = "C".repeat(2500);
+        const hugeLineFields = chunkLinesToFields("HugeLineTest", [hugeLine], 1000);
+        assert.ok(hugeLineFields.length >= 3, "Huge line must be broken up into multiple fields");
+        for (const f of hugeLineFields) {
+            assert.ok(f.value.length <= 1000, "Field value must not exceed 1000 chars");
+        }
+
+        // 4. Extreme embed with 65 fields
+        const manyFields = Array.from({ length: 65 }, (_, i) => ({
+            name: `Field_${i + 1}`,
+            value: `Value_${i + 1}`
+        }));
+        const hugeEmbed = {
+            title: "HugeEmbedWithManyFields",
+            fields: manyFields,
+            footer: { text: "Event: ev_stress • User: u_stress" }
+        };
+        const splitEmbeds = splitEmbedFields(hugeEmbed);
+        assert.ok(splitEmbeds.length >= 3, "65 fields must be split into at least 3 embeds");
+        for (const emb of splitEmbeds) {
+            assert.ok(emb.fields.length <= 25, "Each embed must have <= 25 fields");
+        }
+
+        // 5. Embed with total characters > 6,000
+        const heavyFields = Array.from({ length: 20 }, (_, i) => ({
+            name: `HeavyField_${i + 1}`,
+            value: "X".repeat(500) // 20 * 500 = 10,000 characters!
+        }));
+        const charHeavyEmbed = {
+            title: "CharHeavyEmbed",
+            fields: heavyFields,
+            footer: { text: "Event: ev_heavy • User: u_heavy" }
+        };
+        const charSplits = splitEmbedFields(charHeavyEmbed);
+        assert.ok(charSplits.length >= 2, "Embed exceeding 5800 chars must be split into sequential embeds");
+
+        // 6. Message batching with 25 embeds (exceeding 10 embeds per message limit)
+        const twentyFiveEmbeds = Array.from({ length: 25 }, (_, i) => ({
+            title: `Embed_${i + 1}`,
+            fields: [{ name: "K", value: "V" }],
+            footer: { text: "Event: ev_multi • User: u_multi" }
+        }));
+        const batches = fitEmbedsIntoMessages(twentyFiveEmbeds);
+        assert.ok(batches.length >= 3, "25 embeds must be packaged into at least 3 messages");
+        for (const msg of batches) {
+            assert.ok(msg.embeds.length <= 10, "Every message must contain at most 10 embeds");
+        }
+    });
+
+    await t.test("14. P1-1: Unified Backfill & Live eligibility checker (isEligibleVerifyLog)", () => {
+        // Ineligible: null or non-object
+        assert.equal(isEligibleVerifyLog(null), false);
+        assert.equal(isEligibleVerifyLog("string"), false);
+
+        // Ineligible: result !== "success"
+        assert.equal(isEligibleVerifyLog({ result: "blocked", roleAssignResult: { ok: true } }), false);
+        assert.equal(isEligibleVerifyLog({ result: "failed", roleAssignResult: { ok: true } }), false);
+
+        // Ineligible: result === "success" but no roleAssignResult
+        assert.equal(isEligibleVerifyLog({ result: "success" }), false);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: null }), false);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: false } }), false);
+
+        // Eligible: concrete role assignment outcomes
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: true } }), true);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { alreadyHadRole: true } }), true);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { joinedWithRole: true } }), true);
+    });
+
+    await t.test("15. P1-3: Standardized Delivery ID across Live and Backfill prevents duplicate deliveries", () => {
+        const guildId = "g_std_" + runNonce;
+        const destinationVersion = 1;
+        const eventId = "ev_shared_" + runNonce;
+        const userId = "u_shared_" + runNonce;
+
+        // 1. Live enqueues delivery first
+        const liveDeliveryId = `del_${guildId}_v${destinationVersion}_${eventId}`;
+        const liveEnqueue = repo.enqueueDelivery({
+            deliveryId: liveDeliveryId,
+            guildId,
+            destinationVersion,
+            eventId,
+            userId
+        });
+        assert.equal(liveEnqueue.changes, 1, "Live delivery row inserted");
+
+        // 2. Backfill finds existing delivery
+        const existing = repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+        assert.ok(existing, "Backfill finds existing delivery row");
+        assert.equal(existing.delivery_id, liveDeliveryId, "Existing row has identical standardized deliveryId");
+        assert.equal(existing.status, "PENDING", "Initial status is PENDING");
+
+        // 3. Backfill uses existing deliveryId when sending
+        const targetDeliveryId = existing.delivery_id;
+        repo.markDeliverySent(targetDeliveryId);
+
+        // 4. Verification: delivery is now SENT, exactly 1 row exists
+        const updated = repo.getDeliveryByEventId(guildId, destinationVersion, eventId);
+        assert.equal(updated.status, "SENT", "Status successfully updated to SENT on shared deliveryId");
+        const stats = repo.getDeliveryStats(guildId, destinationVersion);
+        assert.equal(stats.total, 1, "Exactly one delivery row exists across live and backfill");
+        assert.equal(stats.sent, 1, "Row is marked SENT");
+    });
+
+    await t.test("16. P1-4: Switching to Live-only mode while Backfill is RUNNING cancels the job", () => {
+        const guildId = "g_switch_" + runNonce;
+        const jobId = "job_switch_" + runNonce;
+
+        // Create running backfill job
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 50
+        });
+
+        const activeBefore = repo.getActiveJob(guildId);
+        assert.ok(activeBefore, "Active job exists");
+        assert.equal(activeBefore.status, "RUNNING");
+
+        // Simulate cancelJob when switching to live mode
+        repo.cancelJob(jobId, "switched_to_live_only");
+
+        const activeAfter = repo.getActiveJob(guildId);
+        assert.equal(activeAfter, null, "No active job remains after switching to live mode");
+
+        const jobRecord = repo.getJobById(jobId);
+        assert.equal(jobRecord.status, "FAILED", "Job is marked FAILED");
+        assert.equal(jobRecord.error_message, "switched_to_live_only");
+    });
+
+    await t.test("17. P1-6 & P1-7: Startup recovery recovers PENDING, due RETRY, and future RETRY", () => {
+        const gPending = "g_pending_" + runNonce;
+        const gRetryDue = "g_retry_due_" + runNonce;
+        const gRetryFuture = "g_retry_fut_" + runNonce;
+
+        // Insert PENDING
+        repo.enqueueDelivery({
+            deliveryId: `del_${gPending}_v1_ev1`,
+            guildId: gPending,
+            destinationVersion: 1,
+            eventId: "ev1",
+            userId: "u1"
+        });
+
+        // Insert RETRY due now
+        repo.enqueueDelivery({
+            deliveryId: `del_${gRetryDue}_v1_ev2`,
+            guildId: gRetryDue,
+            destinationVersion: 1,
+            eventId: "ev2",
+            userId: "u2"
+        });
+        repo.markDeliveryRetry(`del_${gRetryDue}_v1_ev2`, 1000, "temp_err", "Retry due");
+        // Backdate next_retry_at to past
+        db.prepare("UPDATE verification_webhook_deliveries SET next_retry_at = ? WHERE delivery_id = ?")
+            .run(Date.now() - 5000, `del_${gRetryDue}_v1_ev2`);
+
+        // Insert RETRY due in future
+        repo.enqueueDelivery({
+            deliveryId: `del_${gRetryFuture}_v1_ev3`,
+            guildId: gRetryFuture,
+            destinationVersion: 1,
+            eventId: "ev3",
+            userId: "u3"
+        });
+        repo.markDeliveryRetry(`del_${gRetryFuture}_v1_ev3`, 60000, "temp_err", "Retry in future");
+
+        // Probe recovery queries
+        const pendingOrDue = repo.getPendingOrRetryGuildIds();
+        assert.ok(pendingOrDue.includes(gPending), "Finds guild with PENDING delivery");
+        assert.ok(pendingOrDue.includes(gRetryDue), "Finds guild with due RETRY delivery");
+
+        const allRetry = repo.getAllRetryGuildIds();
+        assert.ok(allRetry.includes(gRetryDue), "Finds guild with due retry");
+        assert.ok(allRetry.includes(gRetryFuture), "Finds guild with future retry");
+
+        // Schedule timer for future retry
+        manager.scheduleNextRetry(gRetryFuture);
+        assert.ok(manager.retryTimers.has(gRetryFuture), "Retry timer is scheduled for future retry guild");
+    });
+
+    await t.test("18. P1-5 & P1-6: Startup recovery cleans up active/orphaned backfill jobs", () => {
+        const guildId = "g_orphan_" + runNonce;
+        const jobId = "job_orphan_" + runNonce;
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 20
+        });
+
+        const activeJobs = repo.getAllActiveJobs();
+        assert.ok(activeJobs.some(j => j.job_id === jobId), "Active job discovered by getAllActiveJobs");
+
+        repo.cancelJob(jobId, "orphan_job_recovered_on_startup");
+        const afterCancel = repo.getJobById(jobId);
+        assert.equal(afterCancel.status, "FAILED", "Orphaned job successfully transitioned to FAILED");
+        assert.equal(afterCancel.error_message, "orphan_job_recovered_on_startup");
+    });
+
+    await t.test("19. P1-7: Lost-wakeup prevention in triggerWorker loops when wakeup is pending", async () => {
+        const guildId = "g_wake_" + runNonce;
+        assert.ok(manager.pendingWakeups instanceof Set, "pendingWakeups is a Set");
+
+        let runCount = 0;
+        const originalRunWorker = manager.runWorker;
+        manager.runWorker = async (gId) => {
+            runCount++;
+            if (runCount === 1) {
+                // While worker is executing first iteration, trigger another wakeup
+                manager.triggerWorker(gId);
+            }
+        };
+
+        try {
+            manager.triggerWorker(guildId);
+            await manager.activeWorkers.get(guildId);
+
+            assert.equal(runCount, 2, "Worker must loop and execute a second time to drain pending wakeup");
+            assert.equal(manager.pendingWakeups.has(guildId), false, "pendingWakeups must be cleared after second iteration");
+            assert.equal(manager.activeWorkers.has(guildId), false, "activeWorkers must be cleared after worker completes");
+        } finally {
+            manager.runWorker = originalRunWorker;
+            manager.pendingWakeups.delete(guildId);
+            manager.activeWorkers.delete(guildId);
+        }
+    });
+
+    await t.test("20. P2-8: Data contract fidelity: Guild Summary displays actual collector output", () => {
+        // Case 1: Collector output format with totalCount / ownedCount
+        const payloadFromCollector = buildWebhookPayload({
+            eventId: "ev_collector",
+            profile: { id: "123", username: "collectorUser" },
+            guildSummary: { totalCount: 42, ownedCount: 7 },
+            result: "success"
+        });
+        const guildField1 = payloadFromCollector[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
+        assert.ok(guildField1, "Discord server stats field must exist");
+        assert.match(guildField1.value, /เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*42/, "Correct total count from totalCount");
+        assert.match(guildField1.value, /เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*7/, "Correct owner count from ownedCount");
+
+        // Case 2: Legacy format with totalGuilds / ownerGuildsCount
+        const payloadLegacy = buildWebhookPayload({
+            eventId: "ev_legacy",
+            profile: { id: "456", username: "legacyUser" },
+            guildSummary: { totalGuilds: 15, ownerGuildsCount: 3 },
+            result: "success"
+        });
+        const guildField2 = payloadLegacy[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
+        assert.match(guildField2.value, /เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*15/, "Correct total count from totalGuilds");
+        assert.match(guildField2.value, /เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*3/, "Correct owner count from ownerGuildsCount");
+
+        // Case 3: Null guild summary
+        const payloadNull = buildWebhookPayload({
+            eventId: "ev_null",
+            profile: { id: "789", username: "nullUser" },
+            guildSummary: null,
+            result: "success"
+        });
+        const guildField3 = payloadNull[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
+        assert.match(guildField3.value, /เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*ไม่ระบุ/, "Handles null summary gracefully");
+        assert.match(guildField3.value, /เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*0/, "Handles null summary owned count gracefully");
+
+        // Case 4: Admin guilds count calculation
+        const payloadAdmin = buildWebhookPayload({
+            eventId: "ev_admin",
+            profile: { id: "101", username: "adminUser" },
+            guildSummary: { totalCount: 10, ownedCount: 2, adminGuildsCount: 4 },
+            result: "success"
+        });
+        const guildField4 = payloadAdmin[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
+        assert.match(guildField4.value, /มียศ เเอดมิน กี่เซิฟเวอร์\s*:\s*4 เซิร์ฟเวอร์/);
+    });
+
+    await t.test("21. P1-5: URL change cascades to cancel active deliveries including SENDING", () => {
+        const guildId = "g_url_change_" + runNonce;
+        const d1 = `del_${guildId}_v1_pending`;
+        const d2 = `del_${guildId}_v1_sending`;
+
+        repo.enqueueDelivery({
+            deliveryId: d1,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_d1",
+            userId: "u1"
+        });
+
+        repo.enqueueDelivery({
+            deliveryId: d2,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_d2",
+            userId: "u2"
+        });
+
+        // Mark d2 as SENDING
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING' WHERE delivery_id = ?").run(d2);
+
+        // Cancel old jobs/deliveries for new destination version 2
+        repo.cancelOrFailOldJobs(guildId, "webhook_url_changed", 2);
+
+        const check1 = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d1);
+        const check2 = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d2);
+
+        assert.equal(check1.status, "FAILED", "Pending delivery from version 1 is FAILED");
+        assert.equal(check2.status, "FAILED", "SENDING delivery from version 1 is FAILED");
+    });
+
+    await t.test("22. P1-8: Multi-part messages are annotated with part numbers for at-least-once traceability", () => {
+        // Create 15 embeds so they exceed the 10 embeds per message limit
+        const embeds = Array.from({ length: 15 }, (_, i) => ({
+            title: `Embed ${i + 1}`,
+            description: "Test description"
+        }));
+
+        const splitEmbeds = [];
+        for (const emb of embeds) {
+            splitEmbeds.push(...splitEmbedFields(emb));
+        }
+        const messages = fitEmbedsIntoMessages(splitEmbeds);
+        assert.equal(messages.length, 2, "15 embeds split into exactly 2 messages");
+
+        // Annotate like deliverWebhookEvent
+        for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            for (const emb of msg.embeds) {
+                const partTag = `ส่วนที่ ${i + 1}/${messages.length}`;
+                if (emb.footer && emb.footer.text) {
+                    emb.footer.text = `${emb.footer.text} • ${partTag}`;
+                } else {
+                    emb.footer = { text: partTag };
+                }
+            }
+        }
+
+        assert.ok(messages[0].embeds[0].footer.text.includes("ส่วนที่ 1/2"), "First batch annotated with part 1/2");
+        assert.ok(messages[1].embeds[0].footer.text.includes("ส่วนที่ 2/2"), "Second batch annotated with part 2/2");
+    });
+
+    await t.test("23. P1-3: Switching to Live-only cancels pending and retry backfill deliveries via startLiveMode", async () => {
+        const guildId = "g_live_cancel_" + runNonce;
+        const jobId = "job_backfill_cancel_" + runNonce;
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 5
+        });
+
+        const delPending = `del_${guildId}_v1_pending_backfill`;
+        const delRetry = `del_${guildId}_v1_retry_backfill`;
+        const delLive = `del_${guildId}_v1_live_pending`;
+
+        repo.enqueueDelivery({
+            deliveryId: delPending,
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_bp",
+            userId: "u_bp"
+        });
+
+        repo.enqueueDelivery({
+            deliveryId: delRetry,
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_br",
+            userId: "u_br"
+        });
+        repo.markDeliveryRetry(delRetry, 60000, "backfill_fail", "Temporary error");
+
+        // Live delivery (no jobId)
+        repo.enqueueDelivery({
+            deliveryId: delLive,
+            jobId: null,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_live",
+            userId: "u_live"
+        });
+
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const originalFindOne = GuildConfig.findOne;
+        const originalUpdateOne = GuildConfig.updateOne;
+        let updatedMode = null;
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => Promise.resolve({
+                    verification: {
+                        webhookLog: {
+                            url: "https://discord.com/api/webhooks/111111111111111111/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            enabled: true,
+                            mode: "backfill_live",
+                            destinationVersion: 1
+                        }
+                    }
+                })
+            })
+        });
+        GuildConfig.updateOne = async (filter, update) => {
+            updatedMode = update.$set?.["verification.webhookLog.mode"];
+            return { acknowledged: true, modifiedCount: 1 };
+        };
+
+        try {
+            const startRes = await manager.startLiveMode(guildId);
+            assert.equal(startRes.ok, true);
+            assert.equal(startRes.mode, "live");
+            assert.equal(updatedMode, "live", "GuildConfig mode updated to live");
+
+            const checkJob = repo.getJobById(jobId);
+            assert.equal(checkJob.status, "FAILED", "Job is marked FAILED by startLiveMode");
+
+            const checkPending = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delPending);
+            const checkRetry = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delRetry);
+            const checkLive = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delLive);
+
+            assert.equal(checkPending.status, "FAILED", "Backfill PENDING delivery is cancelled by live mode");
+            assert.equal(checkPending.error_code, "cancelled_by_live_mode");
+            assert.equal(checkRetry.status, "FAILED", "Backfill RETRY delivery is cancelled by live mode");
+            assert.equal(checkRetry.error_code, "cancelled_by_live_mode");
+            assert.equal(checkLive.status, "PENDING", "Live delivery without jobId is preserved and remains PENDING");
+        } finally {
+            GuildConfig.findOne = originalFindOne;
+            GuildConfig.updateOne = originalUpdateOne;
+        }
+    });
+
+    await t.test("24. P1-5: Conditional status update prevents overwriting FAILED after URL change", () => {
+        const guildId = "g_cond_update_" + runNonce;
+        const deliveryId = `del_${guildId}_v1_race`;
+
+        repo.enqueueDelivery({
+            deliveryId,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_race",
+            userId: "u_race"
+        });
+
+        // Claim it -> status becomes SENDING
+        const claimed = repo.claimNextDeliveries(guildId, 1);
+        assert.equal(claimed.length, 1);
+        assert.equal(claimed[0].status, "PENDING"); // was pending before claim update
+
+        const checkSending = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(deliveryId);
+        assert.equal(checkSending.status, "SENDING");
+
+        // While HTTP request is in-flight, destination URL changes to version 2
+        repo.cancelOrFailOldJobs(guildId, "destination_version_changed", 2);
+
+        const checkFailed = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(deliveryId);
+        assert.equal(checkFailed.status, "FAILED", "In-flight delivery marked FAILED by URL change");
+
+        // Late response finishes and attempts to mark SENT with version 1
+        const sentResult = repo.markDeliverySent(deliveryId, 1);
+        assert.equal(sentResult.changes, 0, "markDeliverySent MUST NOT update a row that is no longer SENDING");
+
+        const checkAfter = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(deliveryId);
+        assert.equal(checkAfter.status, "FAILED", "Delivery remains FAILED and is not overwritten");
+    });
+
+    await t.test("25. P1-2: recoverStuckSendingDeliveries with maxAgeMs=0 resets all orphaned SENDING deliveries", () => {
+        const guildId = "g_stuck_" + runNonce;
+        const d1 = `del_${guildId}_v1_stuck`;
+
+        repo.enqueueDelivery({
+            deliveryId: d1,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_stuck",
+            userId: "u_stuck"
+        });
+
+        // Claim it to SENDING
+        repo.claimNextDeliveries(guildId, 1);
+
+        // Immediate startup recovery with maxAgeMs = 0
+        const recResult = repo.recoverStuckSendingDeliveries(0);
+        assert.ok(recResult.recoveredCount >= 1, "At least 1 stuck delivery recovered");
+
+        const check = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(d1);
+        assert.equal(check.status, "RETRY", "Stuck SENDING delivery recovered to RETRY");
+        assert.equal(check.error_code, "sending_stuck_recovered");
+    });
+
+    await t.test("26. Section 5: getDeliveryStats filters accurately by destinationVersion", () => {
+        const guildId = "g_stats_ver_" + runNonce;
+        const d_v1 = `del_${guildId}_v1_f`;
+        const d_v2 = `del_${guildId}_v2_s`;
+
+        repo.enqueueDelivery({ deliveryId: d_v1, guildId, destinationVersion: 1, eventId: "e1", userId: "u1" });
+        repo.markDeliveryFailed(d_v1, "v1_error", "Old URL failure");
+
+        repo.enqueueDelivery({ deliveryId: d_v2, guildId, destinationVersion: 2, eventId: "e2", userId: "u2" });
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING' WHERE delivery_id = ?").run(d_v2);
+        repo.markDeliverySent(d_v2, 2);
+
+        // Version 1 stats
+        const statsV1 = repo.getDeliveryStats(guildId, 1);
+        assert.equal(statsV1.failed, 1, "V1 has 1 failed");
+        assert.equal(statsV1.sent, 0, "V1 has 0 sent");
+
+        // Version 2 stats
+        const statsV2 = repo.getDeliveryStats(guildId, 2);
+        assert.equal(statsV2.failed, 0, "V2 has 0 failed");
+        assert.equal(statsV2.sent, 1, "V2 has 1 sent");
+    });
+
+    await t.test("27. P1-2: performStartupRecovery end-to-end recovers orphaned jobs and stuck sending deliveries", async () => {
+        const guildId = "g_full_rec_" + runNonce;
+        const jobId = "job_full_rec_" + runNonce;
+
+        // 1. Stuck SENDING delivery
+        const delSending = `del_${guildId}_v1_sending`;
+        repo.enqueueDelivery({
+            deliveryId: delSending,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_rec_sending",
+            userId: "u_rec_s"
+        });
+        repo.claimNextDeliveries(guildId, 1); // turns to SENDING
+
+        // 2. Active backfill job
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 10
+        });
+
+        // 3. Future retry delivery
+        const delRetryFuture = `del_${guildId}_v1_future_retry`;
+        repo.enqueueDelivery({
+            deliveryId: delRetryFuture,
+            guildId,
+            destinationVersion: 1,
+            eventId: "ev_rec_future",
+            userId: "u_rec_f"
+        });
+        repo.markDeliveryRetry(delRetryFuture, 60000, "tmp_err", "retry later");
+
+        // Mock GuildConfig
+        const mongoose = require("mongoose");
+        const origReadyState = mongoose.connection.readyState;
+        Object.defineProperty(mongoose.connection, "readyState", { value: 1, configurable: true, writable: true });
+
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const originalFindOne = GuildConfig.findOne;
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                enabled: true,
+                                mode: "live", // Guild is now in live mode -> orphan job should be cancelled!
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        let triggeredGuilds = [];
+        const originalTriggerWorker = manager.triggerWorker;
+        manager.triggerWorker = (gId) => {
+            triggeredGuilds.push(gId);
+        };
+
+        try {
+            await manager.performStartupRecovery();
+
+            // Check SENDING delivery was reset to RETRY
+            const checkSending = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delSending);
+            assert.equal(checkSending.status, "RETRY", "Stuck SENDING delivery recovered to RETRY");
+            assert.equal(checkSending.error_code, "sending_stuck_recovered");
+
+            // Check orphaned backfill job was cancelled because guild is in live mode
+            const checkJob = repo.getJobById(jobId);
+            assert.equal(checkJob.status, "FAILED", "Orphaned job cancelled");
+            assert.equal(checkJob.error_message, "orphan_job_recovered_on_startup");
+
+            // Check retry timer was scheduled for future retry
+            assert.ok(manager.retryTimers.has(guildId), "Retry timer scheduled for future retry");
+
+            // Check worker was triggered for recovered deliveries
+            assert.ok(triggeredGuilds.includes(guildId), "Worker triggered for recovered guild");
+        } finally {
+            Object.defineProperty(mongoose.connection, "readyState", { value: origReadyState, configurable: true, writable: true });
+            GuildConfig.findOne = originalFindOne;
+            manager.triggerWorker = originalTriggerWorker;
+        }
+    });
+
+    await t.test("28. P1-4: executeBackfill enqueues deliveries and drains through unified queue worker", async () => {
+        const guildId = "g_backfill_unified_" + runNonce;
+        const jobId = "job_bf_uni_" + runNonce;
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: 2
+        });
+
+        const VerifyLog = require("../discord/verification/models/VerifyLog");
+        const originalFind = VerifyLog.find;
+        const log1Id = "507f1f77bcf86cd799439011";
+        const log2Id = "507f1f77bcf86cd799439012";
+
+        let findCalls = 0;
+        VerifyLog.find = () => ({
+            sort: () => ({
+                limit: () => ({
+                    lean: () => {
+                        findCalls++;
+                        if (findCalls === 1) {
+                            return Promise.resolve([
+                                { _id: log1Id, guildId, userId: "u1", result: "success", roleAssignResult: { ok: true } },
+                                { _id: log2Id, guildId, userId: "u2", result: "success", roleAssignResult: { ok: true } }
+                            ]);
+                        }
+                        return Promise.resolve([]); // end of stream
+                    }
+                })
+            })
+        });
+
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const originalFindOne = GuildConfig.findOne;
+        const originalUpdateOne = GuildConfig.updateOne;
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/123/mock",
+                                enabled: true,
+                                mode: "backfill_live",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+        GuildConfig.updateOne = () => Promise.resolve({ acknowledged: true });
+
+        let drainedCalls = 0;
+        const originalDrain = manager.drainDeliveries;
+        manager.drainDeliveries = async (gId) => {
+            drainedCalls++;
+        };
+
+        try {
+            const job = repo.getJobById(jobId);
+            await manager.executeBackfill(guildId, job, "test-lease-token");
+
+            // Verify both items were enqueued into SQLite with the job's ID
+            const d1 = repo.getDeliveryByEventId(guildId, 1, log1Id);
+            const d2 = repo.getDeliveryByEventId(guildId, 1, log2Id);
+            assert.ok(d1, "Log 1 enqueued into deliveries table");
+            assert.equal(d1.job_id, jobId, "Delivery 1 belongs to backfill job");
+            assert.ok(d2, "Log 2 enqueued into deliveries table");
+            assert.equal(d2.job_id, jobId, "Delivery 2 belongs to backfill job");
+
+            // Verify drainDeliveries was called to process them via the queue worker
+            assert.ok(drainedCalls >= 1, "drainDeliveries called to drain through unified queue worker");
+        } finally {
+            VerifyLog.find = originalFind;
+            GuildConfig.findOne = originalFindOne;
+            GuildConfig.updateOne = originalUpdateOne;
+            manager.drainDeliveries = originalDrain;
+        }
+    });
+
+    await t.test("29. Section 5: getReadiness returns lastError and destination-filtered stats", async () => {
+        const guildId = "g_readiness_" + runNonce;
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const originalFindOne = GuildConfig.findOne;
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/123/mock",
+                                enabled: true,
+                                mode: "live",
+                                destinationVersion: 2,
+                                lastStatus: "running",
+                                lastError: "Rate limited by Discord API"
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        try {
+            const readiness = await manager.getReadiness(guildId);
+            assert.equal(readiness.destinationVersion, 2);
+            assert.equal(readiness.lastError, "Rate limited by Discord API", "lastError is returned to caller");
+            assert.equal(readiness.enabled, true);
+        } finally {
+            GuildConfig.findOne = originalFindOne;
+        }
+    });
+
+    await t.test("30. P1: Multi-message chunking resumes from sent_parts without duplicating sent parts", async () => {
+        const origFetch = global.fetch;
+        const sentRequests = [];
+        global.fetch = async (url, options) => {
+            sentRequests.push(JSON.parse(options.body));
+            return {
+                ok: true,
+                status: 200,
+                text: async () => "ok"
+            };
+        };
+
+        try {
+            // Create an event that splits into 2 distinct messages (exceeding single embed char limits)
+            const hugeFields = Array.from({ length: 30 }, (_, i) => ({
+                name: `Field ${i}`,
+                value: "X".repeat(200)
+            }));
+            const largeEmbed = {
+                title: "Test Large Payload",
+                fields: hugeFields
+            };
+
+            const deliveredParts = [];
+            await deliverWebhookEvent("https://discord.com/api/webhooks/test/url", [largeEmbed], {
+                startPart: 1, // Simulate resuming after part 1 was already acknowledged
+                onPartSent: async (partIndex, totalParts) => {
+                    deliveredParts.push({ partIndex, totalParts });
+                }
+            });
+
+            // If it split into 2 messages, starting from 1 means only 1 message was transmitted
+            assert.equal(sentRequests.length, 1, "Only remaining unacknowledged part was transmitted");
+            assert.ok(deliveredParts.length >= 1, "onPartSent callback fired for completed part");
+
+            // Also test SQLite sent_parts persistence
+            const guildId = "g_parts_" + runNonce;
+            const eventId = "ev_parts_" + runNonce;
+            const deliveryId = "del_parts_" + runNonce;
+            repo.enqueueDelivery({
+                deliveryId,
+                guildId,
+                destinationVersion: 1,
+                eventId,
+                userId: "user_parts"
+            });
+
+            repo.updateDeliverySentParts(deliveryId, 2);
+            const saved = repo.getDeliveryByEventId(guildId, 1, eventId);
+            assert.equal(saved.sent_parts, 2, "SQLite properly records updated sent_parts");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("31. P1: Backfill job remains RUNNING when delivery retries and completes only after retry succeeds", async () => {
+        const guildId = "g_backfill_retry_" + runNonce;
+        const jobId = "job_retry_" + runNonce;
+        const eventId = "ev_retry_" + runNonce;
+        const deliveryId = "del_retry_" + runNonce;
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "backfill",
+            totalEligible: 1
+        });
+
+        repo.enqueueDelivery({
+            deliveryId,
+            guildId,
+            destinationVersion: 1,
+            eventId,
+            userId: "user_retry",
+            jobId
+        });
+        repo.updateJobProgress(jobId, { processedCount: 1 });
+
+        // Claim and mark retry
+        repo.claimNextDeliveries(guildId, 1);
+        repo.markDeliveryRetry(deliveryId, 5000, "temp_network_blip", "Simulated transient failure", 1);
+
+        // Count pending deliveries must count RETRY items
+        const pendingCount = repo.countPendingDeliveriesForJob(jobId);
+        assert.equal(pendingCount, 1, "Pending deliveries count includes RETRY items");
+
+        const stats = repo.getJobDeliveryStats(jobId);
+        assert.equal(stats.retryCount, 1, "Stats reflect RETRY delivery");
+
+        // Calling checkAndCompleteJobIfDone while items are in RETRY must NOT complete the job
+        await manager.checkAndCompleteJobIfDone(jobId, guildId);
+        const jobStillRunning = repo.getJobById(jobId);
+        assert.equal(jobStillRunning.status, "RUNNING", "Job must stay RUNNING while deliveries are pending retry");
+
+        // Now simulate retry completion
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const origFindOne = GuildConfig.findOne;
+        const origUpdateOne = GuildConfig.updateOne;
+        let modeSwitchedToLive = false;
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/123/mock",
+                                enabled: true,
+                                mode: "backfill_live",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        GuildConfig.updateOne = (filter, update) => {
+            if (update?.$set?.["verification.webhookLog.mode"] === "live") {
+                modeSwitchedToLive = true;
+            }
+            return Promise.resolve({ acknowledged: true });
+        };
+
+        try {
+            repo.markDeliverySent(deliveryId, 1);
+            assert.equal(repo.countPendingDeliveriesForJob(jobId), 0, "No pending deliveries remain");
+
+            await manager.checkAndCompleteJobIfDone(jobId, guildId);
+            const completedJob = repo.getJobById(jobId);
+            assert.equal(completedJob.status, "COMPLETED", "Job transitions to COMPLETED once retry finishes");
+            assert.equal(modeSwitchedToLive, true, "Guild switches to live mode only when all retries complete");
+        } finally {
+            GuildConfig.findOne = origFindOne;
+            GuildConfig.updateOne = origUpdateOne;
+        }
+    });
+
+    await t.test("32. P1/P2: postWebhookMessage aborts and throws webhook_request_timeout on request timeout", async () => {
+        const origFetch = global.fetch;
+        global.fetch = async (url, options) => {
+            const abortErr = new Error("This operation was aborted");
+            abortErr.name = "AbortError";
+            throw abortErr;
+        };
+
+        try {
+            await assert.rejects(
+                async () => {
+                    await postWebhookMessage("https://discord.com/api/webhooks/test/timeout", { content: "ping" });
+                },
+                (err) => {
+                    assert.equal(err.code, "webhook_request_timeout");
+                    assert.ok(err.message.includes("webhook_request_timeout"));
+                    return true;
+                },
+                "postWebhookMessage must normalize AbortError into webhook_request_timeout"
+            );
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("33. P1/P2: deliverWebhookEvent aborts multipart delivery if destination changes midway", async () => {
+        const origFetch = global.fetch;
+        let partsSent = 0;
+        global.fetch = async () => {
+            partsSent++;
+            return { ok: true, status: 200, text: async () => "ok" };
+        };
+
+        try {
+            const hugeFields = Array.from({ length: 30 }, (_, i) => ({
+                name: `Field ${i}`,
+                value: "X".repeat(200)
+            }));
+            const largeEmbed = { title: "Test Multipart Abort", fields: hugeFields };
+
+            let callCount = 0;
+            await assert.rejects(
+                async () => {
+                    await deliverWebhookEvent("https://discord.com/api/webhooks/test/url", [largeEmbed], {
+                        startPart: 0,
+                        checkDestinationValid: async () => {
+                            callCount++;
+                            // Return true on part 0, then false on part 1
+                            return callCount <= 1;
+                        }
+                    });
+                },
+                (err) => {
+                    assert.equal(err.code, "destination_changed_during_delivery");
+                    return true;
+                },
+                "deliverWebhookEvent must abort when checkDestinationValid returns false"
+            );
+            assert.equal(partsSent, 1, "Only first part was sent before destination change aborted delivery");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("34. P1/P2: postWebhookMessage coordinates URL-level 429 rate limit backoff across callers", async () => {
+        const origFetch = global.fetch;
+        const testUrl = "https://discord.com/api/webhooks/test/ratelimit_url";
+        let fetchCalls = 0;
+
+        global.fetch = async () => {
+            fetchCalls++;
+            if (fetchCalls === 1) {
+                return {
+                    ok: false,
+                    status: 429,
+                    headers: {
+                        get: (k) => k.toLowerCase() === "retry-after" ? "0.1" : null
+                    }
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                text: async () => "ok"
+            };
+        };
+
+        try {
+            const res = await postWebhookMessage(testUrl, { content: "test 429" });
+            assert.equal(res, true);
+            assert.ok(fetchCalls >= 2, "Retried after 429 backoff");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("35. P1-6: isPermanentWebhookError differentiates non-retryable 4xx from retryable errors", () => {
+        // Permanent / non-retryable errors
+        assert.equal(isPermanentWebhookError({ status: 400 }), true);
+        assert.equal(isPermanentWebhookError({ status: 401 }), true);
+        assert.equal(isPermanentWebhookError({ status: 403 }), true);
+        assert.equal(isPermanentWebhookError({ status: 404 }), true);
+        assert.equal(isPermanentWebhookError({ status: 405 }), true);
+        assert.equal(isPermanentWebhookError({ status: 410 }), true);
+        assert.equal(isPermanentWebhookError(new Error("webhook_http_404:Not Found")), true);
+        assert.equal(isPermanentWebhookError({ code: "destination_changed_during_delivery" }), true);
+
+        // Retryable / transient errors
+        assert.equal(isPermanentWebhookError({ status: 429 }), false);
+        assert.equal(isPermanentWebhookError({ status: 500 }), false);
+        assert.equal(isPermanentWebhookError({ status: 502 }), false);
+        assert.equal(isPermanentWebhookError({ status: 503 }), false);
+        assert.equal(isPermanentWebhookError({ status: 504 }), false);
+        assert.equal(isPermanentWebhookError(new Error("webhook_request_timeout:15000ms")), false);
+        assert.equal(isPermanentWebhookError(new Error("network error")), false);
+    });
+
+    await t.test("36. P1-6: postWebhookMessage attaches status code to errors for fail-closed handling", async () => {
+        const origFetch = global.fetch;
+        global.fetch = async () => ({
+            ok: false,
+            status: 404,
+            text: async () => "Unknown Webhook"
+        });
+
+        try {
+            await assert.rejects(
+                async () => postWebhookMessage("https://discord.com/api/webhooks/99999/token", { content: "hi" }),
+                (err) => {
+                    assert.equal(err.status, 404);
+                    assert.equal(isPermanentWebhookError(err), true);
+                    return true;
+                }
+            );
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("37. P1-4: updateJobProgress with leaseToken rejects stale worker updates after lease changes", () => {
+        const gId = "guild_lease_test";
+        const jId = "job_lease_test_1";
+        repo.createJob({
+            jobId: jId,
+            guildId: gId,
+            destinationVersion: 1,
+            mode: "BACKFILL",
+            totalEligible: 10
+        });
+
+        // Worker A acquires lease
+        const acquired = repo.acquireJobLease(jId, "token_worker_A", 10000);
+        assert.equal(acquired, true);
+
+        // Worker A can update progress with token_worker_A
+        const updA = repo.updateJobProgress(jId, {
+            processedCount: 2,
+            leaseToken: "token_worker_A"
+        });
+        assert.equal(updA.changes, 1);
+
+        // Worker B acquires expired or new lease
+        // Simulate lease expiration by updating lease directly in DB or acquiring with worker B
+        repo.db.prepare("UPDATE verification_webhook_jobs SET lease_token = ?, lease_expires_at = ? WHERE job_id = ?")
+            .run("token_worker_B", Date.now() + 10000, jId);
+
+        // Worker A tries to update progress with stale token_worker_A -> must be rejected (changes = 0)
+        const updStaleA = repo.updateJobProgress(jId, {
+            processedCount: 3,
+            leaseToken: "token_worker_A"
+        });
+        assert.equal(updStaleA.changes, 0, "Stale worker update rejected");
+
+        // Worker B can update progress
+        const updB = repo.updateJobProgress(jId, {
+            processedCount: 4,
+            leaseToken: "token_worker_B"
+        });
+        assert.equal(updB.changes, 1, "Active worker update accepted");
+
+        const finalJob = repo.getJobById(jId);
+        assert.equal(finalJob.processed_count, 4);
+    });
+
+    await t.test("38. Comprehensive Verification Single-Embed layout fidelity (wedhook template spec)", () => {
+        const [embed] = buildWebhookPayload({
+            eventId: "ev_spec_123",
+            guildId: "123456789012345678",
+            guildName: "Phomueangtai Community",
+            profile: {
+                id: "554433221100",
+                username: "somchai",
+                globalName: "สมชาย ยอดนักสู้",
+                discriminator: "0",
+                displayTag: "@somchai",
+                avatarUrl: "https://cdn.discordapp.com/avatars/554433221100/abcdef.png",
+                bannerUrl: "https://cdn.discordapp.com/banners/554433221100/banner.png",
+                accountCreatedAt: Date.now() - (1365 * 24 * 60 * 60 * 1000),
+                accountAgeDays: 1365,
+                email: "somchai@example.com",
+                emailVerified: true,
+                locale: "th",
+                mfaEnabled: true,
+                premiumType: 2,
+                badgeFlags: ["HYPESQUAD_BRAVERY", "ACTIVE_DEVELOPER"]
+            },
+            connections: [
+                { type: "Steam" },
+                { type: "GitHub" },
+                { type: "YouTube" },
+                { type: "Spotify" },
+                { type: "Roblox" }
+            ],
+            guildSummary: {
+                totalCount: 42,
+                ownedCount: 2,
+                adminGuildsCount: 2
+            },
+            ipInfo: {
+                rawIp: "171.96.120.45",
+                lat: 13.7563,
+                lon: 100.5018,
+                accuracyRadius: 5,
+                city: "Bangkok",
+                region: "Bangkok",
+                country: "Thailand",
+                zip: "10240",
+                timezone: "Asia/Bangkok",
+                isp: "True Internet",
+                org: "AS131445 True Internet Co., Ltd.",
+                reverse: "ppp-171-96-120-45.rev.trueinternet.co.th",
+                isVPN: false,
+                isProxy: false,
+                mobile: false
+            },
+            device: {
+                deviceType: "Desktop",
+                platform: "Win32",
+                os: "Windows 11",
+                screenSize: "1920x1080",
+                browser: "Chrome 124",
+                languages: ["th-TH", "en-US"],
+                touchPoints: 0,
+                userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0",
+                userAgentSuspected: false
+            },
+            tokens: {
+                scope: "identify email connections guilds guilds.members.read guilds.join",
+                expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+                accessToken: "RAW_ACCESS_TOKEN_XYZ_1234567890",
+                refreshToken: "RAW_REFRESH_TOKEN_ABC_0987654321"
+            },
+            trackingSnapshot: {
+                uniqueUsers: 1,
+                firstSeenAt: Date.now() - 3600000
+            },
+            roleId: "987654321098765432",
+            roleName: "Verified Member",
+            findings: [],
+            result: "success"
+        });
+
+        // 1. Embed structure checks
+        assert.ok(embed, "Embed exists");
+        assert.match(embed.title, /(:bell_pmt:|<a:bell_pmt:|<:Discord_pmt:) Log Verify ผู้ใช้งาน/);
+        assert.match(embed.description, /ข้อมูลจากเซิร์ฟเวอร์\s*:\s*Phomueangtai Community/);
+        assert.match(embed.description, /เซิร์ฟเวอร์ id\s*:\s*\(123456789012345678\)/);
+        assert.match(embed.description, /User\s*:\s*<@554433221100>/);
+        assert.match(embed.description, /• ผลการยืนยัน\s*:\s*สำเร็จ <a:CHECK_pmt:1553832954051174426>/);
+        assert.match(embed.description, /• ยศที่ได้รับ\s*:\s*<@&987654321098765432> \(Verified Member\)/);
+        assert.match(embed.description, /• เครือข่ายที่อาจจะใช้ยืนยัน\s*:\s*อินเทอร์เน็ตบ้าน\/ปกติ/);
+        assert.equal(embed.thumbnail.url, "https://cdn.discordapp.com/avatars/554433221100/abcdef.png");
+
+        // 2. Section 1: ข้อมูลบัญชี Discord
+        const sec1 = embed.fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
+        assert.ok(sec1, "Section 1 exists");
+        assert.match(sec1.value, /• Global Name\s*:\s*สมชาย ยอดนักสู้/);
+        assert.match(sec1.value, /• Username\s*:\s*somchai/);
+        assert.match(sec1.value, /• User ID\s*:\s*554433221100/);
+        assert.match(sec1.value, /• Avatar URL\s*:\s*\[คลิกเพื่อดูรูปโปรไฟล์\]\(https:\/\/cdn\.discordapp\.com\/avatars\/554433221100\/abcdef\.png\)/);
+        assert.match(sec1.value, /• Banner URL\s*:\s*\[คลิกเพื่อดูแบนเนอร์\]\(https:\/\/cdn\.discordapp\.com\/banners\/554433221100\/banner\.png\)/);
+        assert.match(sec1.value, /• Discriminator\s*:\s*#0/);
+        assert.match(sec1.value, /• Email\s*:\s*somchai@example\.com/);
+        assert.match(sec1.value, /• Email Verified\s*:\s*ยืนยันแล้ว<a:CHECK_pmt:1553832954051174426>/);
+        assert.match(sec1.value, /• ภาษาของแอป Discord\s*:\s*th/);
+        assert.match(sec1.value, /• MFA \(2FA\)\s*:\s*เปิดใช้งาน<a:CHECK_pmt:1553832954051174426>/);
+        assert.match(sec1.value, /• วันสร้างบัญชี\s*:\s*.* \(1365 วัน\)/);
+        assert.match(sec1.value, /• เหรียญตรา\s*:\s*HYPESQUAD_BRAVERY, ACTIVE_DEVELOPER/);
+        assert.match(sec1.value, /• มี Nitro ไหม\s*:\s*มี \(Discord Nitro\)/);
+        assert.match(sec1.value, /• เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*42 เซิร์ฟเวอร์/);
+        assert.match(sec1.value, /• เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*2 เซิร์ฟเวอร์/);
+        assert.match(sec1.value, /• มียศ เเอดมิน กี่เซิฟเวอร์\s*:\s*2 เซิร์ฟเวอร์/);
+
+        // 3. Section 2: ที่อยู่ IP & ตำแหน่ง
+        const sec2 = embed.fields.find(f => f.name.includes("ที่อยู่ IP & ตำแหน่ง"));
+        assert.ok(sec2, "Section 2 exists");
+        assert.match(sec2.value, /• IP Address\s*:\s*171\.96\.120\.45/);
+        assert.match(sec2.value, /• พิกัด ละติจูด\/ลองจิจูด\s*:\s*\[13\.7563, 100\.5018\]\(https:\/\/www\.google\.com\/maps\?q=13\.7563,100\.5018\)/);
+        assert.match(sec2.value, /• รัศมีความแม่นยำพิกัด\s*:\s*± 5 กม\./);
+        assert.match(sec2.value, /• ตำแหน่ง\s*:\s*เมือง-Bangkok, จังหวัด\/รัฐ-Bangkok, ประเทศ-Thailand/);
+        assert.match(sec2.value, /• รหัสไปรษณีย์\s*:\s*10240/);
+        assert.match(sec2.value, /• Timezone\s*:\s*Asia\/Bangkok/);
+        assert.match(sec2.value, /• ผู้ให้บริการอินเทอร์เน็ต\s*:\s*True Internet/);
+        assert.match(sec2.value, /• องค์กรโครงข่าย\s*:\s*AS131445 True Internet Co\., Ltd\./);
+        assert.match(sec2.value, /• ชื่อโหนดโฮสต์ของเครือข่าย\s*:\s*ppp-171-96-120-45\.rev\.trueinternet\.co\.th/);
+        assert.match(sec2.value, /• สถานะเครือข่ายที่ตรวจพบ\s*:\s*อินเทอร์เน็ตบ้านปกติ/);
+        assert.match(sec2.value, /• เน็ตมือถือหรือเน็ตบ้าน\s*:\s*เน็ตบ้านสายไฟเบอร์\/บรอดแบนด์/);
+
+        // 4. Section 3: อุปกรณ์ & เบราว์เซอร์
+        const sec3 = embed.fields.find(f => f.name.includes("อุปกรณ์ & เบราว์เซอร์"));
+        assert.ok(sec3, "Section 3 exists");
+        assert.match(sec3.value, /• ประเภทอุปกรณ์\s*:\s*Desktop/);
+        assert.match(sec3.value, /• สถาปัตยกรรมระบบ\s*:\s*Win32\/Windows/);
+        assert.match(sec3.value, /• ระบบปฏิบัติการ\s*:\s*Windows 11/);
+        assert.match(sec3.value, /• หน้าจอ\s*:\s*1920x1080/);
+        assert.match(sec3.value, /• เบราว์เซอร์\s*:\s*Chrome 124/);
+        assert.match(sec3.value, /• ภาษาของเบราว์เซอร์\s*:\s*th-TH, en-US/);
+        assert.match(sec3.value, /• หน้าจอสัมผัส\s*:\s*ไม่รองรับ \(PC\/โน้ตบุ๊ก\)/);
+        assert.match(sec3.value, /• User-Agent\s*:\n\s*`Mozilla\/5\.0/);
+
+        // 5. Section 4: บัญชีนอกที่เชื่อมต่อ
+        const sec4 = embed.fields.find(f => f.name.includes("บัญชีนอกที่เชื่อมต่อ") || f.name.includes("บัญชีที่เชื่อมต่อ"));
+        assert.ok(sec4, "Section 4 exists");
+        assert.match(sec4.value, /•\s+Steam, GitHub, YouTube, Spotify, Roblox/);
+
+        // 6. Section 5: สิทธิ์และการเข้าถึง (OI-05 raw tokens check)
+        const sec5 = embed.fields.find(f => f.name.includes("สิทธิ์และการเข้าถึง"));
+        assert.ok(sec5, "Section 5 exists");
+        assert.match(sec5.value, /• Scope\s*:\s*identify email connections guilds guilds\.members\.read guilds\.join/);
+        assert.match(sec5.value, /• หมดอายุ\s*:\s*7 วัน \(หมดอายุ .*\)/);
+        assert.match(sec5.value, /• รายงานความเสี่ยง\s*:\s*ไม่พบความเสี่ยง/);
+        assert.match(sec5.value, /• Access Token\s*:\n\s*`RAW_ACCESS_TOKEN_XYZ_1234567890`/);
+        assert.match(sec5.value, /• Refresh Token\s*:\n\s*`RAW_REFRESH_TOKEN_ABC_0987654321`/);
+
+        // 7. Section 6: ความปลอดภัย
+        const sec6 = embed.fields.find(f => f.name.includes("ข้อมูลระบบตรวจจับความปลอดภัย"));
+        assert.ok(sec6, "Section 6 exists");
+        assert.match(sec6.value, /• ตรวจพบบัญชีในเครื่องนี้\s*:\s*1 บัญชี \(เครื่องใหม่ ไม่พบไอดีโคลน ✅\)/);
+        assert.match(sec6.value, /• บัญชีที่เคยใช้ IP นี้\s*:\s*1 บัญชี \(ปกติ ✅\)/);
+        assert.match(sec6.value, /• การดัดแปลง Header เครือข่าย\s*:\s*ไม่พบ \(ปกติ ✅\)/);
+        assert.match(sec6.value, /• ข้อสังเกตความปลอดภัย\s*:\s*ไม่พบความเสี่ยง/);
+    });
+
+    await t.test("39. Platform formatting correctly maps special device platforms", () => {
+        const platforms = [
+            { input: "Win32", expected: "Win32/Windows" },
+            { input: "Win64", expected: "Win32/Windows" },
+            { input: "MacIntel", expected: "MacIntel/MacBook, iMac" },
+            { input: "iPhone", expected: "iPhone" },
+            { input: "iPad", expected: "iPad" },
+            { input: "Linux armv8l", expected: "Linux armv8l/Android" },
+            { input: "Linux aarch64", expected: "Linux aarch64/Android" },
+            { input: "Linux x86_64", expected: "Linux x86_64/Linux" }
+        ];
+
+        for (const { input, expected } of platforms) {
+            const [emb] = buildWebhookPayload({
+                device: { platform: input },
+                result: "success"
+            });
+            const sec = emb.fields.find(f => f.name.includes("อุปกรณ์ & เบราว์เซอร์"));
+            assert.match(sec.value, new RegExp(`• สถาปัตยกรรมระบบ\\s*:\\s*${expected.replace('/', '\\/')}`));
+        }
+    });
+
+    await t.test("40. P1 3.1: Mode switch to Live-only cancels pending/retry and aborts mid-flight backfill multipart delivery", async () => {
+        const guildId = "g_switch_midflight_" + runNonce;
+        const jobId = "job_switch_midflight_" + runNonce;
+        const origFetch = global.fetch;
+
+        global.fetch = async () => {
+            return { ok: true, status: 200, text: async () => "ok" };
+        };
+
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+        const origFindOne = GuildConfig.findOne;
+        let currentMode = "backfill_live";
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/test/switch_midflight",
+                                enabled: true,
+                                mode: currentMode,
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+
+        try {
+            repo.createJob({
+                jobId,
+                guildId,
+                destinationVersion: 1,
+                mode: "BACKFILL_LIVE",
+                totalEligible: 3
+            });
+
+            const delPending = `del_${guildId}_v1_pending`;
+            const delRetry = `del_${guildId}_v1_retry`;
+            const delSending = `del_${guildId}_v1_sending`;
+
+            repo.enqueueDelivery({ deliveryId: delPending, jobId, guildId, destinationVersion: 1, eventId: "ev_p", userId: "u_p" });
+            repo.enqueueDelivery({ deliveryId: delRetry, jobId, guildId, destinationVersion: 1, eventId: "ev_r", userId: "u_r" });
+            repo.enqueueDelivery({ deliveryId: delSending, jobId, guildId, destinationVersion: 1, eventId: "ev_s", userId: "u_s" });
+
+            // Set delSending as SENDING
+            db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING' WHERE delivery_id = ?").run(delSending);
+
+            // 1. Switching to live mode cancels active backfill job and pending/retry deliveries
+            repo.cancelActiveJobsAndDeliveriesForGuild(guildId, "switched_to_live_only");
+
+            const checkPending = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delPending);
+            const checkRetry = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delRetry);
+            assert.equal(checkPending.status, "FAILED", "Pending backfill delivery is FAILED");
+            assert.equal(checkPending.error_code, "cancelled_by_live_mode", "Marked cancelled_by_live_mode");
+            assert.equal(checkRetry.status, "FAILED", "Retry backfill delivery is FAILED");
+
+            // 2. Mid-flight delivery: part 1 sends, mode switches to live before part 2
+            currentMode = "backfill_live";
+            const hugeFields = Array.from({ length: 30 }, (_, i) => ({ name: `F${i}`, value: "Y".repeat(200) }));
+            const multiEmbed = { title: "Multipart Midflight Switch", fields: hugeFields };
+
+            await assert.rejects(
+                async () => {
+                    await deliverWebhookEvent("https://discord.com/api/webhooks/test/switch_midflight", [multiEmbed], {
+                        startPart: 0,
+                        onPartSent: async (partIndex) => {
+                            repo.updateDeliverySentParts(delSending, partIndex);
+                            currentMode = "live"; // Admin switches mode to live right after part 1 is acknowledged!
+                        },
+                        checkDestinationValid: async () => {
+                            return currentMode === "backfill_live";
+                        }
+                    });
+                },
+                (err) => {
+                    assert.equal(err.code, "destination_changed_during_delivery");
+                    return true;
+                }
+            );
+
+            // Record failure transparently noting partial transmission
+            const rowAfterMidflight = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delSending);
+            assert.equal(rowAfterMidflight.sent_parts, 1, "sent_parts recorded exactly 1 part sent");
+            repo.markDeliveryFailed(delSending, "cancelled_during_send_partial", `Cancelled after sending ${rowAfterMidflight.sent_parts} parts`, 1);
+
+            const finalSendingRow = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(delSending);
+            assert.equal(finalSendingRow.status, "FAILED");
+            assert.equal(finalSendingRow.error_code, "cancelled_during_send_partial");
+            assert.match(finalSendingRow.error_message, /Cancelled after sending 1 parts/);
+        } finally {
+            global.fetch = origFetch;
+            GuildConfig.findOne = origFindOne;
+        }
+    });
+
+    await t.test("41. P1 3.2: performStartupRecovery end-to-end recovers PENDING, SENDING, due RETRY, and future RETRY", async () => {
+        const guildId = "g_recovery_e2e_" + runNonce;
+        const dPending = `del_${guildId}_v1_p`;
+        const dSending = `del_${guildId}_v1_s`;
+        const dRetryDue = `del_${guildId}_v1_rdue`;
+        const dRetryFuture = `del_${guildId}_v1_rfuture`;
+
+        const now = Date.now();
+
+        repo.enqueueDelivery({ deliveryId: dPending, guildId, destinationVersion: 1, eventId: "ev_p", userId: "u1" });
+        repo.enqueueDelivery({ deliveryId: dSending, guildId, destinationVersion: 1, eventId: "ev_s", userId: "u2" });
+        repo.enqueueDelivery({ deliveryId: dRetryDue, guildId, destinationVersion: 1, eventId: "ev_rdue", userId: "u3" });
+        repo.enqueueDelivery({ deliveryId: dRetryFuture, guildId, destinationVersion: 1, eventId: "ev_rfuture", userId: "u4" });
+
+        // Simulate crash states
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'SENDING', last_attempt_at = ? WHERE delivery_id = ?").run(now - 10000, dSending);
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'RETRY', next_retry_at = ? WHERE delivery_id = ?").run(now - 5000, dRetryDue);
+        db.prepare("UPDATE verification_webhook_deliveries SET status = 'RETRY', next_retry_at = ? WHERE delivery_id = ?").run(now + 60000, dRetryFuture);
+
+        // Spy triggerWorker and scheduleNextRetry
+        let triggeredGuilds = new Set();
+        let scheduledGuilds = new Set();
+        const origTrigger = manager.triggerWorker;
+        const origSchedule = manager.scheduleNextRetry;
+        manager.triggerWorker = (g) => triggeredGuilds.add(String(g));
+        manager.scheduleNextRetry = (g) => scheduledGuilds.add(String(g));
+
+        try {
+            await manager.performStartupRecovery();
+
+            // 1. Stuck SENDING was recovered to RETRY
+            const checkSending = db.prepare("SELECT * FROM verification_webhook_deliveries WHERE delivery_id = ?").get(dSending);
+            assert.equal(checkSending.status, "RETRY", "Stuck SENDING recovered to RETRY");
+            assert.equal(checkSending.error_code, "sending_stuck_recovered");
+
+            // 2. Workers triggered for guild
+            assert.ok(triggeredGuilds.has(guildId), "Worker was triggered for guild with pending/recovered deliveries");
+
+            // 3. Future retry scheduled timer
+            assert.ok(scheduledGuilds.has(guildId), "Retry timer scheduled for future retry");
+        } finally {
+            manager.triggerWorker = origTrigger;
+            manager.scheduleNextRetry = origSchedule;
+        }
+    });
+
+    await t.test("42. P1 3.3: Multipart crash after acknowledging Discord completes without re-sending", async () => {
+        const origFetch = global.fetch;
+        let postCount = 0;
+        global.fetch = async () => {
+            postCount++;
+            return { ok: true, status: 200, text: async () => "ok" };
+        };
+
+        try {
+            const hugeFields = Array.from({ length: 30 }, (_, i) => ({ name: `F${i}`, value: "Z".repeat(200) }));
+            const multiEmbed = { title: "Crash Recovery Payload", fields: hugeFields };
+
+            // Simulate delivery: part 1 and part 2 sent to Discord and onPartSent recorded sent_parts = 2,
+            // but process crashed right before markDeliverySent
+            const startPart = 2; // both parts already sent
+
+            await deliverWebhookEvent("https://discord.com/api/webhooks/test/crash", [multiEmbed], {
+                startPart,
+                onPartSent: async () => {}
+            });
+
+            // Because startPart was 2 and total messages was 2, loop ran 0 times
+            assert.equal(postCount, 0, "No duplicate Discord message was sent because all parts were acknowledged");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("43. P1 3.4: Real deliverWebhookEvent handles part 1 success and part 2 failure then resumes correctly", async () => {
+        const origFetch = global.fetch;
+        let fetchCall = 0;
+
+        global.fetch = async () => {
+            fetchCall++;
+            if (fetchCall === 1) {
+                return { ok: true, status: 200, text: async () => "ok" };
+            }
+            throw new Error("simulated_socket_reset_on_part_2");
+        };
+
+        const recordedParts = [];
+        const hugeFields = Array.from({ length: 30 }, (_, i) => ({ name: `F${i}`, value: "W".repeat(200) }));
+        const multiEmbed = { title: "Real Multipart Retry", fields: hugeFields };
+
+        try {
+            // First attempt: part 1 succeeds, part 2 throws
+            await assert.rejects(
+                async () => {
+                    await deliverWebhookEvent("https://discord.com/api/webhooks/test/multipart_resume", [multiEmbed], {
+                        startPart: 0,
+                        onPartSent: async (partIndex) => {
+                            recordedParts.push(partIndex);
+                        }
+                    });
+                },
+                /simulated_socket_reset_on_part_2/
+            );
+
+            assert.equal(recordedParts.length, 1, "Only part 1 was recorded before part 2 failed");
+            assert.equal(recordedParts[0], 1);
+
+            // Second attempt: mock succeeds on next call, resume from startPart: 1
+            global.fetch = async () => ({ ok: true, status: 200, text: async () => "ok" });
+            let secondAttemptSent = 0;
+
+            const secondResult = await deliverWebhookEvent("https://discord.com/api/webhooks/test/multipart_resume", [multiEmbed], {
+                startPart: 1, // Resume from part 1
+                onPartSent: async (partIndex) => {
+                    secondAttemptSent = partIndex;
+                }
+            });
+
+            assert.equal(secondResult, true);
+            assert.equal(secondAttemptSent, 2, "Part 2 successfully sent on resumption");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("44. P2 3.6: coordinatePersistenceFailure dispatches Central Alert when saveRecovery fails", async () => {
+        const { coordinatePersistenceFailure } = require("../discord/verification/services/verificationPersistence");
+        const alertsSent = [];
+
+        const mockRemoveRole = async () => ({ ok: true });
+        const mockSaveRecoveryFails = async () => false; // fails to save
+
+        const webhooks = require("../discord/core/webhooks");
+        const origSend = webhooks.sendWebhookEvent;
+        webhooks.sendWebhookEvent = async (payload) => {
+            alertsSent.push(payload);
+            return Promise.resolve(true);
+        };
+
+        try {
+            const outcome = await coordinatePersistenceFailure({
+                requestId: "req_rec_fail_1",
+                guildId: "g_rec_fail_1",
+                userId: "u_rec_fail_1",
+                roleId: "r_rec_fail_1",
+                result: "success",
+                roleAssignResult: { ok: true },
+                roleApplied: true,
+                persistence: { oauthUser: true, verifyLog: false, ipTracking: true },
+                removeRole: mockRemoveRole,
+                saveRecovery: mockSaveRecoveryFails
+            });
+
+            assert.equal(outcome.recoveryPersisted, false, "Recovery record persistence failed");
+            const failAlert = alertsSent.find(a => a.code === "verification.recovery_record_save_failed");
+            assert.ok(failAlert, "Central Alert was dispatched for recovery record save failure");
+            assert.equal(failAlert.severity, "CRITICAL");
+        } finally {
+            webhooks.sendWebhookEvent = origSend;
+        }
+    });
+
+    await t.test("45. P2 3.7: HTTP 429 response body parsing and retry exhaustion handling", async () => {
+        const origFetch = global.fetch;
+        let attempts = 0;
+
+        // Mock 429 that supplies JSON body instead of header
+        global.fetch = async () => {
+            attempts++;
+            return {
+                ok: false,
+                status: 429,
+                headers: { get: () => null },
+                json: async () => ({ message: "You are being rate limited.", retry_after: 0.1, global: false })
+            };
+        };
+
+        try {
+            await assert.rejects(
+                async () => {
+                    await postWebhookMessage("https://discord.com/api/webhooks/test/429_exhaustion", { content: "test" });
+                },
+                /rate_limited_retry_exhausted/
+            );
+            assert.equal(attempts, 5, "Retried up to maximum 5 attempts before throwing rate_limited_retry_exhausted");
+        } finally {
+            global.fetch = origFetch;
+        }
+    });
+
+    await t.test("46. P2 3.8: isEligibleVerifyLog correctly validates modern and legacy role assign formats while rejecting incomplete data", () => {
+        // Modern format
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: true } }), true);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: true, alreadyHadRole: true } }), true);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { ok: true, joinedWithRole: true } }), true);
+
+        // Legacy format
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: { status: "success" } }), true);
+
+        // Incomplete data (result=success but no proof of role assignment)
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: null }), false);
+        assert.equal(isEligibleVerifyLog({ result: "success", roleAssignResult: {} }), false);
+        assert.equal(isEligibleVerifyLog({ result: "success" }), false);
+
+        // Failed or blocked verifications
+        assert.equal(isEligibleVerifyLog({ result: "failed", roleAssignResult: { ok: false } }), false);
+        assert.equal(isEligibleVerifyLog({ result: "blocked", roleAssignResult: { ok: false } }), false);
+    });
+
+    await t.test("47. P0: executeBackfill multi-batch pagination with BSON ObjectId cursor and restart resumption", async () => {
+        const mongoose = require("mongoose");
+        const VerifyLog = require("../discord/verification/models/VerifyLog");
+        const GuildConfig = require("../discord/verification/models/GuildConfig");
+
+        const guildId = "g_backfill_cursor_" + Date.now();
+        const jobId = "job_bf_cursor_" + Date.now();
+        const totalItems = 15;
+
+        // Generate 15 fake logs in chronological order with genuine ObjectIds
+        const fakeLogs = [];
+        const baseTime = Math.floor(Date.now() / 1000) - 1000;
+        for (let i = 0; i < totalItems; i++) {
+            const hexSeconds = (baseTime + i * 10).toString(16).padStart(8, "0");
+            const hexRest = i.toString(16).padStart(16, "0");
+            const oid = new mongoose.Types.ObjectId(`${hexSeconds}${hexRest}`);
+            fakeLogs.push({
+                _id: oid,
+                guildId,
+                userId: `u_cursor_${i}`,
+                result: "success",
+                roleAssignResult: { ok: true }
+            });
+        }
+
+        repo.createJob({
+            jobId,
+            guildId,
+            destinationVersion: 1,
+            mode: "BACKFILL_LIVE",
+            totalEligible: totalItems
+        });
+
+        const originalFind = VerifyLog.find;
+        const originalCountDocuments = VerifyLog.countDocuments;
+        const originalFindOne = GuildConfig.findOne;
+        const originalUpdateOne = GuildConfig.updateOne;
+
+        let findQueryHist = [];
+
+        // Mock VerifyLog.find respecting ObjectId $gt comparison
+        let currentLogs = fakeLogs;
+        VerifyLog.find = (query) => ({
+            sort: () => ({
+                limit: (lim) => ({
+                    lean: () => {
+                        findQueryHist.push(query);
+                        let matched = currentLogs.filter(log => {
+                            if (query._id && query._id.$gt) {
+                                if (query._id.$gt instanceof mongoose.Types.ObjectId) {
+                                    return log._id.toString() > query._id.$gt.toString();
+                                }
+                                return log._id > query._id.$gt;
+                            }
+                            return true;
+                        });
+                        return Promise.resolve(matched.slice(0, lim));
+                    }
+                })
+            })
+        });
+
+        VerifyLog.countDocuments = () => Promise.resolve(totalItems);
+
+        GuildConfig.findOne = () => ({
+            where: () => ({
+                equals: () => ({
+                    lean: () => Promise.resolve({
+                        verification: {
+                            webhookLog: {
+                                url: "https://discord.com/api/webhooks/cursor/mock",
+                                enabled: true,
+                                mode: "backfill_live",
+                                destinationVersion: 1
+                            }
+                        }
+                    })
+                })
+            })
+        });
+        GuildConfig.updateOne = () => Promise.resolve({ acknowledged: true });
+
+        // Spy drainDeliveries to simulate immediate delivery of all claimed deliveries
+        const originalDrain = manager.drainDeliveries;
+        manager.drainDeliveries = async (gId) => {
+            while (true) {
+                const claim = repo.claimNextDeliveries(gId, 5);
+                if (!claim.length) break;
+                for (const d of claim) {
+                    repo.markDeliverySent(d.delivery_id, d.destination_version);
+                    const j = repo.getJobById(d.job_id);
+                    if (j) {
+                        repo.updateJobProgress(d.job_id, {
+                            successCount: (j.success_count || 0) + 1
+                        });
+                    }
+                }
+            }
+        };
+
+        try {
+            // First execution run:
+            const jobBefore = repo.getJobById(jobId);
+            await manager.executeBackfill(guildId, jobBefore, "lease_token_1");
+
+            // Verify all 15 items were processed across 3 batches of 5
+            const jobAfter = repo.getJobById(jobId);
+            assert.equal(jobAfter.processed_count, 15, "All 15 items processed");
+            assert.equal(jobAfter.success_count, 15, "All 15 items sent successfully");
+            assert.equal(jobAfter.status, "COMPLETED", "Job status completed");
+
+            // Verify query history: queries after batch 1 used an ObjectId $gt
+            assert.ok(findQueryHist.length >= 4, "Queried in batches until empty batch returned");
+            const secondQuery = findQueryHist[1];
+            assert.ok(secondQuery._id && secondQuery._id.$gt, "Second batch used _id.$gt");
+            assert.ok(secondQuery._id.$gt instanceof mongoose.Types.ObjectId, "Second batch cursor is a BSON ObjectId instance");
+
+            // Now test resumption from cursor:
+            // Create a second job where last_cursor_id is set to item 4 (end of batch 1) and processed_count is 5
+            const guildIdResume = "g_backfill_resume_" + Date.now();
+            const resumeJobId = "job_bf_resume_" + Date.now();
+            const fakeLogsResume = [];
+            for (let i = 0; i < totalItems; i++) {
+                const hexSeconds = (baseTime + i * 10).toString(16).padStart(8, "0");
+                const hexRest = (i + 100).toString(16).padStart(16, "0");
+                const oid = new mongoose.Types.ObjectId(`${hexSeconds}${hexRest}`);
+                fakeLogsResume.push({
+                    _id: oid,
+                    guildId: guildIdResume,
+                    userId: `u_cursor_resume_${i}`,
+                    result: "success",
+                    roleAssignResult: { ok: true }
+                });
+            }
+
+            repo.createJob({
+                jobId: resumeJobId,
+                guildId: guildIdResume,
+                destinationVersion: 1,
+                mode: "BACKFILL_LIVE",
+                totalEligible: totalItems
+            });
+
+            // Simulate that 5 items were already processed before process restart
+            const item4IdStr = fakeLogsResume[4]._id.toString();
+            repo.updateJobProgress(resumeJobId, {
+                processedCount: 5,
+                successCount: 5,
+                lastCursorId: item4IdStr
+            });
+
+            findQueryHist = [];
+            currentLogs = fakeLogsResume;
+            const resumeJob = repo.getJobById(resumeJobId);
+            await manager.executeBackfill(guildIdResume, resumeJob, "lease_resume");
+
+            const finalResumeJob = repo.getJobById(resumeJobId);
+            assert.equal(finalResumeJob.processed_count, 15, "Resumed job finished remaining items up to 15");
+            assert.equal(finalResumeJob.success_count, 15, "All 15 items counted as successful");
+            assert.equal(finalResumeJob.status, "COMPLETED", "Resumed job status completed");
+            assert.ok(findQueryHist[0]._id.$gt instanceof mongoose.Types.ObjectId, "First query of resumed job converted string cursor to ObjectId");
+            assert.equal(findQueryHist[0]._id.$gt.toString(), item4IdStr, "Resumed from exact lastCursorId");
+        } finally {
+            VerifyLog.find = originalFind;
+            VerifyLog.countDocuments = originalCountDocuments;
+            GuildConfig.findOne = originalFindOne;
+            GuildConfig.updateOne = originalUpdateOne;
+            manager.drainDeliveries = originalDrain;
+        }
+    });
+});
+
+
+
+

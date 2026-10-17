@@ -22,7 +22,7 @@ const CRITICAL_FILE_THRESHOLDS = Object.freeze({
     "verification.lcov": Object.freeze({
         "discord/verification/services/privacyDeletion.js": Object.freeze({ lines: 89, functions: 80, branches: 68 }),
         "discord/verification/services/verificationStateNonce.js": Object.freeze({ lines: 98, functions: 98, branches: 42 }),
-        "discord/verification/utils/oauthTokenLifecycle.js": Object.freeze({ lines: 51, functions: 56, branches: 52 }),
+        "discord/tokens/oauthTokenManager.js": Object.freeze({ lines: 60, functions: 60, branches: 50 }),
         "discord/verification/routes/guild.js": Object.freeze({ lines: 21, functions: 18, branches: 34 }),
         "discord/verification/routes/oauth.js": Object.freeze({ lines: 40, functions: 66, branches: 67 }),
         "discord/verification/routes/oauthStart.js": Object.freeze({ lines: 95, functions: 98, branches: 68 })
@@ -40,7 +40,7 @@ function emptyTotals() {
 
 function normalizeCoveragePath(value) {
     const normalized = String(value || "").replaceAll("\\", "/").replace(/^file:\/\//, "");
-    for (const marker of ["discord/", "scripts/", "verification-tests/"]) {
+    for (const marker of ["discord/", "scripts/", "database/", "verification-tests/"]) {
         const index = normalized.indexOf(marker);
         if (index >= 0) return normalized.slice(index);
     }
@@ -141,7 +141,8 @@ const REPOSITORY_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_REPORTS = Object.freeze([
     "coverage/discord.lcov",
     "coverage/voice.lcov",
-    "coverage/verification.lcov"
+    "coverage/verification.lcov",
+    "coverage/database.lcov"
 ]);
 
 function resolveCoverageReportPath(file, root = REPOSITORY_ROOT) {
@@ -212,7 +213,7 @@ function runCli(args = process.argv.slice(2)) {
     if (files.some(evaluateCoverageReport)) process.exitCode = 1;
 }
 
-if (require.main === module) runCli();
+if (require.main === module) runCli(); // NOSONAR -- Node.js CommonJS entry-point guard; S3403 false positive.
 
 module.exports = {
     CRITICAL_FILE_THRESHOLDS,

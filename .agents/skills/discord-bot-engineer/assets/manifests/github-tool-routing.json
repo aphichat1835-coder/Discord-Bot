@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "routes": {
+    "repository_pr_issue_metadata": {"primary": "github_connector", "fallback": ["gh", "git", "ask_for_repo"], "mutates": false},
+    "review_threads": {"primary": "github_review_workflow", "fallback": ["github_connector", "gh_graphql"], "mutates": false},
+    "actions_logs": {"primary": "github_ci_workflow", "fallback": ["gh_run_view", "github_actions_api"], "mutates": false},
+    "source_and_diff": {"primary": "local_git", "fallback": ["github_connector_patch"], "mutates": false},
+    "commit_push_draft_pr": {"primary": "github_publish_workflow", "fallback": ["git", "gh"], "mutates": true},
+    "current_documentation": {"primary": "official_docs", "fallback": ["installed_tool_help"], "mutates": false}
+  },
+  "rules": ["resolve_repo_before_remote_action", "connector_first_for_remote_metadata", "gh_for_actions_logs", "never_force_push", "never_merge_or_release_without_explicit_authority", "stage_only_intended_files"]
+}

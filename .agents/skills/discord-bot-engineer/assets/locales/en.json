@@ -1,0 +1,49 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "canceled": "Operation was canceled.",
+    "confirm": "Confirm",
+    "failed": "Action failed.",
+    "loading": "Processing, please wait…",
+    "success": "Action completed successfully."
+  },
+  "errors": {
+    "bot_missing_permissions": "The bot needs permission: {permission} to complete this.",
+    "cooldown": "Please wait {seconds} second(s) before trying again.",
+    "dm_not_supported": "This command cannot be used in Direct Messages.",
+    "guild_only": "This command is only available in a server.",
+    "internal_error": "An unexpected error occurred. Error reference: {error_id}.",
+    "invalid_input": "Invalid input provided: {reason}.",
+    "missing_permissions": "Missing required permission: {permission}.",
+    "not_found": "The requested item '{item_id}' was not found.",
+    "rate_limited": "Too many requests. Please slow down.",
+    "unauthorized": "You are not authorized to perform this action."
+  },
+  "commands": {
+    "help": {
+      "description": "View the list of available commands and usage guide.",
+      "title": "{bot_name} Help Menu"
+    },
+    "ping": {
+      "description": "Check bot latency and API response time.",
+      "response": "🏓 Pong! Latency: {latency_ms}ms | API: {api_ms}ms"
+    }
+  },
+  "moderation": {
+    "ban_success": "Successfully banned user {user}. Reason: {reason}.",
+    "kick_success": "Successfully kicked user {user}.",
+    "purge_complete": "Successfully deleted {count} message(s).",
+    "purge_progress": "Purging {current} of {total} messages…",
+    "timeout_success": "Timed out user {user} for {duration} minute(s)."
+  },
+  "tickets": {
+    "already_exists": "You already have an open ticket: {channel}.",
+    "closed": "Ticket #{ticket_id} closed by {user}.",
+    "created": "Ticket created: {channel}."
+  },
+  "economy": {
+    "balance": "Current balance for {user}: {amount} {currency}.",
+    "insufficient_funds": "Insufficient balance. You need {required} {currency}, but have {available}.",
+    "transfer_success": "Transferred {amount} {currency} to {recipient}."
+  }
+}

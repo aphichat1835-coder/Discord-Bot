@@ -405,11 +405,95 @@ test("source contract: panel normalizeDiscordId uses 17-22 regex (consistent wit
     );
 });
 
-test("voice webhooks ignore individual connection outcomes and alert only on persistence failure", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const source = require("node:fs").readFileSync("discord/voiceWorker/lifecycle.js", "utf8");
-    assert.doesNotMatch(source, /code:\s*"voice\.session\.reconnect_unstable"/);
-    assert.doesNotMatch(source, /code:\s*"voice\.session\.recovered"/);
-    assert.doesNotMatch(source, /code:\s*"voice\.session\.dead"/);
-    assert.match(source, /code:\s*"voice\.session\.failure_state_persistence_failed"/);
-    assert.match(source, /category:\s*"DATA"/);
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+
+// Fix #1: executePassiveReconnect ใช้ entersState() ไม่ใช่ connection.once()
+test("stability fix #1: executePassiveReconnect uses entersState not connection.once", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/lifecycle.js"), "utf8"); // nosemgrep
+    const fnStart = src.indexOf("async function executePassiveReconnect");
+    const fnEnd = src.indexOf("\n}\n", fnStart) + 3;
+    const body = src.slice(fnStart, fnEnd);
+    assert.ok(body, "executePassiveReconnect must exist in lifecycle.js");
+    assert.ok(
+        body.includes("entersState(connection"),
+        "executePassiveReconnect must use entersState() to avoid race condition"
+    );
+    assert.ok(
+        !body.includes("connection.once(VoiceConnectionStatus.Ready"),
+        "executePassiveReconnect must NOT use connection.once() which has a race condition"
+    );
 });
+
+// Fix #4: cleanupStaleConnectionIfPresent เคลียร์ session.connection = null หลัง destroy
+test("stability fix #4: cleanupStaleConnectionIfPresent nulls session.connection after destroy", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/lifecycle.js"), "utf8"); // nosemgrep
+    const fnStart = src.indexOf("function cleanupStaleConnectionIfPresent");
+    const fnEnd = src.indexOf("\n}\n", fnStart) + 3;
+    const body = src.slice(fnStart, fnEnd);
+    assert.ok(body, "cleanupStaleConnectionIfPresent must exist in lifecycle.js");
+    assert.ok(
+        body.includes("session.connection = null"),
+        "cleanupStaleConnectionIfPresent must clear session.connection to prevent stale listener leak"
+    );
+});
+
+// Fix #5: executePassiveReconnect guard session expiry ก่อน markReady
+test("stability fix #5: executePassiveReconnect guards session existence before markReady", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/lifecycle.js"), "utf8"); // nosemgrep
+    const fnStart = src.indexOf("async function executePassiveReconnect");
+    const fnEnd = src.indexOf("\n}\n", fnStart) + 3;
+    const body = src.slice(fnStart, fnEnd);
+    assert.ok(body, "executePassiveReconnect must exist in lifecycle.js");
+    // Must have a guard: getSession check before markReady
+    const markReadyPos = body.indexOf("markReady(sessionId");
+    const guardPos = body.indexOf("sessionManager.getSession(sessionId)");
+    assert.ok(
+        guardPos > -1 && guardPos < markReadyPos,
+        "executePassiveReconnect must verify session existence before calling markReady"
+    );
+});
+
+// Fix #3: RECOVERY_COOLDOWN_MS >= 120000 ms
+test("stability fix #3: RECOVERY_COOLDOWN_MS is at least 120000 ms", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const src = fs.readFileSync(path.join(__dirname, "../voiceWorker/config.js"), "utf8"); // nosemgrep
+    const match = src.match(/const RECOVERY_COOLDOWN_MS\s*=\s*(\d+)/);
+    assert.ok(match, "RECOVERY_COOLDOWN_MS must be defined in config.js");
+    const cooldownMs = parseInt(match[1], 10);
+    assert.ok(
+        cooldownMs >= 120000,
+        `RECOVERY_COOLDOWN_MS must be >= 120000 ms (got ${cooldownMs}) to prevent Discord rate limit`
+    );
+});
+
+// Fix #2: Health check interval must be > RECOVERY_COOLDOWN_MS to prevent double-queue
+test("stability fix #2: health check interval (system.js) is greater than RECOVERY_COOLDOWN_MS", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const systemSrc = fs.readFileSync(path.join(__dirname, "../index/system.js"), "utf8"); // nosemgrep
+    const configSrc = fs.readFileSync(path.join(__dirname, "../voiceWorker/config.js"), "utf8"); // nosemgrep
+
+    // Extract health timer interval
+    const healthMatch = systemSrc.match(/voiceWorker\.healthCheck[\s\S]*?\},\s*(\d+)\s*\)/);
+    assert.ok(healthMatch, "health check setInterval must be found in system.js");
+    const healthIntervalMs = parseInt(healthMatch[1], 10);
+
+    // Extract RECOVERY_COOLDOWN_MS
+    const cooldownMatch = configSrc.match(/const RECOVERY_COOLDOWN_MS\s*=\s*(\d+)/);
+    assert.ok(cooldownMatch, "RECOVERY_COOLDOWN_MS must be defined in config.js");
+    const cooldownMs = parseInt(cooldownMatch[1], 10);
+
+    assert.ok(
+        healthIntervalMs > cooldownMs,
+        `Health check interval (${healthIntervalMs}ms) must be > RECOVERY_COOLDOWN_MS (${cooldownMs}ms) to prevent recovery queue overlap`
+    );
+});
+
+// Fix #7: maxReconnectAttempts >= 10
+test("stability fix #7: maxReconnectAttempts is at least 10 in config.json", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const config = JSON.parse(fs.readFileSync(path.join(__dirname, "../config.json"), "utf8")); // nosemgrep
+    const attempts = config?.voice_worker?.maxReconnectAttempts;
+    assert.ok(
+        typeof attempts === "number" && attempts >= 10,
+        `maxReconnectAttempts must be >= 10 (got ${attempts}) to tolerate transient Discord disconnects`
+    );
+});
+

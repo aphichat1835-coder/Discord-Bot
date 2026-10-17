@@ -1,3 +1,5 @@
+"use strict";
+
 /* eslint-disable complexity -- Discord API permission helpers are behavior-sensitive; refactor separately. */
 /*
 ================================================================================
@@ -13,13 +15,15 @@
 ================================================================================
 */
 
-const https = require("https");
+const fs = require("node:fs");
+const crypto = require("node:crypto");
+const https = require("node:https");
 const { PermissionFlagsBits } = require("discord.js");
 const { MessageEmbed } = require("../../core/discordCompat");
 
-const { encryptToken, decryptToken } = require("./crypto");
 const { sanitizeLogText } = require("./safeLogger");
 const dmService = require("../../dm");
+const config = require("../../config.json");
 const { readFiniteInteger } = require("../../core/numbers");
 
 const BASE = "https://discord.com/api/v10";
@@ -134,18 +138,39 @@ function isOAuthInvalidGrantError(err) {
         (Number(err?.status) === 400 && String(err?.message || "").includes("invalid_grant"));
 }
 
-function sleep(ms) {
+function sleep(ms, signal) {
+    if (signal?.aborted) {
+        const err = new Error("This operation was aborted");
+        err.name = "AbortError";
+        return Promise.reject(err);
+    }
     // Retry backoff is awaited control flow; an unref'd timer can let Node exit
     // while the returned promise is still pending.
-    return new Promise(resolve => {
-        setTimeout(resolve, ms);
+    return new Promise((resolve, reject) => {
+        let timer;
+        let onAbort;
+        if (signal) {
+            onAbort = () => {
+                clearTimeout(timer);
+                const err = new Error("This operation was aborted");
+                err.name = "AbortError";
+                reject(err);
+            };
+            signal.addEventListener("abort", onAbort, { once: true });
+        }
+        timer = setTimeout(() => {
+            if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
     });
 }
 
 function parseRetryAfterMs(res) {
     const header = res.headers?.get?.("retry-after");
     const seconds = Number(header);
-    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 10000);
+    if (Number.isFinite(seconds) && seconds > 0) {
+        return Math.min(Math.round(seconds * 1000), 5 * 60 * 1000);
+    }
     return null;
 }
 
@@ -167,9 +192,10 @@ function normalizeDiscordApiPath(input) {
 
 function normalizeRequestBody(body) {
     if (body == null) return null;
-    if (typeof body === "string" || Buffer.isBuffer(body)) return body;
-    if (body instanceof URLSearchParams) return body.toString();
-    return String(body);
+    if (Buffer.isBuffer(body)) return body;
+    if (typeof body === "string") return Buffer.from(body, "utf8");
+    if (body instanceof URLSearchParams) return Buffer.from(body.toString(), "utf8");
+    return Buffer.from(String(body), "utf8");
 }
 
 function validateRequestBodySize(body) {
@@ -198,7 +224,7 @@ function makeHeaderLookup(headers = {}) {
     };
 }
 
-function prepareDiscordRequestHeaders(headers = {}, body) {
+function prepareDiscordRequestHeaders(headers, body = null) {
     const prepared = { ...headers };
     if (body != null && prepared["Content-Length"] == null && prepared["content-length"] == null) {
         prepared["Content-Length"] = Buffer.byteLength(body);
@@ -291,35 +317,50 @@ async function fetchWithRetry(pathAndSearch, options = {}) {
     const endpointPath = normalizeDiscordApiPath(pathAndSearch);
     const attempts = Math.max(1, Number(retries || 3) || 3);
     const timeoutMs = Math.max(1000, Number(rawTimeoutMs || 10000) || 10000);
-    let lastError = null;
 
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+    const attemptRequest = async (attempt) => {
+        if (fetchOptions.signal?.aborted) {
+            const abortErr = new Error("This operation was aborted");
+            abortErr.name = "AbortError";
+            throw abortErr;
+        }
+
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         timer.unref?.();
 
+        let abortListener;
+        if (fetchOptions.signal) {
+            abortListener = () => controller.abort();
+            fetchOptions.signal.addEventListener("abort", abortListener, { once: true });
+        }
+
         try {
             const res = await requestDiscordApi(endpointPath, {
                 ...fetchOptions,
-                signal: fetchOptions.signal || controller.signal
+                signal: controller.signal
             });
 
             if (shouldRetryResponse(res.status, attempt, attempts)) {
-                await sleep(calculateRetryDelay(res, attempt));
-                continue;
+                await sleep(calculateRetryDelay(res, attempt), fetchOptions.signal);
+                return attemptRequest(attempt + 1);
             }
 
             return res;
         } catch (err) {
-            lastError = err;
+            if (fetchOptions.signal?.aborted || err?.name === "AbortError") throw err;
             if (err?.retryable === false || attempt >= attempts) throw err;
-            await sleep(Math.min(250 * attempt, 1500));
+            await sleep(Math.min(250 * attempt, 1500), fetchOptions.signal);
+            return attemptRequest(attempt + 1);
         } finally {
             clearTimeout(timer);
+            if (fetchOptions.signal && abortListener) {
+                fetchOptions.signal.removeEventListener("abort", abortListener);
+            }
         }
-    }
+    };
 
-    throw lastError || new Error("Discord API request failed");
+    return attemptRequest(1);
 }
 
 function getDiscordApiDiagnostics() {
@@ -463,11 +504,18 @@ async function exchangeCode(code, redirectUri) {
     return res.json();
 }
 
-async function refreshToken(encryptedRefreshToken, redirectUri) {
-    const refreshTokenValue = decryptToken(encryptedRefreshToken);
+async function refreshToken(refreshTokenValue, redirectUri, options = {}) {
+    if (!refreshTokenValue || typeof refreshTokenValue !== "string") {
+        const error = new Error("OAuth refresh token is required");
+        error.code = "oauth_refresh_token_missing";
+        throw error;
+    }
 
-    if (!refreshTokenValue) {
-        throw new Error("Cannot decrypt refresh token");
+    let effectiveRedirect = redirectUri;
+    let effectiveOpts = options;
+    if (redirectUri && typeof redirectUri === "object" && Object.prototype.toString.call(redirectUri) !== "[object String]") {
+        effectiveOpts = redirectUri;
+        effectiveRedirect = effectiveOpts.redirectUri || null;
     }
 
     const body = {
@@ -476,7 +524,7 @@ async function refreshToken(encryptedRefreshToken, redirectUri) {
         grant_type: "refresh_token",
         refresh_token: refreshTokenValue
     };
-    if (redirectUri) body.redirect_uri = redirectUri;
+    if (effectiveRedirect) body.redirect_uri = effectiveRedirect;
 
     const res = await apiFetch("/oauth2/token", {
         label: "refreshToken",
@@ -484,10 +532,38 @@ async function refreshToken(encryptedRefreshToken, redirectUri) {
         headers: {
             "Content-Type": "application/x-www-form-urlencoded"
         },
-        body: new URLSearchParams(body)
+        body: new URLSearchParams(body),
+        signal: effectiveOpts?.signal,
+        timeoutMs: effectiveOpts?.timeoutMs
     });
 
     return res.json();
+}
+
+async function revokeToken(tokenValue, tokenTypeHint = "refresh_token") {
+    if (!tokenValue || typeof tokenValue !== "string") {
+        const error = new Error("OAuth token is required to revoke");
+        error.code = "oauth_token_revoke_missing";
+        throw error;
+    }
+
+    const body = {
+        client_id: getClientId(),
+        client_secret: getClientSecret(),
+        token: tokenValue,
+        token_type_hint: tokenTypeHint
+    };
+
+    const res = await apiFetch("/oauth2/token/revoke", {
+        label: "revokeToken",
+        method: "POST",
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams(body)
+    });
+
+    return res.ok;
 }
 
 async function getUserProfile(accessToken) {
@@ -551,6 +627,13 @@ async function getGuildMemberResult(accessToken, guildId) {
                 Authorization: `Bearer ${accessToken}`
             }
         });
+        if (res.status === 404) {
+            return {
+                member: null,
+                status: 404,
+                failureReason: null
+            };
+        }
         if (!res.ok) {
             return {
                 member: null,
@@ -559,7 +642,7 @@ async function getGuildMemberResult(accessToken, guildId) {
             };
         }
         const data = await res.json();
-        if (!data || typeof data !== "object" || Array.isArray(data)) {
+        if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.roles)) {
             return {
                 member: null,
                 status: res.status,
@@ -572,9 +655,17 @@ async function getGuildMemberResult(accessToken, guildId) {
             failureReason: null
         };
     } catch (err) {
+        const status = Number(err?.status) || null;
+        if (status === 404) {
+            return {
+                member: null,
+                status: 404,
+                failureReason: null
+            };
+        }
         return {
             member: null,
-            status: Number(err?.status) || null,
+            status,
             failureReason: optionalFetchFailureReason(err)
         };
     }
@@ -756,9 +847,12 @@ function applyChannelOverwrites(basePermissions, member, channel) {
         return perms.toString();
     }
 
-    const overwrites = Array.isArray(channel?.permissionOverwrites)
-        ? channel.permissionOverwrites
-        : (Array.isArray(channel?.permission_overwrites) ? channel.permission_overwrites : []);
+    let overwrites = [];
+    if (Array.isArray(channel?.permissionOverwrites)) {
+        overwrites = channel.permissionOverwrites;
+    } else if (Array.isArray(channel?.permission_overwrites)) {
+        overwrites = channel.permission_overwrites;
+    }
 
     const guildId = String(channel?.guildId || channel?.guild_id || "");
     const memberRoleIds = new Set((member?.roles || []).map(String));
@@ -919,7 +1013,7 @@ function validateBotCanUseChannel({ botMember, roles, channel }) {
    Guild Join / Role
 ============================================================================= */
 
-async function addMemberToGuild(guildId, userId, accessToken) {
+async function addMemberToGuild(guildId, userId, accessToken, options = {}) {
     if (!guildId || !userId || !accessToken) {
         return {
             ok: false,
@@ -936,17 +1030,43 @@ async function addMemberToGuild(guildId, userId, accessToken) {
         };
     }
 
-    const res = await fetchWithRetry(`/guilds/${guildId}/members/${userId}`, {
-        method: "PUT",
-        headers: {
-            Authorization: `Bot ${getBotToken()}`,
-            "Content-Type": "application/json",
-            "X-Audit-Log-Reason": encodeURIComponent("OAuth2 Verification guilds.join")
-        },
-        body: JSON.stringify({
-            access_token: accessToken
-        })
-    });
+    const callerManaged = Boolean(options?.callerManagedRetry);
+    const retries = callerManaged ? 1 : (Number(options?.retries) || 3);
+
+    const headers = {
+        Authorization: `Bot ${getBotToken()}`,
+        "Content-Type": "application/json",
+        "X-Audit-Log-Reason": encodeURIComponent(options?.auditReason || "OAuth2 Verification guilds.join")
+    };
+
+    const bodyObj = {
+        access_token: accessToken
+    };
+    if (Array.isArray(options?.roles) && options.roles.length > 0) {
+        bodyObj.roles = options.roles;
+    }
+
+    let res;
+    try {
+        res = await fetchWithRetry(`/guilds/${guildId}/members/${userId}`, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify(bodyObj),
+            retries,
+            timeoutMs: options?.timeoutMs || 10000,
+            signal: options?.signal
+        });
+    } catch (err) {
+        if (callerManaged) {
+            return {
+                ok: false,
+                status: Number(err?.status) || 0,
+                error: err,
+                retryable: err?.retryable !== false
+            };
+        }
+        throw err;
+    }
 
     if (res.status === 201 || res.status === 204) {
         return {
@@ -956,10 +1076,13 @@ async function addMemberToGuild(guildId, userId, accessToken) {
     }
 
     const error = await readError(res);
+    const retryAfter = parseRetryAfterMs(res);
 
     return {
         ok: false,
         status: res.status,
+        retryAfter,
+        headers: res.headers,
         error
     };
 }
@@ -1105,6 +1228,55 @@ async function fetchChannelMessage(channelId, messageId) {
     };
 }
 
+function buildMultipartFormData({ payloadJson, files = [] }) {
+    const boundary = "----WebKitFormBoundary" + crypto.randomBytes(16).toString("hex");
+    const parts = [];
+
+    parts.push(Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\nContent-Type: application/json\r\n\r\n${payloadJson}\r\n`
+    ));
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const filePath = file.path || file.attachment;
+        if (filePath && fs.existsSync(filePath)) {
+            const fileData = fs.readFileSync(filePath);
+            const fileName = file.name || `file_${i}`;
+            parts.push(
+                Buffer.from(
+                    `--${boundary}\r\nContent-Disposition: form-data; name="files[${i}]"; filename="${fileName}"\r\nContent-Type: image/webp\r\n\r\n`
+                ),
+                fileData,
+                Buffer.from("\r\n")
+            );
+        }
+    }
+
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    const body = Buffer.concat(parts);
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+    return { body, contentType };
+}
+
+function prepareMessagePayload(payload) {
+    if (payload?.files && Array.isArray(payload.files) && payload.files.length > 0) {
+        const payloadJson = { ...payload };
+        delete payloadJson.files;
+        const multipart = buildMultipartFormData({
+            payloadJson: JSON.stringify(payloadJson),
+            files: payload.files
+        });
+        return {
+            requestBody: multipart.body,
+            contentType: multipart.contentType
+        };
+    }
+    return {
+        requestBody: JSON.stringify(payload),
+        contentType: "application/json"
+    };
+}
+
 async function createChannelMessage(channelId, payload) {
     const cid = snowflake(channelId);
 
@@ -1116,12 +1288,14 @@ async function createChannelMessage(channelId, payload) {
         };
     }
 
+    const { requestBody, contentType } = prepareMessagePayload(payload);
+
     const res = await fetchWithRetry(`/channels/${cid}/messages`, {
         method: "POST",
         headers: botHeaders({
-            "Content-Type": "application/json"
+            "Content-Type": contentType
         }),
-        body: JSON.stringify(payload)
+        body: requestBody
     });
 
     if (!res.ok) {
@@ -1153,12 +1327,14 @@ async function editChannelMessage(channelId, messageId, payload) {
         };
     }
 
+    const { requestBody, contentType } = prepareMessagePayload(payload);
+
     const res = await fetchWithRetry(`/channels/${cid}/messages/${mid}`, {
         method: "PATCH",
         headers: botHeaders({
-            "Content-Type": "application/json"
+            "Content-Type": contentType
         }),
-        body: JSON.stringify(payload)
+        body: requestBody
     });
 
     if (!res.ok) {
@@ -1232,7 +1408,7 @@ async function sendDM(userId, payload) {
 function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
     if (alreadyVerified) {
         return {
-            title: "✨ ยืนยันตัวตนไว้แล้ว",
+            title: `${config.emojis?.universe || "✨"} ยืนยันตัวตนไว้แล้ว`,
             summary: "บัญชีของคุณพร้อมใช้งานอยู่แล้ว ระบบจึงไม่ได้เพิ่มยศซ้ำ",
             tone: "info",
             showReason: false,
@@ -1241,7 +1417,7 @@ function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
     }
     if (ok) {
         return {
-            title: "✅ ยืนยันตัวตนสำเร็จ",
+            title: `${config.emojis?.check_alt || config.emojis?.success || "✅"} ยืนยันตัวตนสำเร็จ`,
             summary: "คุณผ่านการตรวจสอบและพร้อมใช้งานเซิร์ฟเวอร์แล้ว",
             tone: "success",
             showReason: false,
@@ -1250,7 +1426,7 @@ function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
     }
     if (blocked) {
         return {
-            title: "🛡️ ยังไม่ผ่านการยืนยัน",
+            title: `${config.emojis?.shield || "🛡️"} ยังไม่ผ่านการยืนยัน`,
             summary: "บัญชีนี้ยังไม่ผ่านเงื่อนไขที่เซิร์ฟเวอร์ตั้งไว้",
             nextAction: "ติดต่อผู้ดูแลเซิร์ฟเวอร์หากต้องการสอบถามเงื่อนไขเพิ่มเติม",
             tone: "warning",
@@ -1259,7 +1435,7 @@ function verificationDmCopy({ ok, blocked, alreadyVerified, reasonCode }) {
     }
     const stalePanel = reasonCode === "panel_revision_mismatch" || reasonCode === "role_mismatch_latest_config";
     return {
-        title: "⚠️ ยืนยันตัวตนไม่สำเร็จ",
+        title: `${config.emojis?.warning || "⚠️"} ยืนยันตัวตนไม่สำเร็จ`,
         summary: "ระบบยังดำเนินการยืนยันให้เสร็จสมบูรณ์ไม่ได้",
         nextAction: stalePanel
             ? "กลับไป Discord แล้วกดปุ่มจากแผงยืนยันล่าสุด"
@@ -1299,7 +1475,6 @@ function buildVerificationDmEmbed(data = {}) {
         .setAuthor({ name: `${guildName} • Verification` })
         .setTitle(copy.title)
         .setDescription(copy.summary)
-        .setFooter({ text: "Phomueangtai • Verification" })
         .setTimestamp();
     if (fields.length) embed.addFields(fields);
     if (isGuildIconUrl(data.guildIconUrl)) embed.setThumbnail(data.guildIconUrl);
@@ -1320,27 +1495,6 @@ async function sendVerificationDM(userId, data = {}) {
         payload: { embeds: [embed] }
     });
     return delivery?.status === "sent";
-}
-
-/* =============================================================================
-   Token Storage
-============================================================================= */
-
-function prepareTokenStorage(tokenData = {}) {
-    return {
-        encryptedAccessToken: encryptToken(tokenData.access_token || ""),
-        encryptedRefreshToken: encryptToken(tokenData.refresh_token || ""),
-        expiresAt: Date.now() + ((tokenData.expires_in || 0) * 1000),
-        scope: tokenData.scope || "",
-        tokenType: tokenData.token_type || "Bearer",
-        lastRefreshAt: null,
-        refreshFailCount: 0,
-        revokedAt: null,
-        rawTokenMeta: {
-            expiresIn: tokenData.expires_in || null,
-            receivedAt: Date.now()
-        }
-    };
 }
 
 module.exports = {
@@ -1371,6 +1525,7 @@ module.exports = {
 
     exchangeCode,
     refreshToken,
+    revokeToken,
     getUserProfile,
     getUserConnections,
     getUserGuilds,
@@ -1410,5 +1565,12 @@ module.exports = {
     buildVerificationDmEmbed,
     sendVerificationDM,
 
-    prepareTokenStorage
+    _test: {
+        normalizeRequestBody,
+        validateRequestBodySize,
+        prepareDiscordRequestHeaders,
+        DISCORD_API_BODY_MAX_BYTES,
+        prepareMessagePayload,
+        buildMultipartFormData
+    }
 };

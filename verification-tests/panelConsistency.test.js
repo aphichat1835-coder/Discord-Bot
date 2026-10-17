@@ -32,7 +32,7 @@ describe("verification panel DB/Discord consistency", () => {
     test("compares the live Discord message with the saved panel fields", () => {
         const live = guildRoutes._test.panelConfigFromDiscordMessage({
             content: "ก่อนเริ่ม",
-            embeds: [{ title: "ยืนยัน", description: "กดปุ่ม", color: 0x5865F2, footer: { text: "Discord Verification System" } }],
+            embeds: [{ title: "ยืนยัน", description: "กดปุ่ม", color: 0x5865F2 }],
             components: [{ components: [{ type: 2, label: "ยืนยันตอนนี้", url: "https://example.test" }] }]
         });
         const expected = guildRoutes._test.comparablePanel({
@@ -40,6 +40,7 @@ describe("verification panel DB/Discord consistency", () => {
             title: "ยืนยัน",
             description: "กดปุ่ม",
             color: "#5865F2",
+            imageUrl: "",
             buttonText: "ยืนยันตอนนี้",
             verifyType: "oauth"
         });

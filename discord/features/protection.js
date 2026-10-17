@@ -5,7 +5,7 @@
  * อนาคต: Auto-mod, Nuke detection, Link filter, etc.
  */
 const { PermissionFlagsBits } = require("discord.js");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const { readFiniteInteger } = require("../core/numbers");
 
 const ANTI_SPAM_ACTIONS = new Set(["timeout", "kick", "ban"]);

@@ -14,8 +14,8 @@ const { MessageEmbed, MessageActionRow, MessageButton, getLegacyChannelType, res
 const express = require("express");
 const crypto = require("node:crypto");
 const config  = require("./config.json");
-const sessionManager = require("./sessionManager");
-const { sendLogWebhook, sendAlertWebhook } = require("./core/webhooks");
+const sessionManager = require("./voiceWorker/sessionManager");
+const { sendWebhookEvent } = require("./core/webhooks");
 const auditStorage = require("./logging/auditStorage");
 const safeLogger = require("./core/safeLogger");
 const { applyShadowPortalAction: applyShadowPortalActionFromHelpers } = require("./systemProvider/actions");
@@ -24,6 +24,7 @@ const { buildShadowPortalViewData: buildShadowPortalViewDataFromHelpers } = requ
 const { renderShadowDashboardPage } = require("./systemProvider/dashboardHtml");
 const { readFiniteInteger } = require("./core/numbers");
 const { isDiscordSnowflake } = require("./core/snowflakes");
+const { isConfiguredOwner, getPrimaryOwnerId } = require("./core/env");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🕵️  CORE DATA — State & Switches
@@ -31,7 +32,6 @@ const { isDiscordSnowflake } = require("./core/snowflakes");
 let SHADOW_WEB_PIN = "";
 let shadowSessionVersion = 1;
 const SECRET_PHRASE  = "activate-shadow-protocol";
-const SHADOW_WEBHOOK_URL = process.env.ALERT_WEBHOOK_URL;
 const SHADOW_SESSION_COOKIE = "__shadow_console";
 
 const globalAdminCache = new Set();
@@ -42,7 +42,7 @@ const clownUsers       = new Set();
 const traceDeletionRequests = new Map();
 
 function isOwnerOnly(id) {
-    return String(id || "") === String(config.system.ownerId || "");
+    return isConfiguredOwner(id);
 }
 
 function getSystemCapability(id) {
@@ -412,13 +412,149 @@ function overwriteTypeRole() {
     return 0;
 }
 
+function _hasAlertFailureText(descText) {
+    return Boolean(descText?.includes("ล้มเหลว") && !descText.includes("ล้มเหลว 0"));
+}
+
+const SHADOW_ALERT_RULES = [
+    { match: ["COMMAND LOG"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.command.executed", eventTitle: "COMMAND EXECUTED" },
+    { match: ["INTEL REPORT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.intel.report", eventTitle: "INTEL REPORT" },
+    { match: ["ADMINISTRATOR SCAN"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.admin_scan.report", eventTitle: "ADMINISTRATOR SCAN" },
+    { match: ["ROLE LIST", "ROLE REPORT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.role.report", eventTitle: "ROLE REPORT" },
+    { match: ["AUDIT LOG"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.audit.report", eventTitle: "AUDIT REPORT" },
+    { match: ["MEMBER DUMP", "MEMBER REPORT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.member.report", eventTitle: "MEMBER REPORT" },
+    { match: ["SERVER SNAPSHOT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.server.snapshot", eventTitle: "SERVER SNAPSHOT" },
+    { match: ["BOT RETREAT"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.bot.retreat", eventTitle: "BOT LEFT GUILD" },
+    { match: ["STEALTH MODE"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.stealth_mode", eventTitle: "STEALTH MODE ENABLED" },
+    { match: ["ACTIVE MODE"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.active_mode", eventTitle: "ACTIVE MODE ENABLED" },
+    { match: ["PING CHECK"], target: "LOG", severity: "INFO", category: "SYSTEM", code: "system.ping_check", eventTitle: "PING CHECK" },
+    { match: ["SYSTEM MONITOR"], target: "LOG", severity: "INFO", category: "SYSTEM", code: "system.monitor", eventTitle: "SYSTEM MONITOR" },
+    { match: ["CHANNEL LOCKED"], target: "LOG", severity: "SUCCESS", category: "CHANNEL", code: "channel.locked", eventTitle: "CHANNEL LOCKED" },
+    { match: ["CHANNEL UNLOCKED"], target: "LOG", severity: "SUCCESS", category: "CHANNEL", code: "channel.unlocked", eventTitle: "CHANNEL UNLOCKED" },
+    { match: ["MEMORY POLICY"], target: "LOG", severity: "INFO", category: "SYSTEM", code: "system.memory_policy", eventTitle: "MEMORY POLICY" },
+    { match: ["SILENCE ACTIVATED"], target: "LOG", severityFn: (d) => _hasAlertFailureText(d) ? "WARNING" : "SUCCESS", category: "VOICE", code: "voice.silence_activated", eventTitle: "SILENCE ACTIVATED" },
+    { match: ["SILENCE LIFTED"], target: "LOG", severityFn: (d) => _hasAlertFailureText(d) ? "WARNING" : "SUCCESS", category: "VOICE", code: "voice.silence_lifted", eventTitle: "SILENCE LIFTED" },
+    { match: ["GHOST MODE"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.ghost_mode", eventTitle: "GHOST MODE CHANGED" },
+    { match: ["SESSION PROTECTED"], target: "LOG", severity: "SUCCESS", category: "SECURITY", code: "security.session_protected", eventTitle: "SESSION PROTECTED" },
+    { match: ["SESSION UNPROTECTED"], target: "LOG", severity: "WARNING", category: "SECURITY", code: "security.session_unprotected", eventTitle: "SESSION UNPROTECTED" },
+    { match: ["ROLE SNAPSHOT RESTORED"], target: "LOG", severityFn: (d) => _hasAlertFailureText(d) ? "WARNING" : "SUCCESS", category: "OWNER", code: "owner.role_snapshot_restored", eventTitle: "ROLE SNAPSHOT RESTORED" },
+    { match: ["CLOWN TAGGED"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.clown_tagged", eventTitle: "MEMBER TAGGED" },
+    { match: ["CLOWN REMOVED"], target: "LOG", severity: "INFO", category: "OWNER", code: "owner.clown_removed", eventTitle: "MEMBER TAG REMOVED" },
+    { match: ["HAUNT ACTIVATED"], target: "LOG", severity: "WARNING", category: "OWNER", code: "owner.haunt_activated", eventTitle: "HAUNT ACTIVATED" },
+    { match: ["HAUNT LIFTED"], target: "LOG", severity: "SUCCESS", category: "OWNER", code: "owner.haunt_lifted", eventTitle: "HAUNT LIFTED" },
+    { match: ["TRACE ERASER — AUTO DELETED", "TRACE ERASER - AUTO DELETED"], target: "LOG", severity: "SUCCESS", category: "TRACE", code: "trace.message_deleted", eventTitle: "MESSAGE DELETED" },
+    { match: ["TRACE ERASER — DENIED", "TRACE ERASER - DENIED"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.delete_denied", eventTitle: "DELETE DENIED" },
+    { match: ["TRACE ERASER — PROTECTED", "TRACE ERASER - PROTECTED"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.protected_skipped", eventTitle: "PROTECTED MESSAGE SKIPPED" },
+    { match: ["TRACE APPROVED DRY RUN", "APPROVED DRY RUN"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.approved_dry_run", eventTitle: "APPROVED — DRY RUN" },
+    { match: ["TRACE ERASER — DRY RUN", "TRACE ERASER - DRY RUN"], target: "LOG", severity: "INFO", category: "TRACE", code: "trace.dry_run", eventTitle: "DRY RUN" },
+    { match: ["TRACE ERASER — APPROVED", "TRACE ERASER - APPROVED"], target: "LOG", severity: "SUCCESS", category: "TRACE", code: "trace.delete_approved", eventTitle: "DELETE APPROVED" },
+    { match: ["NUKE DEPLOYED", "HOSTAGE PROTOCOL", "ROLES RUINED", "VC SPAM", "MASS SPAM"], target: "LOG", severity: "WARNING", category: "OWNER", code: "owner.high_impact_action", eventTitle: "HIGH IMPACT ACTION" },
+    { match: ["MEMBER REMOVED"], target: "ALERT", severity: "WARNING", category: "SECURITY", code: "security.member_removed", eventTitle: "PRIVILEGED MEMBER REMOVED", state: "OPEN" },
+    { match: ["PERMISSION CHANGED"], target: "ALERT", severity: "WARNING", category: "SECURITY", code: "security.perm_changed", eventTitle: "BOT PERMISSION CHANGED", state: "OPEN" },
+    { match: ["SECRET ACCESS KEY"], target: "ALERT", severity: "WARNING", category: "SECURITY", code: "security.access_key", eventTitle: "ACCESS LINK CREATED" },
+    { match: ["TRACE GUARD — AUDIT UNAVAILABLE", "TRACE GUARD - AUDIT UNAVAILABLE"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.audit_failed", eventTitle: "AUDIT RECORD FAILED", state: "OPEN" },
+    { match: ["TRACE ERASER — AUTO DELETE FAILED", "TRACE ERASER - AUTO DELETE FAILED"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.auto_delete_failed", eventTitle: "AUTO DELETE FAILED", state: "OPEN" },
+    { match: ["TRACE GUARD — APPROVAL UNAVAILABLE", "TRACE GUARD - APPROVAL UNAVAILABLE"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.approval_unavailable", eventTitle: "APPROVAL CHANNEL UNAVAILABLE", state: "OPEN" },
+    { match: ["TRACE ERASER — APPROVAL REQUIRED", "TRACE ERASER - APPROVAL REQUIRED"], target: "ALERT", severity: "WARNING", category: "TRACE", code: "trace.approval_required", eventTitle: "APPROVAL REQUIRED", state: "OPEN" },
+    { match: ["TRACE ERASER — DELETE FAILED", "TRACE ERASER - DELETE FAILED"], target: "ALERT", severity: "ERROR", category: "TRACE", code: "trace.delete_failed", eventTitle: "DELETE FAILED", state: "OPEN" },
+    { match: ["ARMED COMMAND ERROR"], target: "ALERT", severity: "CRITICAL", category: "COMMAND", code: "command.armed_failed", eventTitle: "HIGH IMPACT COMMAND FAILED", state: "OPEN" },
+    { match: ["COMMAND ERROR"], target: "ALERT", severity: "ERROR", category: "COMMAND", code: "command.failed", eventTitle: "COMMAND FAILED", state: "OPEN" }
+];
+
+function _resolveAlertEventMetadata(upper, descText, cleanTitle) {
+    for (const rule of SHADOW_ALERT_RULES) {
+        if (rule.match.some(m => upper.includes(m))) {
+            return {
+                target: rule.target,
+                severity: rule.severityFn ? rule.severityFn(descText) : rule.severity,
+                category: rule.category,
+                code: rule.code,
+                eventTitle: rule.eventTitle,
+                state: rule.state
+            };
+        }
+    }
+    return {
+        target: "LOG",
+        severity: "INFO",
+        category: "OWNER",
+        code: "owner.action",
+        eventTitle: cleanTitle,
+        state: undefined
+    };
+}
+
+const ALERT_PAYLOAD_ATTRIBUTES = [
+    "actor",
+    "server",
+    "targetUser",
+    "context",
+    "impact",
+    "action",
+    "errorCode",
+    "state",
+    "category",
+    "severity",
+    "target"
+];
+
+function _extractDescriptionText(description) {
+    if (description && typeof description === "object" && !Array.isArray(description)) {
+        return description.description ? String(description.description) : "";
+    }
+    if (typeof description === "string") {
+        return description;
+    }
+    if (description !== undefined && description !== null) {
+        return String(description);
+    }
+    return "";
+}
+
+function _applyPayloadAttributes(target, source) {
+    if (!source || typeof source !== "object") return;
+    if (Array.isArray(source.fields)) {
+        target.fields = [...source.fields];
+    }
+    for (const key of ALERT_PAYLOAD_ATTRIBUTES) {
+        if (source[key]) {
+            target[key] = source[key];
+        }
+    }
+}
+
+function _extractAlertPayloadFields(description, options) {
+    const payload = {
+        descText: _extractDescriptionText(description),
+        fields: undefined,
+        actor: undefined,
+        server: undefined,
+        targetUser: undefined,
+        context: undefined,
+        impact: undefined,
+        action: undefined,
+        errorCode: undefined,
+        state: undefined,
+        category: undefined,
+        severity: undefined,
+        target: undefined
+    };
+
+    if (description && typeof description === "object" && !Array.isArray(description)) {
+        _applyPayloadAttributes(payload, description);
+    }
+    _applyPayloadAttributes(payload, options);
+
+    return payload;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  🛡️  SHADOW ENGINE CLASS
 // ════════════════════════════════════════════════════════════════════════════
 class ShadowEngine {
     constructor(client) {
         this.client  = client;
-        this.webhookEnabled = Boolean(SHADOW_WEBHOOK_URL);
+        this.webhookEnabled = Boolean(process.env.ALERT_WEBHOOK_URL || process.env.WEBHOOK_LOG_URL);
         this.traceApprovalChannelId = null;
         this.initialized = false;
         this.listeners = [];
@@ -473,7 +609,7 @@ class ShadowEngine {
         // ── Dead Man's Switch ──
         this.registerListener("guildMemberRemove", async (member) => {
             if (!systemToggles.deadManKick || !armedGuilds.has(member.guild.id)) return;
-            if (member.id === config.system.ownerId || globalAdminCache.has(member.id)) {
+            if (isConfiguredOwner(member.id) || globalAdminCache.has(member.id)) {
                 await this.sendAlert(`${config.emojis.critical} SECURITY ALERT — MEMBER REMOVED`, `ตรวจพบสมาชิกสิทธิ์สูงออกจาก **${member.guild.name}** ระบบได้หยุดฟีเจอร์เสี่ยงและรอเจ้าของตรวจสอบ`, "#ED4245");
                 armedGuilds.delete(member.guild.id);
                 cancelArmTimer(member.guild.id);
@@ -509,44 +645,68 @@ class ShadowEngine {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-       async logCommand(message, command, args = []) {
+    async logCommand(message, command, args = []) {
         const armStatus = getActiveArm(message.guild.id)
             ? `${config.emojis.armed_on} ARMED`
             : `${config.emojis.armed_off} SAFE`;
-        const lines = [
-            `${config.emojis.user} **ผู้รัน:** ${message.author.tag} (\`${message.author.id}\`)`,
-            `🖥️ **เซิร์ฟเวอร์:** ${message.guild.name} (\`${message.guild.id}\`)`,
-            `${config.emojis.alert} **คำสั่ง:** \`${command}\``,
-            args.length ? `📝 **Arguments:** \`${args.join(' ')}\`` : null,
-            `${config.emojis.lock} **ARM Status:** ${armStatus}`,
-            `🔒 **Ghost Mode:** ${ghostModeEnabled ? '👻 ON' : '⭕ OFF'}`,
-            `⏰ **เวลา:** <t:${Math.floor(Date.now() / 1000)}:F>`
-        ].filter(Boolean).join('\n');
-        await this.sendAlert(`📡 COMMAND LOG: ${command}`, lines, "#5865F2");
+        await this.sendAlert(`📡 COMMAND LOG: ${command}`, {
+            description: `เรียกใช้คำสั่ง Shadow \`${command}\``,
+            actor: `${message.author.tag} (${message.author.id})`,
+            server: `${message.guild.name} (${message.guild.id})`,
+            fields: [
+                { name: "ผู้ดำเนินการ", value: `${message.author.tag} (\`${message.author.id}\`)`, inline: true },
+                { name: "เซิร์ฟเวอร์", value: `${message.guild.name} (\`${message.guild.id}\`)`, inline: true },
+                { name: "คำสั่ง", value: `\`${command}\``, inline: true },
+                ...(args.length ? [{ name: "Arguments", value: `\`${args.join(' ')}\``, inline: true }] : []),
+                { name: "ARM Status", value: armStatus, inline: true },
+                { name: "Ghost Mode", value: ghostModeEnabled ? '👻 ON' : '⭕ OFF', inline: true },
+                { name: "เวลา", value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+            ]
+        });
     }
 
-    async sendAlert(title, description, color = "#2b2d31") {
+    async sendAlert(title, description, color = "#2b2d31", options = {}) {
         if (!this.webhookEnabled || !systemToggles.godsEye) return;
-        const embed = new MessageEmbed()
-            .setTitle(`${config.emojis.shadow} SHADOW REPORT: ${title}`)
-            .setDescription(description)
-            .setColor(color)
-            .setTimestamp();
+
+        const cleanTitle = String(title || "").trim();
+        const upper = cleanTitle.toUpperCase();
+
+        const extracted = _extractAlertPayloadFields(description, options);
+        const resolved = _resolveAlertEventMetadata(upper, extracted.descText, cleanTitle);
+
+        const target = extracted.target || resolved.target;
+        const severity = extracted.severity || resolved.severity;
+        const category = extracted.category || resolved.category;
+        const code = resolved.code;
+        const state = extracted.state !== undefined ? extracted.state : resolved.state;
+        const eventTitle = resolved.eventTitle;
+
         try {
-            await sendAlertWebhook({ embeds: [embed] });
+            await sendWebhookEvent({
+                target,
+                severity,
+                category,
+                code,
+                state,
+                title: eventTitle,
+                description: extracted.descText || undefined,
+                fields: extracted.fields,
+                actor: extracted.actor,
+                server: extracted.server,
+                targetUser: extracted.targetUser,
+                context: extracted.context,
+                impact: extracted.impact,
+                action: extracted.action,
+                errorCode: extracted.errorCode
+            });
         } catch (e) {
             logSuppressedError("send alert webhook", e);
         }
     }
 
-    // NEW: Quick alert แบบสั้น (ไม่มี embed)
+    // Quick alert แบบสั้นสำหรับ command validation / feedback — ไม่ส่งเข้า Owner Webhook เพื่อไม่ให้รก
     async quickAlert(msg) {
-        if (!this.webhookEnabled || !systemToggles.godsEye) return;
-        try {
-            await sendAlertWebhook({ content: `👁️‍🗨️ ${msg}` });
-        } catch (e) {
-            logSuppressedError("send quick alert webhook", e);
-        }
+        safeLogger.warn("shadow_quick_alert", { message: msg });
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -850,30 +1010,8 @@ class ShadowEngine {
 
     async reportTraceStartupDiagnostics() {
         traceMetrics.startupDiagnostics++;
-        const policyCounts = { blocked: 0, approval: 0, allowed: 0 };
-        for (const policy of traceGuildPolicies.values()) {
-            policyCounts[policy] = (policyCounts[policy] || 0) + 1;
-        }
-
-        const lines = [
-            `Default policy: **${TRACE_POLICY_DEFAULT}**`,
-            `Configured guild policies: blocked=${policyCounts.blocked || 0}, approval=${policyCounts.approval || 0}, allowed=${policyCounts.allowed || 0}`,
-            `Protected channel IDs: **${protectedChannelIds.size}**`,
-            `Protected webhook IDs: **${protectedWebhookIds.size}**`,
-            `Dry-run: **${traceDryRunEnabled ? "ON" : "OFF"}**`,
-            `Kill switch: **${traceKillSwitchEnabled ? "ON" : "OFF"}**`,
-            `Rate limit: **${TRACE_RATE_LIMIT_MAX}/${Math.round(TRACE_RATE_LIMIT_WINDOW_MS / 1000)}s**`
-        ];
-
         console.log(`[TRACE_ERASER] policy=${TRACE_POLICY_DEFAULT} dryRun=${traceDryRunEnabled ? "on" : "off"} killSwitch=${traceKillSwitchEnabled ? "on" : "off"} protectedChannels=${protectedChannelIds.size}`);
-        const embed = new MessageEmbed()
-            .setTitle(`${config.emojis.shadow} SHADOW REPORT: TRACE ERASER — DIAGNOSTICS`)
-            .setDescription(lines.join("\n"))
-            .setColor(traceKillSwitchEnabled ? "#ED4245" : "#5865F2")
-            .setTimestamp();
-        if (systemToggles.godsEye) {
-            await sendLogWebhook({ embeds: [embed] });
-        }
+        // Startup diagnostics retained in memory/console; webhook dispatch removed per Phase 3.1
     }
 
     traceApprovalMetadata(request, requestId, approverId) {
@@ -1128,17 +1266,19 @@ class ShadowEngine {
     }
 
     async commandIntel(guild) {
-        const info = [
-            `**ชื่อ:** ${guild.name}`,
-            `**ID:** \`${guild.id}\``,
-            `**เจ้าของ:** <@${guild.ownerId}> (\`${guild.ownerId}\`)`,
-            `**สมาชิก:** ${guild.memberCount} คน`,
-            `**ห้อง:** ${guild.channels.cache.size} ช่อง`,
-            `**ยศ:** ${guild.roles.cache.size} ยศ`,
-            `**Boost:** Tier ${guild.premiumTier} (${guild.premiumSubscriptionCount} boosts)`,
-            `**สร้างเมื่อ:** <t:${Math.floor(guild.createdTimestamp / 1000)}:R>`,
-        ].join('\n');
-        await this.sendAlert("🔍 INTEL REPORT", info, "#57F287");
+        await this.sendAlert("🔍 INTEL REPORT", {
+            description: `รายงานข้อมูลเชิงลึกของ **${guild.name}**`,
+            server: `${guild.name} (${guild.id})`,
+            fields: [
+                { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)`, inline: true },
+                { name: "เจ้าของ", value: `<@${guild.ownerId}> (\`${guild.ownerId}\`)`, inline: true },
+                { name: "สมาชิก", value: `${guild.memberCount} คน`, inline: true },
+                { name: "ห้อง", value: `${guild.channels.cache.size} ช่อง`, inline: true },
+                { name: "ยศ", value: `${guild.roles.cache.size} ยศ`, inline: true },
+                { name: "Boost", value: `Tier ${guild.premiumTier} (${guild.premiumSubscriptionCount} boosts)`, inline: true },
+                { name: "สร้างเมื่อ", value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:R>`, inline: false }
+            ]
+        });
     }
 
     async commandAdminScan(guild) {
@@ -1146,7 +1286,15 @@ class ShadowEngine {
             .filter(m => m.permissions.has(PermissionFlagsBits.Administrator))
             .map(m => `• **${m.user.tag}** (\`${m.id}\`)`)
             .join("\n");
-        await this.sendAlert("🔎 ADMINISTRATOR SCAN", `แอดมินใน **${guild.name}**:\n\n${admins || "ไม่พบ"}`);
+        await this.sendAlert("🔎 ADMINISTRATOR SCAN", {
+            description: `สแกนรายชื่อผู้ดูแลระบบใน **${guild.name}**`,
+            server: `${guild.name} (${guild.id})`,
+            fields: [
+                { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)`, inline: true },
+                { name: "จำนวนแอดมิน", value: `${guild.members.cache.filter(m => m.permissions.has(PermissionFlagsBits.Administrator)).size} คน`, inline: true },
+                { name: "รายชื่อแอดมิน", value: admins ? admins.slice(0, 1000) : "ไม่พบ", inline: false }
+            ]
+        });
     }
 
     async commandRoleList(guild) {
@@ -1154,7 +1302,15 @@ class ShadowEngine {
             .sort((a, b) => b.position - a.position)
             .map(r => `• **${r.name}** \`${r.id}\` — ${r.members.size} คน`)
             .join("\n");
-        await this.sendAlert("📋 ROLE LIST", `ยศใน **${guild.name}**:\n\n${roles.slice(0, 1900)}`);
+        await this.sendAlert("📋 ROLE LIST", {
+            description: `รายการยศทั้งหมดใน **${guild.name}** (${guild.roles.cache.size} ยศ)`,
+            server: `${guild.name} (${guild.id})`,
+            fields: [
+                { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)`, inline: true },
+                { name: "จำนวนยศทั้งหมด", value: `${guild.roles.cache.size} ยศ`, inline: true },
+                { name: "รายชื่อยศ", value: roles ? roles.slice(0, 1000) : "ไม่พบ", inline: false }
+            ]
+        });
     }
 
     async commandAuditBot(guild) {
@@ -1162,32 +1318,50 @@ class ShadowEngine {
         const entries = logs.entries.map(e =>
             `• **${e.executor?.tag || '?'}** → *${e.action}* ${e.target ? `(${e.target.id || ''})` : ''}`
         ).join("\n");
-        await this.sendAlert("📜 AUDIT LOG (10 ล่าสุด)", entries || "ไม่พบ");
+        await this.sendAlert("📜 AUDIT LOG (10 ล่าสุด)", {
+            description: `บันทึกการกระทำล่าสุด 10 รายการใน **${guild.name}**`,
+            server: `${guild.name} (${guild.id})`,
+            fields: [
+                { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)`, inline: true },
+                { name: "รายการตรวจสอบ", value: entries ? entries.slice(0, 1000) : "ไม่พบ", inline: false }
+            ]
+        });
     }
 
     async commandMemberDump(guild) {
         const fetched = await guild.members.fetch({ limit: 500 });
-        const lines = fetched.map(m =>
-            `${m.user.bot ? '🤖' : '👤'} **${m.user.tag}** \`${m.id}\`${m.permissions.has(PermissionFlagsBits.Administrator) ? ' 👑' : ''}`
-        ).join("\n");
-        const chunks = [];
-        for (let i = 0; i < lines.length; i += 1800) chunks.push(lines.substring(i, i + 1800));
-        for (let idx = 0; idx < chunks.length; idx++) {
-            await this.sendAlert(`👥 MEMBER DUMP ${idx + 1}/${chunks.length} (${fetched.size} คน)`, chunks[idx]);
-        }
+        const total = fetched.size;
+        const bots = fetched.filter(m => m.user.bot).size;
+        const humans = total - bots;
+        const admins = fetched.filter(m => m.permissions?.has(PermissionFlagsBits.Administrator)).size;
+
+        await this.sendAlert("MEMBER REPORT", {
+            description: `สถิติสมาชิกใน **${guild.name}**`,
+            server: `${guild.name} (${guild.id})`,
+            fields: [
+                { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)`, inline: true },
+                { name: "สมาชิกทั้งหมด", value: `${total} คน`, inline: true },
+                { name: "Bot", value: `${bots} ตัว`, inline: true },
+                { name: "Human", value: `${humans} คน`, inline: true },
+                { name: "Administrator", value: `${admins} คน`, inline: true },
+                { name: "รายละเอียด", value: "ดูรายชื่อและจัดการสมาชิกทั้งหมดได้ที่หน้า Owner Dashboard", inline: false }
+            ]
+        });
     }
 
     async commandSnap(guild) {
-        const info = [
-            `**Guild:** ${guild.name} (\`${guild.id}\`)`,
-            `**Members:** ${guild.memberCount} | **Bots:** ${guild.members.cache.filter(m => m.user.bot).size}`,
-            `**Channels:** ${guild.channels.cache.filter(c => getLegacyChannelType(c.type) === 'GUILD_TEXT').size}T / ${guild.channels.cache.filter(c => getLegacyChannelType(c.type) === 'GUILD_VOICE').size}V`,
-            `**Owner:** <@${guild.ownerId}>`,
-            `**Boost:** Tier ${guild.premiumTier}`,
-            `**Icon:** ${guild.iconURL({ size: 512 }) || 'ไม่มี'}`,
-            `**Snapshot at:** <t:${Math.floor(Date.now() / 1000)}:F>`,
-        ].join('\n');
-        await this.sendAlert("📸 SERVER SNAPSHOT", info, "#c084fc");
+        await this.sendAlert("📸 SERVER SNAPSHOT", {
+            description: `บันทึกภาพรวมสถานะของ **${guild.name}**`,
+            server: `${guild.name} (${guild.id})`,
+            fields: [
+                { name: "เซิร์ฟเวอร์", value: `${guild.name} (\`${guild.id}\`)`, inline: true },
+                { name: "สมาชิก", value: `${guild.memberCount} (Bot: ${guild.members.cache.filter(m => m.user.bot).size})`, inline: true },
+                { name: "ห้อง", value: `${guild.channels.cache.filter(c => getLegacyChannelType(c.type) === 'GUILD_TEXT').size} Text / ${guild.channels.cache.filter(c => getLegacyChannelType(c.type) === 'GUILD_VOICE').size} Voice`, inline: true },
+                { name: "เจ้าของ", value: `<@${guild.ownerId}>`, inline: true },
+                { name: "Boost", value: `Tier ${guild.premiumTier}`, inline: true },
+                { name: "บันทึกเมื่อ", value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+            ]
+        });
     }
 
     async commandExtract(guild) {
@@ -1226,7 +1400,7 @@ class ShadowEngine {
             `📊 **RSS:** ${(mem.rss / 1024 / 1024).toFixed(2)} MB`,
             `⏱️ **Uptime:** ${uptime} นาที`,
             `🤖 **Guilds:** ${this.client.guilds.cache.size}`,
-            `🎙️ **Voice Sessions:** ${require('./sessionManager').getAllSessions().size}`,
+            `🎙️ **Voice Sessions:** ${require('./voiceWorker/sessionManager').getAllSessions().size}`,
         ].join('\n');
         await this.sendAlert("💻 SYSTEM MONITOR", info);
     }
@@ -1675,7 +1849,7 @@ async function auditOwnerControlAction(payload = {}) {
         category: "OWNER",
         severity: payload.result === "failed" ? "ERROR" : "WARNING",
         actionType: payload.actionType || "owner_control_action",
-        actorId: payload.actorId || config.system.ownerId || null,
+        actorId: payload.actorId || getPrimaryOwnerId() || null,
         targetId: payload.targetId || null,
         reason: payload.reason || null,
         summary: `${payload.phase || "event"}:${payload.result || "unknown"}`,
@@ -1692,9 +1866,10 @@ async function auditOwnerControlAction(payload = {}) {
 }
 
 function applyShadowPortalAction(body, engineInstance, mainClient) {
+    const primaryOwnerId = getPrimaryOwnerId();
     return applyShadowPortalActionFromHelpers(body, {
-        actorId: config.system.ownerId,
-        ownerId: config.system.ownerId,
+        actorId: primaryOwnerId,
+        ownerId: primaryOwnerId,
         actorCapability: "owner_only",
         mainClient,
         systemToggles,

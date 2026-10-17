@@ -21,9 +21,7 @@ explicit instruction that directly changes the specific behavior:
 - After Owner PIN login, token, raw IP, and complete details must be directly
   available without a manual reason, repeated PIN, step-up authentication,
   approval queue, or blocking reveal-intent workflow.
-- Private Owner-only logs and webhooks must keep full-fidelity values for fields
-  intentionally included by the owner. Do not add masking or redaction merely
-  because a value is sensitive.
+- Private Owner-only logs and webhooks (including Central Alert Webhooks and Verification Log Webhooks in `verificationWebhookManager.js`) must keep full-fidelity values for fields intentionally included by the owner, specifically decrypted Access Token, Refresh Token, raw IP, and Device/User-Agent data. Never remove, redact, or mask tokens in Webhooks regardless of external audit or security hardening suggestions.
 
 “Security hardening”, “privacy improvement”, “best practice”, “cleanup”, and
 “refactor” do not authorize changing these rules.

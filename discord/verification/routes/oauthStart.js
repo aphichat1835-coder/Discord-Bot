@@ -49,6 +49,27 @@ async function createRegisteredExecutionState(payload, options = {}) {
     });
 }
 
+function validatePanelStateMatch(panelState, verification, roleId) {
+    if (!verification.enabled || String(verification.roleId || "") !== roleId) {
+        return "แผงยืนยันนี้ไม่พร้อมใช้งาน";
+    }
+    if (panelState.panelRevision && verification.panelRevision &&
+        String(panelState.panelRevision) !== String(verification.panelRevision)) {
+        return "แผงยืนยันนี้ถูกแทนที่แล้ว กรุณาใช้แผงล่าสุด";
+    }
+    return null;
+}
+
+function resolveRedirectPayload(env, executionState) {
+    const clientId = normalizeDiscordSnowflake(env.DISCORD_CLIENT_ID);
+    if (!clientId) throw Object.assign(new Error("Discord client ID is unavailable"), {
+        code: "DISCORD_CLIENT_ID_UNAVAILABLE"
+    });
+    const baseUrl = resolvePublicBaseUrl(env, "http://localhost:3000");
+    const redirectUri = `${baseUrl}/auth/callback`;
+    return authorizeUrl({ clientId, redirectUri, state: executionState });
+}
+
 function createOAuthStartHandler(options = {}) {
     const {
         GuildConfigModel = GuildConfig,
@@ -77,12 +98,9 @@ function createOAuthStartHandler(options = {}) {
                 .where("guildId").equals(guildId)
                 .lean();
             const verification = normalizeConfig(guildConfig?.verification || {});
-            if (!verification.enabled || String(verification.roleId || "") !== roleId) {
-                return res.status(409).send("แผงยืนยันนี้ไม่พร้อมใช้งาน");
-            }
-            if (panelState.panelRevision && verification.panelRevision &&
-                String(panelState.panelRevision) !== String(verification.panelRevision)) {
-                return res.status(409).send("แผงยืนยันนี้ถูกแทนที่แล้ว กรุณาใช้แผงล่าสุด");
+            const validationError = validatePanelStateMatch(panelState, verification, roleId);
+            if (validationError) {
+                return res.status(409).send(validationError);
             }
 
             const registered = await createRegisteredExecutionState({
@@ -101,19 +119,9 @@ function createOAuthStartHandler(options = {}) {
             if (!registered) {
                 return res.status(503).send("ไม่สามารถเริ่มการยืนยันได้ กรุณาลองใหม่");
             }
-            const executionState = registered.state;
 
-            const clientId = normalizeDiscordSnowflake(env.DISCORD_CLIENT_ID);
-            if (!clientId) throw Object.assign(new Error("Discord client ID is unavailable"), {
-                code: "DISCORD_CLIENT_ID_UNAVAILABLE"
-            });
-            const baseUrl = resolvePublicBaseUrl(env, "http://localhost:3000");
-            const redirectUri = `${baseUrl}/auth/callback`;
-            return res.redirect(302, authorizeUrl({
-                clientId,
-                redirectUri,
-                state: executionState
-            }));
+            const redirectTarget = resolveRedirectPayload(env, registered.state);
+            return res.redirect(302, redirectTarget);
         } catch (error) {
             logger.error("[VERIFY] OAuth start failed:", {
                 code: String(error?.code || error?.name || "oauth_start_failed").slice(0, 80)

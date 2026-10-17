@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mutations": [
+    {"id": "double-ack", "steps": [{"action": "defer"}, {"action": "reply"}, {"action": "failed"}], "expect_detection": "interaction acknowledged more than once"},
+    {"id": "effect-before-auth", "steps": [{"action": "defer"}, {"action": "effect", "idempotency_key": "job:unsafe"}, {"action": "succeeded"}], "expect_detection": "side effect occurred before authorization"},
+    {"id": "duplicate-effect", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}, {"action": "effect", "idempotency_key": "job:repeat"}, {"action": "effect", "idempotency_key": "job:repeat"}, {"action": "partial"}], "expect_detection": "duplicate idempotency key"},
+    {"id": "missing-terminal", "steps": [{"action": "defer"}, {"action": "authorize", "allowed": true}], "expect_detection": "scenario has no terminal state"},
+    {"id": "unknown-transition", "steps": [{"action": "defer"}, {"action": "teleport"}, {"action": "failed"}], "expect_detection": "unknown action: teleport"}
+  ]
+}

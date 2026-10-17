@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "levels": {
+    "deterministic_verified": {"requires": ["routing", "schemas", "static_analysis", "focused_tests", "adversarial_cases"], "may_claim": "Bundled deterministic checks passed."},
+    "repository_verified": {"requires": ["deterministic_verified", "project_model", "native_checks", "diff_review", "security_review"], "may_claim": "The exact repository revision passed the recorded checks."},
+    "experience_verified": {"requires": ["repository_verified", "state_matrix", "payload_or_render", "accessibility", "copy_review"], "may_claim": "Applicable experience states passed recorded review."},
+    "live_verified": {"requires": ["experience_verified", "discord_or_staging", "operations_observation"], "may_claim": "The named live/staging boundary was observed at the recorded revision and time."}
+  },
+  "forbidden_claims": ["bug-free", "perfect UX", "production-ready without repository and environment evidence", "live tested when only mocks or snapshots ran"],
+  "evidence_identity": ["repository", "branch", "head_sha", "environment", "tool_versions", "timestamp"]
+}

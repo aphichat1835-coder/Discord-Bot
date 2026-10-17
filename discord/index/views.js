@@ -11,6 +11,7 @@
 const auth = require("./auth");
 const { createViewHelpers } = require("./viewHelpers");
 const { buildJoinCampaignPage } = require("./joinCampaignPage");
+const { buildDatabaseCenterPage } = require("./databaseCenterPage");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎨  SHARED CSS — ใช้ทุกหน้า
@@ -88,6 +89,24 @@ ${navBar("/")}
         <div class="mini-stat"><span>Natural Timers</span><b id="diagNaturalTimers">0</b></div>
         <div class="mini-stat"><span>Auto Deaf Timers</span><b id="diagAutoDeafTimers">0</b></div>
         <div class="mini-stat"><span>Cooldowns</span><b id="diagCooldowns">0</b></div>
+    </div>
+</div>
+
+<div class="card" id="tokenHubCard">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h3 style="margin:0;">💎 Token Hub & Concurrency Controller</h3>
+        <button type="button" class="btn btn-inline" style="font-size:0.78em;padding:4px 10px;" onclick="clearTokenHubCache()">🧹 ล้างแคชโปรไฟล์</button>
+    </div>
+    <div class="mini-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:10px;">
+        <div class="mini-stat"><span>Active Tokens</span><b id="thActiveTokens" style="color:var(--green2);">0</b></div>
+        <div class="mini-stat"><span>Voice Active</span><b id="thVoiceCount" style="color:var(--blue2);">0</b></div>
+        <div class="mini-stat"><span>Quest Active</span><b id="thQuestCount" style="color:var(--yellow2);">0</b></div>
+        <div class="mini-stat"><span>Quarantined</span><b id="thQuarantineCount" style="color:var(--red2);">0</b></div>
+        <div class="mini-stat"><span>Cached Profiles</span><b id="thCacheCount">0</b></div>
+    </div>
+    <div id="thQuarantineSection" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-size:0.82em;font-weight:700;color:var(--red2);margin-bottom:6px;">🚨 รายการโทเคนที่ติดกักกัน (Quarantined Tokens):</div>
+        <div id="thQuarantineList" style="font-size:0.82em;"></div>
     </div>
 </div>
 
@@ -371,8 +390,81 @@ async function reconnectSessionFromHome(sessionId, btn){
     }
 }
 
+async function fetchTokenHubStatus(){
+    try{
+        const r=await fetch('/api/token-hub/status');
+        if(!r.ok) return;
+        const d=await r.json();
+        if(!d.success) return;
+        document.getElementById('thActiveTokens').textContent=d.activeTokens||0;
+        document.getElementById('thVoiceCount').textContent=d.voiceSessionsCount||0;
+        document.getElementById('thQuestCount').textContent=d.questSessionsCount||0;
+        document.getElementById('thQuarantineCount').textContent=d.quarantinedCount||0;
+        document.getElementById('thCacheCount').textContent=d.cachedProfilesCount||0;
+
+        const qSec=document.getElementById('thQuarantineSection');
+        const qList=document.getElementById('thQuarantineList');
+        if(d.quarantinedTokens&&d.quarantinedTokens.length>0){
+            qSec.style.display='block';
+            qList.innerHTML=d.quarantinedTokens.map(q=>{
+                const h=String(q.tokenHash||'');
+                const reason=String(q.reason||'Invalid');
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);">'+
+                    '<div><span style="font-family:monospace;color:var(--text);">'+esc(h.slice(0,16))+'...</span>'+
+                    '<span style="color:var(--text3);margin-left:8px;">('+esc(reason)+')</span></div>'+
+                    '<button type="button" class="btn btn-inline" style="font-size:0.75em;padding:2px 8px;color:var(--green2);" onclick="releaseTokenQuarantine(&quot;'+h+'&quot;)">ปลดกักกัน</button>'+
+                    '</div>';
+            }).join('');
+        }else{
+            qSec.style.display='none';
+            qList.innerHTML='';
+        }
+    }catch{}
+}
+
+async function releaseTokenQuarantine(tokenHash){
+    if(!tokenHash) return;
+    try{
+        const r=await fetch('/api/token-hub/quarantine/release',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({tokenHash})
+        });
+        const d=await r.json();
+        if(d.success){
+            showToast('✅ ปลดกักกันโทเคนแล้ว','ok');
+            await fetchTokenHubStatus();
+        }else{
+            showToast('❌ '+(d.error||'ไม่สามารถปลดกักกันได้'),'err');
+        }
+    }catch(e){
+        showToast('❌ เกิดข้อผิดพลาด: '+e.message,'err');
+    }
+}
+
+async function clearTokenHubCache(){
+    try{
+        const r=await fetch('/api/token-hub/cache/clear',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({})
+        });
+        const d=await r.json();
+        if(d.success){
+            showToast('🧹 ล้างแคชโปรไฟล์เรียบร้อย','ok');
+            await fetchTokenHubStatus();
+        }else{
+            showToast('❌ ล้างแคชไม่สำเร็จ','err');
+        }
+    }catch(e){
+        showToast('❌ เกิดข้อผิดพลาด: '+e.message,'err');
+    }
+}
+
 fetchStatus();
+fetchTokenHubStatus();
 dashboardInterval(fetchStatus,5000);
+dashboardInterval(fetchTokenHubStatus,5000);
 </script>`);
 }
 
@@ -642,8 +734,9 @@ async function kickGuild(guildId){
 //  📜  หน้า LOGS
 // ════════════════════════════════════════════════════════════════════════════
 function pageLogs(webLogs, MAX_LOGS) {
+    const logClasses = { error: "error", warn: "warn" };
     const logsHtml = webLogs.slice().reverse().map(l => {
-        const cls = l.type === "error" ? "error" : l.type === "warn" ? "warn" : "info";
+        const cls = logClasses[l.type] || "info";
         return `<div class="log-line ${cls}">[${escapeHtml(l.time || "")}] ${escapeHtml(l.msg || "")}</div>`;
     }).join("");
 
@@ -1186,7 +1279,7 @@ function renderRotateMessageRows(messages) {
         </div>`).join("");
 }
 
-function buildSettingsPageView(settings, config, client) {
+function buildPresencePageView(settings, config, client) {
     const botStatus = settings.botStatus ?? config.bot_presence?.status ?? "idle";
     const botNote = escapeHtml(settings.botNote ?? "");
     const statusColors = {
@@ -1196,21 +1289,28 @@ function buildSettingsPageView(settings, config, client) {
         invisible: "transparent"
     };
     return {
-        maxSessions: settings.maxSessions ?? config.limits.maxSessions,
-        rateLimitReq: settings.rateLimitRequests ?? config.limits.rateLimitRequests,
-        antiRaid: settings.antiRaidEnabled ?? true,
-        idleHrs: settings.idleTimeoutHrs ?? 24,
-        voiceDmMode: normalizeVoiceDmMode(settings.voiceDmMode),
         botStatus,
         botActivity: escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? "ระบบออนช่องเสียง"),
         botNote,
         previewNote: botNote || "ไม่มี note",
         actType: settings.botActivityType || "WATCHING",
-        rotateEn: settings.rotateEnabled ?? false,
-        rotateInt: settings.rotateInterval ?? 5,
-        rotateMsgs: normalizeRotateMessages(settings.rotateMessages),
         botName: escapeHtml(client?.user?.username || "Bot"),
         statusColor: statusColors[botStatus] || statusColors.idle
+    };
+}
+
+function buildSettingsPageView(settings, config, client) {
+    const presence = buildPresencePageView(settings, config, client);
+    return {
+        maxSessions: settings.maxSessions ?? config.limits.maxSessions,
+        rateLimitReq: settings.rateLimitRequests ?? config.limits.rateLimitRequests,
+        antiRaid: settings.antiRaidEnabled ?? true,
+        idleHrs: settings.idleTimeoutHrs ?? 24,
+        voiceDmMode: normalizeVoiceDmMode(settings.voiceDmMode),
+        ...presence,
+        rotateEn: settings.rotateEnabled ?? false,
+        rotateInt: settings.rotateInterval ?? 5,
+        rotateMsgs: normalizeRotateMessages(settings.rotateMessages)
     };
 }
 
@@ -1808,6 +1908,10 @@ ${navBar("/approved")}
         res.send(pageQuests());
     });
 
+    app.get("/database", auth.requirePin, (req, res) => {
+        res.send(buildDatabaseCenterPage());
+    });
+
     app.get("/session/:sessionId", auth.requirePin, (req, res) => {
         res.send(pageSessionDetail());
     });
@@ -1816,7 +1920,7 @@ ${navBar("/approved")}
 function pageQuests() {
     return shell("บันทึก Quest", `
 <div class="container-lg">
-<h1 class="page-title gradient-text">🎯 บันทึกการทำ Quest (NeverDie Auto Quest)</h1>
+<h1 class="page-title gradient-text">🎯 บันทึกการทำ Quest อัตโนมัติ</h1>
 <p class="page-sub">ประวัติการใช้งานและรายละเอียดบัญชีที่ส่งทำเควสต์ผ่านพาเนล</p>
 ${navBar("/quests")}
 

@@ -1,3 +1,5 @@
+"use strict";
+
 /*
 ================================================================================
   Verify Mode Utils
@@ -31,7 +33,7 @@ const SECURITY_RULE_KEYS = Object.freeze([
 ]);
 
 const DEFAULT_SECURITY_RULES = Object.freeze({
-  vpnProxyTor: Object.freeze({ enabled: true, action: "deny_role", timeoutMinutes: 60 }),
+  vpnProxyTor: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
   hosting: Object.freeze({ enabled: false, action: "deny_role", timeoutMinutes: 60 }),
   ipDuplicate: Object.freeze({ enabled: false, action: "allow", timeoutMinutes: 60, threshold: 3 }),
   deviceDuplicate: Object.freeze({ enabled: false, action: "allow", timeoutMinutes: 60, threshold: 2 }),
@@ -188,16 +190,21 @@ function normalizeVerificationConfig(config = {}) {
 
   next.blockHosting = next.blockHosting === true;
 
+  if (next.minConnections !== undefined && next.minConnections !== null) {
+    const parsed = Number(next.minConnections);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      next.minConnections = Math.floor(parsed);
+    } else {
+      next.minConnections = next.requireConnections ? 1 : 0;
+    }
+  } else {
+    next.minConnections = next.requireConnections ? 1 : 0;
+  }
+
   delete next[["anti", "Alt"].join("")];
   const ruleInput = next.securityRules && typeof next.securityRules === "object"
     ? { ...next.securityRules }
     : {};
-  if (!Object.hasOwn(ruleInput, "vpnProxyTor") && next.blockVPN === true) {
-    ruleInput.vpnProxyTor = { ...DEFAULT_SECURITY_RULES.vpnProxyTor, enabled: true };
-  }
-  if (!Object.hasOwn(ruleInput, "hosting") && next.blockHosting === true) {
-    ruleInput.hosting = { ...DEFAULT_SECURITY_RULES.hosting, enabled: true };
-  }
   next.securityRules = normalizeSecurityRules(ruleInput);
 
   return next;

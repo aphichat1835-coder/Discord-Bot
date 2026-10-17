@@ -686,10 +686,10 @@ test("component matcher and result format include new numeric result fields", ()
     assert.equal(_test.isVoiceAdminInteraction({ isChannelSelectMenu: () => true, customId: IDS.MOVE }), true);
     assert.equal(_test.isVoiceAdminInteraction({ isButton: () => true, customId: "btn_start" }), false);
     assert.match(_test.buildResult("งาน", { targeted: 3, succeeded: 1, failed: 1, timedOut: 1, persistenceFailed: 1 }), /หมดเวลา 1 คน/);
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "✅");
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "⚠️");
-    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), "❌");
-    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), "⚠️");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.success || "✅");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.warning || "⚠️");
+    assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), config.emojis?.error || "❌");
+    assert.equal(_test.resultEmoji({ targeted: 0, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.warning || "⚠️");
 });
 
 test("initialization and durable cleanup keep cache aligned only after acknowledged writes", async () => {
@@ -775,8 +775,8 @@ test("secret lock persistence failures are reported as an error and never call D
 
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
     assert.equal(message.deleted, true);
-    assert.equal(replies.at(-1).content.startsWith("> ❌"), true);
-    assert.match(replies.at(-1).content, /บันทึกสถานะไม่สำเร็จ 1 คน/);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.description, /ไม่สำเร็จ.*1.*คน/);
     assert.deepEqual(target.calls, []);
 });
 
@@ -831,6 +831,22 @@ test("persistence exceptions and version conflicts fail closed without changing 
     assert.equal(_test.getLock("g", "u"), null);
 });
 
+test("writeLock retries transient unacknowledged write and succeeds if retry acknowledges", async () => {
+    let callCount = 0;
+    VoiceAdminLock.updateOne = async () => {
+        callCount++;
+        if (callCount === 1) {
+            return { acknowledged: false };
+        }
+        return { acknowledged: true, upsertedCount: 1 };
+    };
+    const result = await _test.writeLock("g-retry", "u-retry", "mute", "owner");
+    assert.equal(callCount, 2);
+    assert.equal(result.lock.muteLocked, true);
+    _test.reset();
+});
+
+
 test("temporary Administrator lock is not persisted, while a failed unlock restores its version", async () => {
     const admin = member("admin", true);
     const target = member("target", false, { failMute: true });
@@ -859,7 +875,8 @@ test("///ปิดไมค์หมด persists an Owner-only mute lock for Adm
     assert.equal(_test.getLock(guild.id, regular.id).muteOwnerForced, true);
     assert.equal(_test.getLock(guild.id, owner.id), null);
     assert.deepEqual(targetAdmin.calls.at(-1), ["mute", true]);
-    assert.match(replies.at(-1).content, /สำเร็จ 2 คน/);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.description, /สำเร็จ.*2.*คน/);
 });
 
 test("an Administrator cannot release an Owner-forced mute but the configured Owner can", async () => {
@@ -1015,18 +1032,21 @@ test("secret validation rejects text channels and every invalid move destination
     const replies = [];
     const message = mockSecretMessage(guild, source, "//ย้ายหมด not-an-id", replies);
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.description, /ID ห้องปลายทางไม่ถูกต้อง/);
     assert.deepEqual(target.calls, []);
 
     message.content = `//ย้ายหมด ${source.id}`;
     await voiceAdmin.handleSecretMessage(message);
-    assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.description, /ID ห้องปลายทางไม่ถูกต้อง/);
 
     const textDestination = { id: "12345678901234569", type: ChannelType.GuildText, guild, permissionsFor: () => ({ has: () => true }) };
     guild.channels.cache.set(textDestination.id, textDestination);
     message.content = `//ย้ายหมด ${textDestination.id}`;
     await voiceAdmin.handleSecretMessage(message);
-    assert.match(replies.at(-1).content, /ID ห้องปลายทางไม่ถูกต้อง/);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.description, /ID ห้องปลายทางไม่ถูกต้อง/);
 
     replies.length = 0;
     message.deleted = false;
@@ -1087,7 +1107,8 @@ test("secret move command accepts channel mention tags like <#12345678901234567>
     const message = mockSecretMessage(guild, source, `//ย้ายหมด <#${destination.id}>`, replies);
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
     assert.deepEqual(target.calls.at(-1), ["move", destination.id]);
-    assert.match(replies.at(-1).content, /สำเร็จ 1 คน/);
+    assert.ok(replies.at(-1).embeds?.[0]);
+    assert.match(replies.at(-1).embeds[0].data.description, /สำเร็จ.*1.*คน/);
 });
 
 test("unauthorized notice distinguishes Owner-forced mute from regular administrator locks", async () => {
@@ -1186,11 +1207,11 @@ test("secret command executes stealth lifecycle: deletes trigger, shows and dele
     assert.equal(replies.length, 2);
 
     // 3. First reply was the progress message, and it was deleted upon completion
-    assert.match(replies[0].content, /> ⏳ กำลังดำเนินการ\.\.\./);
+    assert.match(replies[0].content, /> (?:<a:Loadingg_pmt:\d+>|⏳) กำลังดำเนินการ\.\.\./);
     assert.equal(replies[0].deleted, true);
 
     // 4. Second reply was the final summary with server thumbnail
-    assert.match(replies[1].content, /ตัดหมด/);
+    assert.match(replies[1].embeds[0].data.title, /ตัดหมด/);
     assert.equal(replies[1].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
     assert.equal(replies[1].deleted, false);
 });

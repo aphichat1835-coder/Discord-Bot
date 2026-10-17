@@ -88,9 +88,9 @@ if (/hasServerAuthHeader|x-internal-secret/.test(authSource)) {
     findings.push("discord/index/auth.js: unverified auth-header CSRF bypass must not be reintroduced");
 }
 
-const saveDatabaseBody = functionBody(readRepositorySource("discord/sessionManager.js"), "saveDatabase");
+const saveDatabaseBody = functionBody(readRepositorySource("discord/voiceWorker/sessionManager.js"), "saveDatabase");
 if (!saveDatabaseBody || /deleteMany\s*\(\s*\{\s*\}\s*\)/.test(saveDatabaseBody)) {
-    findings.push("discord/sessionManager.js: periodic saveDatabase must not delete all persisted sessions");
+    findings.push("discord/voiceWorker/sessionManager.js: periodic saveDatabase must not delete all persisted sessions");
 }
 
 const voiceLifecycleSource = readRepositorySource("discord/voiceWorker/lifecycle.js");

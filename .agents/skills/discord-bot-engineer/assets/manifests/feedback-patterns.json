@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "patterns": {
+    "accepted": ["disable_trigger", "acknowledge", "preserve_context"],
+    "working": ["describe_phase", "show_real_progress", "one_indicator"],
+    "success": ["state_outcome", "stop_writers", "next_action_if_useful"],
+    "partial": ["show_success_skipped_failed", "no_full_success_claim"],
+    "failure": ["cause", "impact", "recovery"],
+    "cancelled": ["future_work_stopped", "committed_effects_preserved"],
+    "timeout": ["state_unknown_or_known", "status_or_retry"]
+  }
+}

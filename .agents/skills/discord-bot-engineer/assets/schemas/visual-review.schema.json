@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"visual-review","type":"object","required":["surface","states","checks","unverified"],"properties":{"surface":{"type":"string"},"states":{"type":"array"},"checks":{"type":"object"},"unverified":{"type":"array"}},"additionalProperties":true}

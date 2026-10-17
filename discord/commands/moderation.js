@@ -1,15 +1,9 @@
-/*
-================================================================================
-⚠️ [AI COGNITIVE DIRECTIVE] ⚠️
-DO NOT REMOVE: activeRestores and activeBackups Sets.
-DO NOT REMOVE: finally blocks — they unlock race condition guards.
-DO NOT SIMPLIFY: Permission check chain — each check serves a specific purpose.
-================================================================================
-*/
+// NOTE: Do not remove finally blocks — they unlock race condition guards.
+// NOTE: Do not simplify the permission check chain — each check serves a distinct purpose.
 
 const { PermissionFlagsBits } = require("discord.js");
 const config = require("../config.json");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 const {
     requireMemberPermission,
     requireBotPermission,
@@ -19,6 +13,7 @@ const {
 const { handleModerationCommand } = require("./moderationWorkflow");
 
 const { MessageEmbed } = require("../core/discordCompat");
+const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
 
 // Race Condition Guards
 const activeClearChannels = new Set();
@@ -38,7 +33,7 @@ async function handle(interaction, client) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-//  🧹  CLEAR
+//  CLEAR
 // ════════════════════════════════════════════════════════════════════════════
 function isBulkDeletableMessage(message, now = Date.now()) {
     const createdAt = Number(message?.createdTimestamp || 0);
@@ -163,98 +158,121 @@ async function deleteChannelMessages(channel, amount, now = Date.now(), options 
 
 function buildClearLoadingEmbed(interaction, amt) {
     return new MessageEmbed()
-        .setColor(config.system.themeColors.info || "#5865F2")
-        .setAuthor({
-            name: "กำลังทำความสะอาดห้องแชท...",
-            iconURL: interaction.guild?.iconURL() || undefined
-        })
-        .setDescription(
-            `> ${config.emojis.broom || "🧹"} กำลังสแกนและลบข้อความเป้าหมาย **${amt.toLocaleString()}** ข้อความ...\n` +
-            `> ${config.emojis.loading || "⏳"} กรุณารอสักครู่ ระบบกำลังเร่งดำเนินการด้วยความเร็วสูงสุด ⚡`
-        )
-        .setFooter({
-            text: `ผู้สั่งการ: ${interaction.user.tag}`,
-            iconURL: interaction.user.displayAvatarURL?.() || undefined
-        });
+        .setColor(config.system?.themeColors?.info || "#5865F2")
+        .setDescription(`> ${config.emojis?.loading || "⏳"} กำลังลบ ${amt.toLocaleString()} ข้อความ...`);
 }
 
 function buildClearResultEmbed(interaction, result) {
     if (result.deleted === 0) {
         return new MessageEmbed()
-            .setColor(config.system.themeColors.warning || "#FEE75C")
-            .setAuthor({
-                name: "ผลการทำความสะอาดห้องแชท",
-                iconURL: interaction.guild?.iconURL() || undefined
-            })
+            .setColor(config.system?.themeColors?.warning || "#FEE75C")
+            .setTitle(`${config.emojis?.warning || "⚠️"} ลบข้อความไม่สำเร็จ`)
             .setDescription(
                 result.fetched === 0
-                    ? `> ${config.emojis.warning} ไม่พบข้อความให้ลบในช่องนี้`
-                    : `> ${config.emojis.warning} ลบไม่สำเร็จ **${result.failed}** ข้อความ`
+                    ? `> ไม่พบข้อความให้ลบในช่องนี้`
+                    : `> ไม่สามารถลบข้อความในช่องนี้ได้ (${result.failed.toLocaleString()} ข้อความ)`
             );
     }
 
     const embed = new MessageEmbed()
-        .setColor(config.system.themeColors.success || "#57F287")
-        .setAuthor({
-            name: "กวาดล้างห้องแชทเรียบร้อย",
-            iconURL: interaction.guild?.iconURL() || undefined
-        })
-        .setDescription(
-            `> ${config.emojis.success} **ลบข้อความสำเร็จทั้งหมด \`${result.deleted.toLocaleString()}\` ข้อความ!**`
-        )
-        .addFields([
-            { name: "⚡ ลบความเร็วสูง (Bulk)", value: `\`${result.bulkDeleted.toLocaleString()}\` ข้อความ`, inline: true },
-            { name: "⏳ ลบรายข้อความ/เก่า", value: `\`${result.individualDeleted.toLocaleString()}\` ข้อความ`, inline: true },
-            { name: "📌 ช่องแชท", value: `<#${interaction.channel.id}>`, inline: true }
-        ]);
+        .setColor(config.system?.themeColors?.success || "#57F287")
+        .setTitle(`${config.emojis?.success || "✅"} ลบข้อความเรียบร้อย`)
+        .setDescription(`> ลบข้อความใน <#${interaction.channel.id}> ไป **${result.deleted.toLocaleString()}** ข้อความ`);
 
     if (result.failed > 0) {
         embed.addFields([
-            { name: "⚠️ ล้มเหลว", value: `\`${result.failed.toLocaleString()}\` ข้อความ`, inline: true }
+            { name: `${config.emojis?.warning || "⚠️"} ลบไม่ได้`, value: `\`${result.failed.toLocaleString()}\` ข้อความ`, inline: true }
         ]);
     }
 
-    embed.setFooter({
-        text: `ผู้ดำเนินการ: ${interaction.user.tag}`,
-        iconURL: interaction.user.displayAvatarURL?.() || undefined
-    });
     embed.setTimestamp();
     return embed;
 }
 
 function buildClearErrorEmbed(e) {
-    let errorMsg = `> ${config.emojis.error} ลบข้อความไม่สำเร็จ กรุณาลองใหม่`;
+    let errorMsg = "กรุณาลองใหม่อีกครั้ง";
     if (e.code === 50013) {
-        errorMsg = `> ${config.emojis.error} บอทไม่มีสิทธิ์ลบข้อความในช่องนี้`;
+        errorMsg = "บอทไม่มีสิทธิ์ลบข้อความในช่องนี้";
     } else if (e.code === 10003 || e.code === 50001) {
-        errorMsg = `> ${config.emojis.error} บอทไม่สามารถเข้าถึงช่องหรือประวัติข้อความได้`;
+        errorMsg = "บอทไม่สามารถเข้าถึงช่องหรือประวัติข้อความได้";
     }
     return new MessageEmbed()
-        .setColor(config.system.themeColors.error || "#ED4245")
-        .setDescription(errorMsg);
+        .setColor(config.system?.themeColors?.error || "#ED4245")
+        .setTitle(`${config.emojis?.error || "❌"} ลบข้อความไม่สำเร็จ`)
+        .setDescription(`> ${errorMsg}`);
 }
 
-async function handleClear(interaction) {
-    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ⛔ คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`)) return;
-    if (!await requireBotPermission(interaction, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages], `> ${config.emojis.error} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return;
+async function _validateClearRequest(interaction) {
+    if (!await requireMemberPermission(interaction, PermissionFlagsBits.Administrator, `> ${config.emojis?.no_entry || "⛔"} คำสั่งนี้จำเป็นต้องใช้สิทธิ์ผู้ดูแลระบบ (Administrator) เท่านั้น`)) return null;
+    if (!await requireBotPermission(interaction, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageMessages], `> ${config.emojis?.error || "❌"} บอทไม่มีสิทธิ์ดูประวัติหรือลบข้อความในช่องนี้`, interaction.channel)) return null;
 
     const amt = interaction.options.getInteger("amount");
     if (amt < 1 || amt > 1000) {
         const warnEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.warning || "#FEE75C")
-            .setDescription(`> ${config.emojis.warning} กรุณาระบุจำนวน 1-1,000 เท่านั้น`);
-        return interaction.reply({ embeds: [warnEmbed], ephemeral: true });
+            .setColor(config.system?.themeColors?.warning || "#FEE75C")
+            .setDescription(`> ${config.emojis?.warning || "⚠️"} กรุณาระบุจำนวน 1-1,000 เท่านั้น`);
+        await interaction.reply({ embeds: [warnEmbed], ephemeral: true });
+        return null;
     }
 
     if (activeClearChannels.has(interaction.channel.id)) {
         const busyEmbed = new MessageEmbed()
-            .setColor(config.system.themeColors.warning || "#FEE75C")
-            .setDescription(`> ${config.emojis.warning} ห้องนี้กำลังลบข้อความอยู่ กรุณารอให้รอบเดิมเสร็จก่อน`);
-        return interaction.reply({
+            .setColor(config.system?.themeColors?.warning || "#FEE75C")
+            .setDescription(`> ${config.emojis?.warning || "⚠️"} ห้องนี้กำลังลบข้อความอยู่ กรุณารอให้รอบเดิมเสร็จก่อน`);
+        await interaction.reply({
             embeds: [busyEmbed],
             ephemeral: true
         });
+        return null;
     }
+
+    return amt;
+}
+
+function _sendClearSuccessWebhook(interaction, result) {
+    if (result.deleted <= 0) return;
+    sendWebhookEvent({
+        target: "LOG",
+        severity: "SUCCESS",
+        category: "MODERATION",
+        code: "moderation.clear",
+        title: "CHANNEL MESSAGES CLEARED",
+        description: `ลบข้อความในห้อง <#${interaction.channel.id}> สำเร็จ`,
+        fields: [
+            { name: "ผู้ดำเนินการ", value: `${interaction.user.tag} (\`${interaction.user.id}\`)` },
+            { name: "เซิร์ฟเวอร์", value: `${interaction.guild.name} (\`${interaction.guild.id}\`)` },
+            { name: "เป้าหมาย", value: `<#${interaction.channel.id}>` },
+            { name: "การกระทำ", value: "clear messages" },
+            { name: "ผลลัพธ์", value: `ลบสำเร็จ ${result.deleted.toLocaleString()} ข้อความ (ล้มเหลว ${result.failed})` }
+        ],
+        sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
+    }).catch(() => {});
+}
+
+function _sendClearFailureWebhook(interaction, e) {
+    sendWebhookEvent({
+        target: "ALERT",
+        severity: "ERROR",
+        category: "MODERATION",
+        code: "moderation.clear_failed",
+        state: "OPEN",
+        title: "CLEAR MESSAGES FAILED",
+        description: `ไม่สามารถลบข้อความในห้องได้: ${e.message || e}`,
+        fields: [
+            { name: "สถานะ", value: "OPEN" },
+            { name: "ผลกระทบ", value: "ไม่สามารถทำความสะอาดห้องแชทตามคำสั่งได้" },
+            { name: "สิ่งที่ควรทำ", value: "ตรวจสอบสิทธิ์ Manage Messages และ Read Message History" },
+            { name: "เซิร์ฟเวอร์", value: `${interaction.guild?.name || "N/A"} (\`${interaction.guild?.id || "N/A"}\`)` },
+            { name: "เป้าหมาย", value: `<#${interaction.channel.id}>` },
+            { name: "รหัสข้อผิดพลาด", value: String(e.code || e.name || "unknown") }
+        ],
+        sourceIconUrl: getDiscordGuildIconUrl(interaction.guild)
+    }).catch(() => {});
+}
+
+async function handleClear(interaction) {
+    const amt = await _validateClearRequest(interaction);
+    if (!amt) return;
 
     activeClearChannels.add(interaction.channel.id);
     markCommandAccepted(interaction);
@@ -262,8 +280,10 @@ async function handleClear(interaction) {
         if (!await safeDefer(interaction, { ephemeral: true })) return null;
         await interaction.editReply({ embeds: [buildClearLoadingEmbed(interaction, amt)] }).catch(() => {});
         const result = await deleteChannelMessages(interaction.channel, amt);
+        _sendClearSuccessWebhook(interaction, result);
         return interaction.editReply({ embeds: [buildClearResultEmbed(interaction, result)] });
     } catch (e) {
+        _sendClearFailureWebhook(interaction, e);
         return interaction.editReply({ embeds: [buildClearErrorEmbed(e)] });
     } finally {
         activeClearChannels.delete(interaction.channel.id);

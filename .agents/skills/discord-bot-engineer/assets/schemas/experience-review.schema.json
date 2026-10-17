@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "experience-review",
+  "type": "object",
+  "required": ["checks", "major_redesign", "unknowns", "blockers"],
+  "properties": {
+    "checks": {"type": "object"},
+    "major_redesign": {"type": "boolean"},
+    "unknowns": {"type": "array"},
+    "blockers": {"type": "array"}
+  },
+  "additionalProperties": true
+}

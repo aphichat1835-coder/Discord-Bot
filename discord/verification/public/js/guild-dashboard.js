@@ -47,7 +47,7 @@
     "unknownLookup"
   ];
 
-  const $ = (id) => document.getElementById(id);
+  const $ = (id) => (typeof document !== "undefined" ? document.getElementById(id) : null);
 
   const SELECTORS = {
     sidebarToggle: "sidebar-toggle",
@@ -356,7 +356,11 @@
     const data = await res.json().catch(() => null);
 
     if (!res.ok || !data || data.success === false) {
-      throw new Error(data?.error || data?.message || `HTTP ${res.status}`);
+      const err = new Error(data?.error || data?.message || `HTTP ${res.status}`);
+      err.code = data?.code || (res.status === 409 ? "backfill_in_progress" : undefined);
+      err.status = res.status;
+      err.data = data;
+      throw err;
     }
 
     return data;
@@ -415,8 +419,10 @@
     closeSidebar();
 
     if (tab === "data") {
-      loadMembers(state.membersPage);
-      loadOAuthRecovery();
+      loadWebhookStatus();
+    } else if (webhookPollInterval) {
+      clearInterval(webhookPollInterval);
+      webhookPollInterval = null;
     }
     if (tab === "panel") renderEmbedPreview();
   }
@@ -503,7 +509,7 @@
     setInput("p-thumbnailUrl", panel.thumbnailUrl || "");
     setInput("p-footerText", panel.footerText || "");
     setInput("p-titleUrl", panel.titleUrl || "");
-    setInput("p-buttonText", panel.buttonText || panel.buttonLabel || "✅ ยืนยันตัวตน ✅");
+    setInput("p-buttonText", panel.buttonText || panel.buttonLabel || "<a:ddd_pmt:1553844572873040044> vfy (user)");
     setSelect("p-verifyType", mode, "oauth");
     setChecked("p-showTimestamp", !!panel.showTimestamp);
   }
@@ -530,10 +536,7 @@
     setChecked("v-requireEmail", !!verification.requireEmail);
     setChecked("v-requireEmailVerified", !!verification.requireEmailVerified);
     setChecked("v-requireConnections", !!verification.requireConnections);
-    setInput("v-minAge", verification.minAccountAgeDays ?? 7);
-    setInput("v-minConnections", verification.minConnections ?? 1);
-    setInput("v-allowedCountries", Array.isArray(verification.allowedCountries) ? verification.allowedCountries.join(",") : "");
-    setInput("v-blockedCountries", Array.isArray(verification.blockedCountries) ? verification.blockedCountries.join(",") : "");
+    setInput("v-minAge", verification.minAccountAgeDays ?? 0);
   }
 
   function fillConfig(config) {
@@ -651,11 +654,25 @@
     ];
   }
 
-  function oauthStatusRows(token = {}) {
+  function computeOauthExpiryStatus(token = {}, now = Date.now()) {
     const oauth = token.oauth || {};
-    const now = Date.now();
-    const tokenAge = oauth.issuedAt ? Math.max(0, now - Number(oauth.issuedAt)) : null;
-    const remaining = oauth.expiresAt ? Number(oauth.expiresAt) - now : null;
+    const issuedAt = Number(oauth.issuedAt);
+    const tokenAge = Number.isFinite(issuedAt) && issuedAt > 0
+      ? Math.max(0, now - issuedAt)
+      : null;
+    const expiresAt = Number(oauth.expiresAt);
+    const hasValidExpiry = Number.isFinite(expiresAt) && expiresAt > 0;
+    const remaining = hasValidExpiry ? expiresAt - now : null;
+    let remainingText = "—";
+    if (remaining !== null) {
+      remainingText = remaining > 0 ? fmtDuration(remaining) : `หมดอายุแล้ว ${fmtDuration(-remaining)}`;
+    }
+    return { tokenAge, remaining, remainingText };
+  }
+
+  function oauthStatusRows(token = {}, now = Date.now()) {
+    const oauth = token.oauth || {};
+    const { tokenAge, remainingText } = computeOauthExpiryStatus(token, now);
     return [
       ["OAuth scope", oauth.scope || "—"],
       ["Token type", oauth.tokenType || "—"],
@@ -665,7 +682,7 @@
       ["อายุ Token ปัจจุบัน", tokenAge === null ? "—" : fmtDuration(tokenAge)],
       ["อายุใช้งานทั้งหมด", oauth.lifetimeMs == null ? "—" : fmtDuration(oauth.lifetimeMs)],
       ["หมดอายุเมื่อ", fmtTime(oauth.expiresAt)],
-      ["เวลาคงเหลือ", remaining === null ? "—" : (remaining > 0 ? fmtDuration(remaining) : `หมดอายุแล้ว ${fmtDuration(-remaining)}`)],
+      ["เวลาคงเหลือ", remainingText],
       ["Last refresh at", fmtTime(oauth.lastRefreshAt)],
       ["Refresh failures", oauth.refreshFailCount ?? 0],
       ["Revoked at", fmtTime(oauth.revokedAt)],
@@ -1453,9 +1470,6 @@
       requireEmailVerified: readBool("v-requireEmailVerified"),
       requireConnections: readBool("v-requireConnections"),
       minAccountAgeDays: Math.max(0, Math.min(3650, Number.parseInt(readText("v-minAge"), 10) || 0)),
-      minConnections: Math.max(1, Math.min(20, Number.parseInt(readText("v-minConnections"), 10) || 1)),
-      allowedCountries: readText("v-allowedCountries"),
-      blockedCountries: readText("v-blockedCountries"),
 
       panel: {
         content: readText("p-content"),
@@ -1466,8 +1480,8 @@
         thumbnailUrl: readText("p-thumbnailUrl"),
         footerText: readText("p-footerText"),
         titleUrl: readText("p-titleUrl"),
-        buttonText: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
-        buttonLabel: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
+        buttonText: readText("p-buttonText") || "<a:ddd_pmt:1553844572873040044> vfy (user)",
+        buttonLabel: readText("p-buttonText") || "<a:ddd_pmt:1553844572873040044> vfy (user)",
         verifyType: mode,
         showTimestamp: readBool("p-showTimestamp")
       }
@@ -1475,8 +1489,11 @@
   }
 
   function safeHttpUrl(value) {
+    const raw = String(value || "").trim();
+    if (raw.startsWith("/")) return raw;
+    if (raw.startsWith("attachment://")) return "/verification-assets/images/verification-panel-banner.webp";
     try {
-      const url = new URL(String(value || ""));
+      const url = new URL(raw);
       return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
     } catch {
       return "";
@@ -1498,14 +1515,14 @@
   function readEmbedPreviewPanel() {
     return {
       content: readText("p-content"),
-      title: readText("p-title") || "🔐 ยืนยันตัวตนเพื่อเข้าดิส",
-      description: readText("p-description") || "กดปุ่มด้านล่างเพื่อยืนยันตัวตนผ่าน Discord OAuth2",
+      title: readText("p-title") || "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
+      description: readText("p-description"),
       color: readText("p-color") || "#5865F2",
-      imageUrl: readText("p-imageUrl"),
+      imageUrl: readText("p-imageUrl") || "/verification-assets/images/verification-panel-banner.webp",
       thumbnailUrl: readText("p-thumbnailUrl"),
       footerText: readText("p-footerText"),
       titleUrl: readText("p-titleUrl"),
-      buttonText: readText("p-buttonText") || "✅ ยืนยันตัวตน ✅",
+      buttonText: readText("p-buttonText") || "<a:ddd_pmt:1553844572873040044> vfy (user)",
       showTimestamp: readBool("p-showTimestamp")
     };
   }
@@ -1537,6 +1554,7 @@
   }
 
   function previewDescriptionElement(descriptionText) {
+    if (!descriptionText) return null;
     const description = document.createElement("div");
     description.className = "embed-preview-desc";
     description.textContent = descriptionText;
@@ -1548,7 +1566,7 @@
     const footer = document.createElement("div");
     const timestamp = panel.showTimestamp ? ` · ${new Date().toLocaleString("th-TH")}` : "";
     footer.className = "embed-preview-footer";
-    footer.textContent = `${panel.footerText || "Discord Verification System"}${timestamp}`;
+    footer.textContent = `${panel.footerText || ""}${timestamp}`;
     return footer;
   }
 
@@ -1631,8 +1649,17 @@
     const errors = Array.isArray(result.errors) ? result.errors : [];
     const summaryBadge = $("validation-summary-badge");
     if (summaryBadge) {
-      summaryBadge.className = `badge ${errors.length ? "badge-failed" : warnings.length ? "badge-warn" : "badge-ok"}`;
-      summaryBadge.textContent = errors.length ? `${errors.length} จุดต้องแก้` : warnings.length ? `${warnings.length} คำเตือน` : "พร้อมใช้งาน";
+      let badgeClass = "badge-ok";
+      let badgeText = "พร้อมใช้งาน";
+      if (errors.length) {
+        badgeClass = "badge-failed";
+        badgeText = `${errors.length} จุดต้องแก้`;
+      } else if (warnings.length) {
+        badgeClass = "badge-warn";
+        badgeText = `${warnings.length} คำเตือน`;
+      }
+      summaryBadge.className = `badge ${badgeClass}`;
+      summaryBadge.textContent = badgeText;
     }
 
     const remediation = (text) => {
@@ -2552,6 +2579,360 @@
     });
   }
 
+  let webhookPollInterval = null;
+
+  function _getWebhookBadgeConfig(data) {
+    if (data.activeJob) return { className: "badge badge-warn", text: "กำลังส่งข้อมูล" };
+    if (data.stats?.retry > 0 || data.lastStatus === "retry") return { className: "badge badge-warn", text: "มีรายการรอส่งใหม่" };
+    if (data.stats?.failed > 0 || data.lastStatus === "failed" || data.lastStatus === "completed_with_failures") {
+      return { className: "badge badge-danger", text: "พบข้อผิดพลาด" };
+    }
+    return null;
+  }
+
+  function _getWebhookEnabledBadgeConfig(data) {
+    if (!data.enabled || !data.urlValid) {
+      if (data.urlConfigured && !data.urlValid) return { className: "badge badge-danger", text: "URL ไม่ถูกต้อง" };
+      return { className: "badge badge-muted", text: "ยังไม่ได้เริ่ม" };
+    }
+    const isUnready = data.databaseReady?.ok === false || data.queueReady?.ok === false;
+    return isUnready
+      ? { className: "badge badge-danger", text: "ระบบไม่พร้อม" }
+      : { className: "badge badge-success", text: "ทำงานปกติ" };
+  }
+
+  function _renderWebhookBadge(data) {
+    const badge = $("webhook-badge-status");
+    if (!badge) return;
+    const config = _getWebhookBadgeConfig(data) || _getWebhookEnabledBadgeConfig(data);
+    badge.className = config.className;
+    badge.textContent = config.text;
+  }
+
+  function _renderUrlChecklistItem(data) {
+    const checkUrlDot = $("check-icon-url");
+    const checkUrlText = $("check-text-url");
+    const checkUrlBadge = $("check-badge-url");
+    if (!checkUrlText || !checkUrlBadge || !checkUrlDot) return;
+
+    checkUrlText.textContent = data.checklist?.urlFormat?.text || (data.urlValid ? "รูปแบบ Webhook URL ถูกต้องและพร้อมส่งข้อมูล" : "ยังไม่ได้ระบุ Webhook URL");
+    if (data.urlValid) {
+      checkUrlDot.style.background = "var(--green2)";
+      checkUrlBadge.className = "badge badge-success";
+      checkUrlBadge.textContent = "พร้อมใช้งาน";
+    } else if (data.urlConfigured) {
+      checkUrlDot.style.background = "var(--red2)";
+      checkUrlBadge.className = "badge badge-danger";
+      checkUrlBadge.textContent = "ไม่ถูกต้อง";
+    } else {
+      checkUrlDot.style.background = "var(--muted)";
+      checkUrlBadge.className = "badge badge-muted";
+      checkUrlBadge.textContent = "ยังไม่พร้อม";
+    }
+  }
+
+  function _renderDbChecklistItem(data) {
+    const checkDbDot = $("check-icon-db");
+    const checkDbText = $("check-text-db");
+    const checkDbBadge = $("check-badge-db");
+    if (!checkDbText || !checkDbBadge || !checkDbDot) return;
+
+    const isDbOk = data.checklist?.databaseReady?.ok ?? (data.databaseReady?.ok !== false);
+    checkDbText.textContent = data.checklist?.databaseReady?.text || (isDbOk ? "ระบบฐานข้อมูลเชื่อมต่อเรียบร้อย" : "การเชื่อมต่อฐานข้อมูลไม่พร้อมทำงาน");
+    if (isDbOk) {
+      checkDbDot.style.background = "var(--green2)";
+      checkDbBadge.className = "badge badge-success";
+      checkDbBadge.textContent = "พร้อมใช้งาน";
+    } else {
+      checkDbDot.style.background = "var(--red2)";
+      checkDbBadge.className = "badge badge-danger";
+      checkDbBadge.textContent = "ไม่พร้อม";
+    }
+  }
+
+  function _renderQueueChecklistItem(data) {
+    const checkQueueDot = $("check-icon-queue");
+    const checkQueueText = $("check-text-queue");
+    const checkQueueBadge = $("check-badge-queue");
+    if (!checkQueueText || !checkQueueBadge || !checkQueueDot) return;
+
+    const isQueueOk = data.checklist?.queueReady?.ok ?? (data.queueReady?.ok !== false);
+    checkQueueText.textContent = data.checklist?.queueReady?.text || (isQueueOk ? "ระบบคิวส่งข้อมูล (SQLite Queue) พร้อมทำงาน" : "ระบบคิวส่งข้อมูลไม่พร้อมทำงาน");
+    if (isQueueOk) {
+      checkQueueDot.style.background = "var(--green2)";
+      checkQueueBadge.className = "badge badge-success";
+      checkQueueBadge.textContent = "พร้อมใช้งาน";
+    } else {
+      checkQueueDot.style.background = "var(--red2)";
+      checkQueueBadge.className = "badge badge-danger";
+      checkQueueBadge.textContent = "ไม่พร้อม";
+    }
+  }
+
+  function _renderWorkerChecklistItem(data) {
+    const checkWorkerDot = $("check-icon-worker");
+    const checkWorkerText = $("check-text-worker");
+    const checkWorkerBadge = $("check-badge-worker");
+    if (!checkWorkerText || !checkWorkerBadge || !checkWorkerDot) return;
+
+    checkWorkerText.textContent = data.checklist?.workerReady?.text || "ระบบพร้อมทำงาน";
+    if (data.databaseReady?.ok === false || data.queueReady?.ok === false) {
+      checkWorkerDot.style.background = "var(--red2)";
+      checkWorkerBadge.className = "badge badge-danger";
+      checkWorkerBadge.textContent = "ระบบไม่พร้อม";
+    } else if (data.activeJob) {
+      checkWorkerDot.style.background = "var(--yellow2)";
+      checkWorkerBadge.className = "badge badge-warn";
+      checkWorkerBadge.textContent = "กำลังส่งข้อมูล";
+    } else if (data.stats && data.stats.retry > 0) {
+      checkWorkerDot.style.background = "var(--yellow2)";
+      checkWorkerBadge.className = "badge badge-warn";
+      checkWorkerBadge.textContent = "มีรายการรอส่งใหม่";
+    } else if (data.stats && (data.stats.failed > 0 || data.lastStatus === "failed" || data.lastStatus === "completed_with_failures")) {
+      checkWorkerDot.style.background = "var(--red2)";
+      checkWorkerBadge.className = "badge badge-danger";
+      checkWorkerBadge.textContent = "พบข้อผิดพลาด";
+    } else if (data.enabled && data.urlValid) {
+      checkWorkerDot.style.background = "var(--green2)";
+      checkWorkerBadge.className = "badge badge-success";
+      checkWorkerBadge.textContent = "ทำงานปกติ";
+    } else {
+      checkWorkerDot.style.background = "var(--muted)";
+      checkWorkerBadge.className = "badge badge-muted";
+      checkWorkerBadge.textContent = "รอเริ่มงาน";
+    }
+  }
+
+  function _renderWebhookChecklist(data) {
+    _renderUrlChecklistItem(data);
+    _renderDbChecklistItem(data);
+    _renderQueueChecklistItem(data);
+    _renderWorkerChecklistItem(data);
+  }
+
+  function _updateWebhookPolling(delay) {
+    if (webhookPollInterval) {
+      clearInterval(webhookPollInterval);
+      webhookPollInterval = null;
+    }
+    if (delay && state.activeTab === "data") {
+      webhookPollInterval = setInterval(loadWebhookStatus, delay);
+    }
+  }
+
+  function _renderActiveJobProgress(activeJob, elements) {
+    elements.box.classList.remove("hidden");
+    const processed = Number(activeJob.processedCount || 0);
+    const total = Number(activeJob.totalEligible || 0);
+    const success = Number(activeJob.successCount || 0);
+    const retry = Number(activeJob.retryCount || 0);
+    const failure = Number(activeJob.failureCount || 0);
+    const confirmed = success + failure;
+
+    if (elements.title) {
+      elements.title.textContent = retry > 0 ? "กำลังประมวลผลส่งข้อมูล (พบรายการลองใหม่)... ⚠️" : "กำลังประมวลผลส่งข้อมูล...";
+    }
+    elements.count.textContent = `ส่งสำเร็จ: ${success}/${total} รายการ (สแกนคิว: ${processed}/${total})`;
+    const pct = total > 0 ? Math.min(100, Math.round((confirmed / total) * 100)) : 0;
+    elements.bar.style.width = `${pct}%`;
+    elements.bar.style.background = retry > 0 ? "var(--yellow2, #F39C12)" : "#5865F2";
+    if (elements.detail) {
+      elements.detail.textContent = `ส่งสำเร็จ: ${success} | รอลองใหม่: ${retry} | ล้มเหลว: ${failure} | ทั้งหมด: ${total}`;
+    }
+  }
+
+  function _renderCompletedStatsProgress(data, elements) {
+    elements.box.classList.remove("hidden");
+    const hasIssues = data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures";
+    if (elements.title) {
+      if (data.stats.retry > 0) {
+        elements.title.textContent = "มีรายการรอลองใหม่ตามกำหนดเวลา... ⏳";
+      } else if (hasIssues) {
+        elements.title.textContent = "ประมวลผลเสร็จสิ้น (พบข้อผิดพลาด) ⚠️";
+      } else {
+        elements.title.textContent = "ประมวลผลเสร็จสิ้นเรียบร้อยแล้ว ✅";
+      }
+    }
+    elements.count.textContent = `ส่งสำเร็จ: ${data.stats.sent} | รอลองใหม่: ${data.stats.retry} | ล้มเหลว: ${data.stats.failed}`;
+    elements.bar.style.width = "100%";
+    elements.bar.style.background = hasIssues ? "var(--yellow2, #F39C12)" : "var(--green2, #2ECC71)";
+    if (elements.detail) {
+      elements.detail.textContent = data.lastError || "ระบบทำงานในโหมด Live พร้อมส่งข้อมูลทันที";
+    }
+  }
+
+  function _renderWebhookProgress(data) {
+    const elements = {
+      box: $("webhook-progress-box"),
+      title: $("webhook-progress-title"),
+      count: $("webhook-progress-count"),
+      bar: $("webhook-progress-bar"),
+      detail: $("webhook-progress-detail")
+    };
+    if (!elements.box || !elements.count || !elements.bar) return;
+
+    if (data.activeJob) {
+      _renderActiveJobProgress(data.activeJob, elements);
+      _updateWebhookPolling(3000);
+    } else if (data.stats && (data.stats.sent > 0 || data.stats.retry > 0 || data.stats.failed > 0 || data.lastStatus === "completed_with_failures")) {
+      _renderCompletedStatsProgress(data, elements);
+      _updateWebhookPolling(data.enabled ? 10000 : null);
+    } else {
+      elements.box.classList.add("hidden");
+      _updateWebhookPolling(data.enabled ? 10000 : null);
+    }
+  }
+
+  function _renderWebhookErrorState(err) {
+    console.warn("Failed to load webhook status:", err);
+    const badge = $("webhook-status-badge");
+    if (badge) {
+      badge.className = "badge badge-danger";
+      badge.textContent = "เชื่อมต่อระบบไม่ได้";
+    }
+    const checkDbDot = $("check-icon-db");
+    const checkDbBadge = $("check-badge-db");
+    const checkDbText = $("check-text-db");
+    if (checkDbBadge && checkDbDot) {
+      checkDbDot.style.background = "var(--red2)";
+      checkDbBadge.className = "badge badge-danger";
+      checkDbBadge.textContent = "ไม่พร้อม";
+      if (checkDbText) checkDbText.textContent = "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เพื่อตรวจสอบฐานข้อมูลได้";
+    }
+    const checkQueueDot = $("check-icon-queue");
+    const checkQueueBadge = $("check-badge-queue");
+    const checkQueueText = $("check-text-queue");
+    if (checkQueueBadge && checkQueueDot) {
+      checkQueueDot.style.background = "var(--red2)";
+      checkQueueBadge.className = "badge badge-danger";
+      checkQueueBadge.textContent = "ไม่พร้อม";
+      if (checkQueueText) checkQueueText.textContent = "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เพื่อตรวจสอบคิวได้";
+    }
+    const checkWorkerDot = $("check-icon-worker");
+    const checkWorkerBadge = $("check-badge-worker");
+    const checkWorkerText = $("check-text-worker");
+    if (checkWorkerBadge && checkWorkerDot) {
+      checkWorkerDot.style.background = "var(--red2)";
+      checkWorkerBadge.className = "badge badge-danger";
+      checkWorkerBadge.textContent = "ไม่พร้อม";
+      if (checkWorkerText) checkWorkerText.textContent = "การเชื่อมต่อขัดข้อง ไม่สามารถระบุสถานะได้";
+    }
+  }
+
+  async function loadWebhookStatus() {
+    if (!state.guildId) return;
+    try {
+      const data = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/status`);
+      const input = $("webhook-url-input");
+      if (input && data.urlMasked && !input.dataset.userEditing) {
+        input.value = data.urlMasked;
+      }
+      _renderWebhookBadge(data);
+      _renderWebhookChecklist(data);
+      _renderWebhookProgress(data);
+    } catch (err) {
+      _renderWebhookErrorState(err);
+    }
+  }
+
+  async function saveWebhookUrl() {
+    const input = $("webhook-url-input");
+    const url = String(input?.value || "").trim();
+    if (!url) {
+      showToast("กรุณาระบุ Discord Webhook URL", "err");
+      return;
+    }
+    if (url.includes("***") || !input.dataset.userEditing) {
+      showToast("กรุณากรอก Discord Webhook URL ใหม่ทั้งหมดหากต้องการเปลี่ยน", "warn");
+      return;
+    }
+    const btn = $("btn-save-webhook-url");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await api(`/api/guild/${encodeURIComponent(state.guildId)}/webhook-log/url`, {
+        method: "POST",
+        body: JSON.stringify({ url })
+      });
+      showToast(res.message || "บันทึก Webhook URL สำเร็จ", "ok");
+      if (input) delete input.dataset.userEditing;
+      await loadWebhookStatus();
+    } catch (err) {
+      showToast(err.message || "บันทึก Webhook URL ไม่สำเร็จ", "err");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function executeWebhookModeSwitch({
+    mode,
+    guildId,
+    apiFn = api,
+    confirmFn = (typeof confirm !== "undefined" ? confirm : () => false),
+    showToastFn = showToast,
+    loadWebhookStatusFn = loadWebhookStatus,
+    btn = null
+  }) {
+    if (btn) btn.disabled = true;
+    try {
+      const res = await apiFn(`/api/guild/${encodeURIComponent(guildId)}/webhook-log/mode`, {
+        method: "POST",
+        body: JSON.stringify({ mode })
+      });
+      showToastFn(res?.message || "เริ่มทำงานเรียบร้อยแล้ว", "ok");
+      if (loadWebhookStatusFn) await loadWebhookStatusFn();
+      return { ok: true, forced: false, res };
+    } catch (err) {
+      const isBackfillInProgress = err.code === "backfill_in_progress" || err.status === 409 || err.data?.code === "backfill_in_progress";
+      if (isBackfillInProgress) {
+        const confirmed = confirmFn("มีงานส่งข้อมูลประวัติย้อนหลังกำลังทำงานอยู่ หากสลับโหมดจะยกเลิกการส่งย้อนหลังที่เหลือ คุณแน่ใจหรือไม่ว่าต้องการเปลี่ยน?");
+        if (confirmed) {
+          try {
+            const forceRes = await apiFn(`/api/guild/${encodeURIComponent(guildId)}/webhook-log/mode`, {
+              method: "POST",
+              body: JSON.stringify({ mode, force: true })
+            });
+            showToastFn(forceRes?.message || "สลับเป็นโหมด Live เรียบร้อยแล้ว", "ok");
+            if (loadWebhookStatusFn) await loadWebhookStatusFn();
+            return { ok: true, forced: true, res: forceRes };
+          } catch (forceErr) {
+            showToastFn(forceErr?.message || "เปลี่ยนโหมดไม่สำเร็จ", "err");
+            return { ok: false, forced: true, error: forceErr };
+          }
+        } else {
+          return { ok: false, cancelled: true };
+        }
+      }
+      showToastFn(err?.message || "เกิดข้อผิดพลาดในการเริ่มทำงาน", "err");
+      return { ok: false, error: err };
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function startWebhookMode(mode) {
+    const btn = mode === "live" ? $("btn-start-live-only") : $("btn-start-backfill-all");
+    return executeWebhookModeSwitch({
+      mode,
+      guildId: state.guildId,
+      btn
+    });
+  }
+
+  function bindWebhookControls() {
+    const input = $("webhook-url-input");
+    input?.addEventListener("input", () => {
+      if (input) input.dataset.userEditing = "true";
+    });
+    input?.addEventListener("blur", () => {
+      if (input && (!input.value || input.value.includes("***"))) {
+        delete input.dataset.userEditing;
+      }
+    });
+    $("btn-save-webhook-url")?.addEventListener("click", saveWebhookUrl);
+    $("btn-start-live-only")?.addEventListener("click", () => startWebhookMode("live"));
+    $("btn-start-backfill-all")?.addEventListener("click", () => startWebhookMode("backfill"));
+  }
+
   function bindLogsControls() {
     const prev = $("btn-logs-prev");
     const next = $("btn-logs-next");
@@ -2751,6 +3132,7 @@
     bindVerificationActions();
 
     bindMembersControls();
+    bindWebhookControls();
 
     bindModal();
     bindUtilityActions();
@@ -2760,9 +3142,20 @@
     bootInitialData();
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  }
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      fmtDuration,
+      computeOauthExpiryStatus,
+      oauthStatusRows,
+      executeWebhookModeSwitch
+    };
   }
 })();

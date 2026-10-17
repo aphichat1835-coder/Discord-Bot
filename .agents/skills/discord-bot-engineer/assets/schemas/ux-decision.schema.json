@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ux-decision",
+  "type": "object",
+  "required": ["version", "surface", "surface_contract", "panel", "panel_contract", "loading", "motion", "copy", "copy_rules", "states", "ownership"],
+  "properties": {
+    "version": {"const": 1},
+    "surface": {"type": "string"},
+    "surface_contract": {"type": "object"},
+    "panel": {"type": "string"},
+    "panel_contract": {"type": "object"},
+    "loading": {"type": "object"},
+    "motion": {"type": "object"},
+    "copy": {"type": "object", "required": ["tier", "rules", "placements", "emoji"]},
+    "copy_rules": {"type": "array"},
+    "states": {"type": "array", "items": {"type": "string"}},
+    "ownership": {"type": "object"}
+  },
+  "additionalProperties": true
+}

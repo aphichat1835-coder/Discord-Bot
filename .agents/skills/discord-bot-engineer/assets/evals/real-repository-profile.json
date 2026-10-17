@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "repository": "aphichat1835-coder/Discord-Bot",
+  "observed_branch": "main",
+  "observed_head_sha": "bcccce2d9e9f11b7deb352b8bfbbb048224dc1fe",
+  "observed_at": "2026-07-20",
+  "read_only": true,
+  "sanitized_shape": {
+    "runtime": "Node.js 24",
+    "discord_framework": "discord.js v13",
+    "services": ["Discord bot and owner system", "public/guild dashboard"],
+    "state": ["MongoDB/Mongoose", "in-memory bounded runtime maps"],
+    "domains": ["moderation", "verification", "voice/music", "dashboard", "distributed runtime"],
+    "native_checks": ["syntax checks", "memory guard checks", "Discord tests", "voice regression tests", "dashboard tests"],
+    "constraints": ["do not upgrade discord.js without explicit approval", "protected paths require explicit current-task owner approval", "preserve documented boot order"]
+  },
+  "evaluation_cases": [
+    "legacy framework compatibility without opportunistic migration",
+    "two-service impact analysis",
+    "voice/session cross-guild authorization and ID-boundary regression",
+    "dashboard UX state and narrow-screen proof",
+    "protected-path and repository-authority compliance"
+  ],
+  "limitations": ["This is a dated public read-only snapshot, not a bundled checkout.", "Re-fetch the exact branch/SHA and repository instructions before using it as current evidence.", "No protected implementation content is copied into the Skill."]
+}

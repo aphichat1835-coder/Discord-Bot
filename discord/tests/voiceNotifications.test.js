@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { createVoiceNotificationSystem, EVENTS } = require("../voiceWorker/notifications");
 const { createVoiceSnapshot, buildVoiceEventEmbed, buildVoiceTrackerEmbed } = require("../voiceWorker/dm");
-const sessionManager = require("../sessionManager");
+const sessionManager = require("../voiceWorker/sessionManager");
 
 function makeSession(id = "session-1", ownerId = "owner-1") {
     return {

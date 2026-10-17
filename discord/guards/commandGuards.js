@@ -1,4 +1,5 @@
 const { hasResolvedPermission } = require("../core/discordPermissions");
+const config = require("../config.json");
 const BLOCKED_MESSAGE_PATTERNS = [
     /discord\.gg\/\S+/gi,
     /https?:\/\/\S+\.(exe|bat|cmd|sh|ps1)/gi
@@ -42,7 +43,7 @@ function getElevatedMentionRequirement(interaction) {
     let content = "";
     if (commandName === "say") {
         content = readCommandOption(interaction, "message");
-    } else if (commandName === "announce") {
+    } else if (commandName === "embed") {
         content = readCommandOption(interaction, "content");
     }
 
@@ -63,8 +64,8 @@ async function requireElevatedMentionPermission(interaction, permissionTarget, a
     if (hasPermission(permissionTarget, "MentionEveryone")) return true;
 
     const content = actor === "bot"
-        ? "> ❌ บอทไม่มีสิทธิ์ Mention @everyone, @here หรือยศที่ไม่ได้เปิดให้ Mention"
-        : "> ⛔ คุณไม่มีสิทธิ์ Mention @everyone, @here หรือยศที่ไม่ได้เปิดให้ Mention";
+        ? `> ${config.emojis?.error || "❌"} บอทไม่มีสิทธิ์ Mention @everyone, @here หรือยศที่ไม่ได้เปิดให้ Mention`
+        : `> ${config.emojis?.no_entry || "⛔"} คุณไม่มีสิทธิ์ Mention @everyone, @here หรือยศที่ไม่ได้เปิดให้ Mention`;
     await safeReply(interaction, { content, ephemeral: true });
     return false;
 }
@@ -92,30 +93,30 @@ async function requireBotPermission(interaction, permissions, content, channel =
 
 function checkRoleHierarchy({ interaction, target, client, config }) {
     if (!target) {
-        return { ok: false, content: `> ${config.emojis.no_entry} ไม่พบเป้าหมาย!` };
+        return { ok: false, content: `> ${config?.emojis?.no_entry || "⛔"} ไม่พบเป้าหมาย!` };
     }
 
     if (target.id === interaction.user.id) {
-        return { ok: false, content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษตัวเองได้!` };
+        return { ok: false, content: `> ${config?.emojis?.warning || "⚠️"} คุณไม่สามารถทำโทษตัวเองได้!` };
     }
 
     if (target.id === client.user.id) {
-        return { ok: false, content: `> ${config.emojis.warning} คุณไม่สามารถทำโทษบอทระบบได้!` };
+        return { ok: false, content: `> ${config?.emojis?.warning || "⚠️"} คุณไม่สามารถทำโทษบอทระบบได้!` };
     }
 
     if (target.id === interaction.guild.ownerId) {
-        return { ok: false, content: `> ${config.emojis.no_entry} ไม่สามารถทำโทษเจ้าของเซิร์ฟเวอร์ได้!` };
+        return { ok: false, content: `> ${config?.emojis?.no_entry || "⛔"} ไม่สามารถทำโทษเจ้าของเซิร์ฟเวอร์ได้!` };
     }
 
     if (
         target.roles.highest.position >= interaction.member.roles.highest.position &&
         interaction.user.id !== interaction.guild.ownerId
     ) {
-        return { ok: false, content: `> ${config.emojis.no_entry} คุณไม่สามารถทำโทษผู้ที่มียศสูงกว่าหรือเท่ากับคุณได้!` };
+        return { ok: false, content: `> ${config?.emojis?.no_entry || "⛔"} คุณไม่สามารถทำโทษผู้ที่มียศสูงกว่าหรือเท่ากับคุณได้!` };
     }
 
     if (target.roles.highest.position >= interaction.guild.members.me.roles.highest.position) {
-        return { ok: false, content: `> ${config.emojis.error} ยศของบอทต่ำกว่าเป้าหมาย ไม่สามารถทำโทษได้!` };
+        return { ok: false, content: `> ${config?.emojis?.error || "❌"} ยศของบอทต่ำกว่าเป้าหมาย ไม่สามารถทำโทษได้!` };
     }
 
     return { ok: true };
@@ -128,7 +129,7 @@ function sanitizeUserMessage(msg, options = {}) {
     const bounded = msg.slice(0, maxLength);
     if (!bounded.trim()) return "";
 
-    // Admin-authored /say and /announce content must remain unchanged. Risky-link
+    // Admin-authored /say and /embed content must remain unchanged. Risky-link
     // filtering is still available for any future untrusted-input caller that
     // explicitly opts in.
     if (options.filterRiskyLinks !== true) return bounded;

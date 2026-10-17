@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"loading-contract","type":"object","required":["pattern","known_total","maintain_context","terminal_states"],"properties":{"pattern":{"type":"string"},"known_total":{"type":"boolean"},"maintain_context":{"type":"boolean"},"terminal_states":{"type":"array","items":{"type":"string"}}},"additionalProperties":true}

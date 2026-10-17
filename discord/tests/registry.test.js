@@ -16,7 +16,7 @@ test("slash command names are unique and include supported command groups", () =
 
     assert.equal(unique.size, names.length);
     assert.equal(names.length, 19);
-    assert.equal(names.at(-1), "dm-panel");
+    assert.equal(names.at(-1), "join-panel");
 
     for (const expected of [
         "voice-online",
@@ -24,29 +24,34 @@ test("slash command names are unique and include supported command groups", () =
         "ban",
         "kick",
         "timeout",
-        "rerole",
-        "voiceadmin",
+        "re-role",
+        "voice-admin",
         "say",
-        "announce",
-        "backup",
-        "restore",
+        "embed",
+        "copy-emojis",
         "setup-verify",
         "quest",
         "token-check",
-        "dm-panel"
+        "dm-panel",
+        "join-panel",
+        "user"
     ]) {
         assert.equal(unique.has(expected), true, `missing /${expected}`);
     }
+    assert.equal(unique.has("announce"), false, "retired /announce command must stay unregistered");
+    assert.equal(unique.has("backup"), false, "retired /backup command must stay unregistered");
+    assert.equal(unique.has("restore"), false, "retired /restore command must stay unregistered");
     assert.equal(unique.has("help"), false, "retired /help command must stay unregistered");
     assert.equal(unique.has("setup"), false, "retired /setup command must stay unregistered");
     assert.equal(unique.has("stats"), false, "retired /stats command must stay unregistered");
     assert.equal(unique.has("whitelist"), false, "retired /whitelist command must stay unregistered");
     assert.equal(unique.has("setup-log"), false, "retired /setup-log command must stay unregistered");
     assert.equal(unique.has("voicekickall"), false, "replaced /voicekickall command must stay unregistered");
+    assert.equal(unique.has("rerole"), false, "replaced /rerole command must stay unregistered");
 });
 
-test("rerole exposes target role and five optional role exceptions", () => {
-    const rerole = slashCommandsData.find(command => command.name === "rerole");
+test("re-role exposes target role and five optional role exceptions", () => {
+    const rerole = slashCommandsData.find(command => command.name === "re-role");
 
     assert.ok(rerole);
     assert.equal(rerole.options.length, 6);
@@ -59,6 +64,35 @@ test("rerole exposes target role and five optional role exceptions", () => {
         "role_5"
     ]);
     assert.equal(rerole.options.every(option => option.type === 8 && option.required === false), true);
+});
+
+test("quest panel exposes optional auto_daily boolean option", () => {
+    const quest = slashCommandsData.find(command => command.name === "quest");
+    assert.ok(quest);
+    assert.equal(Array.isArray(quest.options), true);
+    const panelSubcommand = quest.options.find(opt => opt.name === "panel");
+    assert.ok(panelSubcommand);
+    assert.equal(panelSubcommand.type, 1);
+    assert.equal(Array.isArray(panelSubcommand.options), true);
+    const autoDaily = panelSubcommand.options.find(opt => opt.name === "auto_daily");
+    assert.ok(autoDaily);
+    assert.equal(autoDaily.type, 5);
+    assert.equal(autoDaily.required, false);
+});
+
+test("user exposes avatar subcommand with optional member option", () => {
+    const user = slashCommandsData.find(command => command.name === "user");
+    assert.ok(user);
+    assert.equal(Array.isArray(user.options), true);
+    const avatarSubcommand = user.options.find(opt => opt.name === "avatar");
+    assert.ok(avatarSubcommand);
+    assert.equal(avatarSubcommand.type, 1);
+    assert.equal(avatarSubcommand.required, false);
+    assert.equal(Array.isArray(avatarSubcommand.options), true);
+    const memberOption = avatarSubcommand.options.find(opt => opt.name === "member");
+    assert.ok(memberOption);
+    assert.equal(memberOption.type, 6);
+    assert.equal(memberOption.required, false);
 });
 
 test("slash command definitions have stable required shape", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
@@ -81,21 +115,43 @@ test("slash command definitions have stable required shape", () => { // NOSONAR 
     }
 });
 
-test("announce sends raw mention content without an extra permission toggle", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const announce = slashCommandsData.find(command => command.name === "announce");
-    const allowMentions = announce.options.find(option => option.name === "allow_mentions");
-    const content = announce.options.find(option => option.name === "content");
+test("embed command defines subcommand create with standard options and thai descriptions", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const embed = slashCommandsData.find(command => command.name === "embed");
+    assert.ok(embed, "missing /embed command in registry");
+    assert.equal(embed.description, "ระบบสร้างข้อความประกาศแบบ Embed");
 
-    assert.equal(allowMentions, undefined);
-    assert.match(content.description, /@everyone/);
-});
+    const create = embed.options?.find(option => option.name === "create");
+    assert.ok(create, "missing /embed create subcommand");
+    assert.equal(create.type, 1, "subcommand type must be 1");
+    assert.equal(create.description, "สร้างและส่งข้อความ Embed สำหรับประกาศ");
 
-test("restore exposes dry-run option", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
-    const restore = slashCommandsData.find(command => command.name === "restore");
-    const dryRun = restore.options.find(option => option.name === "dry_run");
+    const optionNames = create.options.map(opt => opt.name);
+    const expectedOrder = [
+        "description", "title", "channel", "content", "color",
+        "image", "thumbnail", "footer", "url", "timestamp",
+        "button_label", "button_url"
+    ];
+    assert.deepEqual(optionNames, expectedOrder);
 
-    assert.equal(dryRun.type, 5);
-    assert.equal(dryRun.required, false);
+    const descOpt = create.options.find(opt => opt.name === "description");
+    assert.equal(descOpt.required, true);
+    assert.equal(descOpt.type, 3);
+    assert.equal(descOpt.max_length, 4096);
+    assert.equal(descOpt.description, "เนื้อหาหลักของ Embed รองรับ Markdown และขึ้นบรรทัดใหม่");
+
+    // Verify removed options
+    assert.equal(create.options.find(opt => opt.name === "message"), undefined);
+    assert.equal(create.options.find(opt => opt.name === "button_text"), undefined);
+    assert.equal(create.options.find(opt => opt.name === "author_name"), undefined);
+    assert.equal(create.options.find(opt => opt.name === "author_icon"), undefined);
+    assert.equal(create.options.find(opt => opt.name === "footer_icon"), undefined);
+
+    // Verify all other options are optional (required !== true)
+    for (const opt of create.options) {
+        if (opt.name !== "description") {
+            assert.notEqual(opt.required, true, `${opt.name} must be optional`);
+        }
+    }
 });
 
 test("slash command registry validation rejects empty or malformed payloads", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
