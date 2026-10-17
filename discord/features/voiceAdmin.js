@@ -1,11 +1,11 @@
 "use strict";
 
-const mongoose = require("mongoose");
 const { ActionRowBuilder, AuditLogEvent, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, ChannelType, EmbedBuilder, PermissionFlagsBits } = require("discord.js");
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const { sendWebhookEvent } = require("../core/webhooks");
+const VoiceAdminRepository = require("../../database/sqlite/repositories/core/VoiceAdminRepository");
 
 const ACTION_WORKER_LIMIT = 8;
 const GLOBAL_ACTION_WORKER_LIMIT = 12;
@@ -25,37 +25,118 @@ const IDS = Object.freeze({
     UNLOCK_DEAF: "voiceadmin:unlock-deaf", REFRESH: "voiceadmin:refresh", MOVE: "voiceadmin:move"
 });
 
-const voiceAdminLockSchema = new mongoose.Schema({
-    guildId: { type: String, required: true, index: true },
-    userId: { type: String, required: true, index: true },
-    muteLocked: { type: Boolean, default: false },
-    deafLocked: { type: Boolean, default: false },
-    // Keep these two fields for records made by the first /voiceadmin release.
-    lockedBy: { type: String, default: null },
-    updatedAt: { type: Number, default: Date.now },
-    muteLockedBy: { type: String, default: null },
-    muteLockedAt: { type: Number, default: null },
-    muteVersion: { type: String, default: null },
-    muteOwnerForced: { type: Boolean, default: false },
-    deafLockedBy: { type: String, default: null },
-    deafLockedAt: { type: Number, default: null },
-    deafVersion: { type: String, default: null }
-}, { versionKey: false });
-voiceAdminLockSchema.index({ guildId: 1, userId: 1 }, { unique: true });
+let defaultRepo = null;
+function getRepository() {
+    if (!defaultRepo) defaultRepo = new VoiceAdminRepository();
+    return defaultRepo;
+}
+function setRepository(repo) {
+    defaultRepo = repo;
+}
 
-const voiceAdminNoticeSchema = new mongoose.Schema({
-    guildId: { type: String, required: true, index: true },
-    actorId: { type: String, required: true, index: true },
-    targetId: { type: String, required: true, index: true },
-    channelId: { type: String, required: true },
-    messageId: { type: String, required: true },
-    notifiedAt: { type: Date, required: true }
-}, { versionKey: false });
-voiceAdminNoticeSchema.index({ guildId: 1, actorId: 1, targetId: 1 }, { unique: true });
-voiceAdminNoticeSchema.index({ notifiedAt: 1 }, { expireAfterSeconds: 86400 });
+function _adaptLockWrite(repo, filter, setData) {
+    const isMute = setData.muteLocked === true;
+    const type = isMute ? "mute" : "deaf";
+    const actorId = isMute ? setData.muteLockedBy : setData.deafLockedBy;
+    const expectedVersion = isMute ? filter?.muteVersion : filter?.deafVersion;
+    const ownerForced = isMute && setData.muteOwnerForced === true;
+    const lockedAt = isMute ? setData.muteLockedAt : setData.deafLockedAt;
+    const version = isMute ? setData.muteVersion : setData.deafVersion;
+    const now = setData.updatedAt || Date.now();
 
-const VoiceAdminLock = mongoose.models.VoiceAdminLock || mongoose.model("VoiceAdminLock", voiceAdminLockSchema);
-const VoiceAdminNotice = mongoose.models.VoiceAdminNotice || mongoose.model("VoiceAdminNotice", voiceAdminNoticeSchema);
+    return repo.writeLock({
+        guildId: filter?.guildId,
+        userId: filter?.userId,
+        type,
+        actorId,
+        expectedVersion,
+        ownerForced,
+        lockedAt,
+        version,
+        now
+    });
+}
+
+function _adaptClearBoth(repo, filter, setData) {
+    const expected = (filter?.muteVersion !== undefined || filter?.deafVersion !== undefined)
+        ? { mute: filter.muteVersion, deaf: filter.deafVersion }
+        : undefined;
+    const versions = { mute: setData.muteVersion, deaf: setData.deafVersion };
+    const now = setData.updatedAt || Date.now();
+    return repo.clearBothLocks(filter?.guildId, filter?.userId, expected, versions, now);
+}
+
+function _adaptClearField(repo, filter, setData) {
+    const isMute = setData.muteLocked === false;
+    const type = isMute ? "mute" : "deaf";
+    const expectedVersion = isMute ? filter?.muteVersion : filter?.deafVersion;
+    const newVersion = isMute ? setData.muteVersion : setData.deafVersion;
+    const now = setData.updatedAt || Date.now();
+    return repo.clearLockField(filter?.guildId, filter?.userId, type, expectedVersion, newVersion, now);
+}
+
+const defaultLockAdapter = {
+    updateOne(filter, update, _options) {
+        const repo = getRepository();
+        const setData = update?.$set || update || {};
+        if (setData.muteLocked === true || setData.deafLocked === true) {
+            return Promise.resolve(_adaptLockWrite(repo, filter, setData));
+        }
+        if (setData.muteLocked === false && setData.deafLocked === false) {
+            return Promise.resolve(_adaptClearBoth(repo, filter, setData));
+        }
+        if (setData.muteLocked === false || setData.deafLocked === false) {
+            return Promise.resolve(_adaptClearField(repo, filter, setData));
+        }
+        return Promise.resolve({ acknowledged: true, matchedCount: 0, changes: 0 });
+    },
+    deleteOne(filter) {
+        const repo = getRepository();
+        const expectedVersion = filter?.muteVersion || filter?.deafVersion || null;
+        const type = filter?.deafVersion ? "deaf" : "mute";
+        return Promise.resolve(repo.deleteLock(filter?.guildId, filter?.userId, expectedVersion, type));
+    },
+    deleteMany(filter) {
+        const repo = getRepository();
+        return Promise.resolve(repo.deleteGuildLocks(filter?.guildId));
+    },
+    find() {
+        return {
+            lean: () => {
+                const repo = getRepository();
+                return Promise.resolve(repo.listActiveLocks());
+            }
+        };
+    }
+};
+
+const defaultNoticeAdapter = {
+    updateOne(filter, update, _options) {
+        const repo = getRepository();
+        const notice = { ...filter, ...(update?.$set || update) };
+        return Promise.resolve(repo.upsertNotice(notice));
+    },
+    deleteMany(filter) {
+        const repo = getRepository();
+        if (filter?.$or) {
+            const userId = filter.$or[0]?.actorId || filter.$or[1]?.targetId;
+            return Promise.resolve(repo.deleteMemberNotices(filter?.guildId, userId));
+        }
+        return Promise.resolve(repo.deleteGuildNotices(filter?.guildId));
+    },
+    find() {
+        return {
+            lean: () => {
+                const repo = getRepository();
+                return Promise.resolve(repo.listRecentNotices(Date.now() - NOTICE_WINDOW_MS));
+            }
+        };
+    }
+};
+
+const VoiceAdminLock = { ...defaultLockAdapter };
+const VoiceAdminNotice = { ...defaultNoticeAdapter };
+
 const locksByGuild = new Map();
 const notices = new Map();
 const activeGuildActions = new Map();
@@ -133,6 +214,46 @@ function makeError(code, operation, cause = null) {
     error.code = code; error.operation = operation; error.cause = cause;
     return error;
 }
+function isPermanentDiscordError(error) {
+    if (!error) return false;
+    const code = Number(error.code);
+    const status = Number(error.status || error.httpStatus);
+    if ([50013, 10007, 10011, 10003, 50001, 40001].includes(code)) return true;
+    if (status === 403 || status === 404) return true;
+    if (status === 400 && code !== 40002) return true;
+    return false;
+}
+const KNOWN_VOICE_ADMIN_ERRORS = Object.freeze({
+    VOICE_ADMIN_MEMBER_TIMEOUT: { category: "TIMEOUT", code: "MEMBER_TIMEOUT", reason: "การประมวลผลสมาชิกหมดเวลา", stage: "bulk_execution" },
+    VOICE_ADMIN_SQLITE_PERSISTENCE_FAILED: { category: "DATABASE", code: "SQLITE_PERSISTENCE_FAILED", reason: "บันทึกฐานข้อมูล SQLite ล้มเหลว", stage: "persistence" },
+    VOICE_ADMIN_PERSISTENCE_FAILED: { category: "DATABASE", code: "SQLITE_PERSISTENCE_FAILED", reason: "บันทึกฐานข้อมูล SQLite ล้มเหลว", stage: "persistence" },
+    VOICE_ADMIN_SQLITE_LOCK_CONFLICT: { category: "LOCK", code: "SQLITE_LOCK_CONFLICT", reason: "สถานะถูกเปลี่ยนโดยงานอื่น", stage: "lock" },
+    VOICE_ADMIN_LOCK_CONFLICT: { category: "LOCK", code: "SQLITE_LOCK_CONFLICT", reason: "สถานะถูกเปลี่ยนโดยงานอื่น", stage: "lock" },
+    VOICE_ADMIN_OWNER_LOCKED: { category: "PERMISSION", code: "OWNER_LOCKED", reason: "ติดสถานะล็อกระดับสูงสุด (Owner Locked)", stage: "authorization" }
+});
+
+function classifyVoiceAdminError(error) {
+    if (!error) return { category: "UNKNOWN", code: "UNKNOWN_ERROR", reason: "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ", stage: "unknown" };
+    const code = String(error.code || error.name || "");
+    if (KNOWN_VOICE_ADMIN_ERRORS[code]) return KNOWN_VOICE_ADMIN_ERRORS[code];
+
+    const status = Number(error.status || error.httpStatus || 0);
+    const discordCode = Number(error.code);
+
+    if (code === "VOICE_ADMIN_BOT_PERMISSION_MISSING" || discordCode === 50013 || status === 403) {
+        return { category: "PERMISSION", code: "PERMISSION_MISSING", reason: "บอตไม่มีสิทธิ์ที่จำเป็น", stage: "discord_api" };
+    }
+    if (discordCode === 10007) {
+        return { category: "MEMBER", code: "UNKNOWN_MEMBER", reason: "ไม่พบสมาชิกในเซิร์ฟเวอร์", stage: "discord_api" };
+    }
+    if (status === 429) {
+        return { category: "RATE_LIMIT", code: "RATE_LIMITED", reason: "ติด Rate Limit จาก Discord API", stage: "discord_api" };
+    }
+    if (["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT"].includes(code) || (status >= 500 && status < 600)) {
+        return { category: "NETWORK", code: "NETWORK_ERROR", reason: "ข้อผิดพลาดเครือข่ายชั่วคราว", stage: "network" };
+    }
+    return { category: "GENERAL", code: code || "API_ERROR", reason: "การเรียก Discord API ล้มเหลว", stage: "execution" };
+}
 function trimOldestEntries(map, maxSize) {
     while (map.size > maxSize) map.delete(map.keys().next().value);
 }
@@ -193,12 +314,12 @@ async function reportEnforcementFailure(operation, context = {}) {
 function operationWasAcknowledged(result, { allowUpsert = false, allowDeleteZero = false } = {}) {
     if (result?.acknowledged !== true) return false;
     if (allowDeleteZero) return true;
-    return Number(result.matchedCount || 0) > 0 || (allowUpsert && Number(result.upsertedCount || 0) > 0);
+    return Number(result.matchedCount || 0) > 0 || (allowUpsert && Number(result.upsertedCount || 0) > 0) || Number(result.changes || 0) > 0;
 }
 async function initialize() {
     const [lockDocs, noticeDocs] = await Promise.all([
-        VoiceAdminLock.find({ $or: [{ muteLocked: true }, { deafLocked: true }] }).lean(),
-        VoiceAdminNotice.find({ notifiedAt: { $gte: new Date(Date.now() - NOTICE_WINDOW_MS) } }).lean()
+        VoiceAdminLock.find().lean(),
+        VoiceAdminNotice.find().lean()
     ]);
     locksByGuild.clear(); notices.clear(); retiredGuilds.clear(); retiredMembers.clear();
     for (const lock of lockDocs) setCachedLock(lock);
@@ -225,8 +346,6 @@ function buildLockWrite(guildId, userId, type, actorId, expectedVersion, options
             lockedBy: String(actorId), updatedAt: now
         }
     };
-    // Keep insert-only defaults disjoint from the field that this write enables.
-    // This prevents MongoDB from rejecting the update as an overlapping path.
     if (upsert) {
         update.$setOnInsert = type === "mute"
             ? { guildId: String(guildId), userId: String(userId), deafLocked: false }
@@ -284,24 +403,27 @@ async function clearLockField(guildId, userId, type, expectedVersion = undefined
     const field = fieldFor(type); const meta = metadataFor(type); const version = createVersion(); const now = Date.now();
     const filter = { guildId: String(guildId), userId: String(userId) };
     if (expectedVersion !== undefined) filter[meta.version] = expectedVersion;
-    const previous = getLock(guildId, userId) || { guildId, userId, muteLocked: false, deafLocked: false };
-    let result;
-    try {
-        result = await VoiceAdminLock.updateOne(filter, { $set: {
+    const update = {
+        $set: {
             [field]: false, [meta.by]: null, [meta.at]: null, [meta.version]: version,
             ...(type === "mute" ? { muteOwnerForced: false } : {}),
             updatedAt: now
-        } });
+        }
+    };
+    let result;
+    try {
+        result = await VoiceAdminLock.updateOne(filter, update);
+    } catch (error) {
+        await reportPersistenceFailure("clear_lock", { guildId, userId, type, error });
+        throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_lock", error);
     }
-    catch (error) { await reportPersistenceFailure("clear_lock", { guildId, userId, type, error }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_lock", error); }
     if (!operationWasAcknowledged(result)) {
         if (expectedVersion !== undefined) throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "clear_lock");
-        await reportPersistenceFailure("clear_lock", { guildId, userId, type }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_lock");
+        await reportPersistenceFailure("clear_lock", { guildId, userId, type });
+        throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_lock");
     }
+    const previous = getLock(guildId, userId) || { guildId, userId, muteLocked: false, deafLocked: false };
     const current = getLock(guildId, userId);
-    // A newer operation has already advanced the in-memory version while this
-    // MongoDB write was in flight. Do not replace that newer cache entry or
-    // issue a Discord state change based on this stale clear.
     if (expectedVersion !== undefined && current?.[meta.version] !== expectedVersion) {
         throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "clear_lock");
     }
@@ -314,29 +436,76 @@ async function clearLockField(guildId, userId, type, expectedVersion = undefined
         })
     };
 }
+function _resolveExpectedClearBoth(previous, expectedVersions) {
+    if (expectedVersions !== undefined || !previous) return expectedVersions;
+    return {
+        mute: previous.muteLocked ? previous.muteVersion : undefined,
+        deaf: previous.deafLocked ? previous.deafVersion : undefined
+    };
+}
+
+function _buildClearBothFilter(guildId, userId, expected) {
+    const filter = { guildId: String(guildId), userId: String(userId) };
+    if (expected?.mute !== undefined) filter.muteVersion = expected.mute;
+    if (expected?.deaf !== undefined) filter.deafVersion = expected.deaf;
+    return filter;
+}
+
+function _hasClearBothConflict(previous, expected, current) {
+    if (!expected) return false;
+    const muteConflict = (previous ? previous.muteLocked : expected.mute !== undefined) && current?.muteVersion !== expected.mute;
+    const deafConflict = (previous ? previous.deafLocked : expected.deaf !== undefined) && current?.deafVersion !== expected.deaf;
+    return Boolean(muteConflict || deafConflict);
+}
+
 async function clearBothLocks(guildId, userId, expectedVersions = undefined) {
     const previous = getLock(guildId, userId);
-    const expected = expectedVersions === undefined && previous
-        ? { mute: previous.muteVersion, deaf: previous.deafVersion }
-        : expectedVersions;
-    const now = Date.now(); const versions = { mute: createVersion(), deaf: createVersion() };
-    const filter = { guildId: String(guildId), userId: String(userId) };
-    if (expected) {
-        filter.muteVersion = expected.mute ?? null;
-        filter.deafVersion = expected.deaf ?? null;
-    }
+    const expected = _resolveExpectedClearBoth(previous, expectedVersions);
+    const now = Date.now();
+    const versions = { mute: createVersion(), deaf: createVersion() };
+    const filter = _buildClearBothFilter(guildId, userId, expected);
+    const update = {
+        $set: {
+            muteLocked: false,
+            deafLocked: false,
+            muteLockedBy: null,
+            deafLockedBy: null,
+            muteLockedAt: null,
+            deafLockedAt: null,
+            muteVersion: versions.mute,
+            deafVersion: versions.deaf,
+            muteOwnerForced: false,
+            updatedAt: now
+        }
+    };
     let result;
-    try { result = await VoiceAdminLock.updateOne(filter, { $set: { muteLocked: false, deafLocked: false, muteLockedBy: null, deafLockedBy: null, muteLockedAt: null, deafLockedAt: null, muteVersion: versions.mute, deafVersion: versions.deaf, muteOwnerForced: false, updatedAt: now } }); }
-    catch (error) { await reportPersistenceFailure("clear_both", { guildId, userId, type: "both", error }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_both", error); }
+    try {
+        result = await VoiceAdminLock.updateOne(filter, update);
+    } catch (error) {
+        await reportPersistenceFailure("clear_both", { guildId, userId, type: "both", error });
+        throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_both", error);
+    }
     if (!operationWasAcknowledged(result)) {
         if (expected) throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "clear_both");
-        await reportPersistenceFailure("clear_both", { guildId, userId, type: "both" }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_both");
+        await reportPersistenceFailure("clear_both", { guildId, userId, type: "both" });
+        throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "clear_both");
     }
     const current = getLock(guildId, userId);
-    if (expected && (current?.muteVersion !== expected.mute || current?.deafVersion !== expected.deaf)) {
+    if (_hasClearBothConflict(previous, expected, current)) {
         throw makeError("VOICE_ADMIN_LOCK_CONFLICT", "clear_both");
     }
-    return { versions, previous, lock: setCachedLock({ ...(previous || { guildId, userId }), muteLocked: false, deafLocked: false, muteVersion: versions.mute, deafVersion: versions.deaf, updatedAt: now }) };
+    return {
+        versions,
+        previous,
+        lock: setCachedLock({
+            ...(previous || { guildId, userId }),
+            muteLocked: false,
+            deafLocked: false,
+            muteVersion: versions.mute,
+            deafVersion: versions.deaf,
+            updatedAt: now
+        })
+    };
 }
 function cancelEnforcement(guildId, userId, type) {
     const key = pendingKey(guildId, userId, type);
@@ -410,7 +579,12 @@ function cancelGuildEnforcement(guildId) {
 }
 async function deleteGuildRecords(guildId) {
     let result;
-    try { result = await Promise.all([VoiceAdminLock.deleteMany({ guildId }), VoiceAdminNotice.deleteMany({ guildId })]); }
+    try {
+        result = await Promise.all([
+            VoiceAdminLock.deleteMany({ guildId: String(guildId) }),
+            VoiceAdminNotice.deleteMany({ guildId: String(guildId) })
+        ]);
+    }
     catch (error) { await reportPersistenceFailure("guild_cleanup", { guildId, error }); throw makeError("VOICE_ADMIN_PERSISTENCE_FAILED", "guild_cleanup", error); }
     if (!result.every(item => operationWasAcknowledged(item, { allowDeleteZero: true }))) {
         await reportPersistenceFailure("guild_cleanup", { guildId });
@@ -497,7 +671,7 @@ async function withDeadline(promise, remainingMs) {
     try { return await Promise.race([Promise.resolve(promise), timeout]); }
     finally { clearTimeout(timer); Promise.resolve(promise).catch(() => {}); }
 }
-function newResult(members) { return { targeted: members.length, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0, failedMembers: [], durationMs: 0 }; }
+function newResult(members) { return { targeted: members.length, succeeded: 0, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0, failedMembers: [], failedDetails: [], durationMs: 0 }; }
 function createActionController() { return { cancelled: false, sleeps: new Set(), permitWaiters: new Set(), promise: null }; }
 function createBulkRunState(members, controller, options = {}) {
     const requestedWorkers = Number(options.workerLimit || ACTION_WORKER_LIMIT);
@@ -518,8 +692,25 @@ function recordBulkOutcome(result, member, outcome, error = null) {
         else result.succeeded++;
         return;
     }
-    result.failed++; result.failedMembers.push(String(member.id));
-    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
+    const memberId = String(member?.id || "unknown");
+    if (error.code === "VOICE_ADMIN_MEMBER_TIMEOUT") {
+        result.timedOut++;
+        const classified = classifyVoiceAdminError(error);
+        result.failedDetails.push({ userId: memberId, ...classified });
+        return;
+    }
+    result.failed++;
+    result.failedMembers.push(memberId);
+    if (error.code === "VOICE_ADMIN_SQLITE_PERSISTENCE_FAILED" || error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") result.persistenceFailed++;
+
+    const classified = classifyVoiceAdminError(error);
+    result.failedDetails.push({
+        userId: memberId,
+        category: classified.category,
+        code: classified.code,
+        reason: classified.reason,
+        stage: classified.stage
+    });
 }
 async function runBulkWorker(state, members, runOne) {
     while (true) {
@@ -543,10 +734,22 @@ async function runBulkUnsafe(members, runOne, controller = null, options = {}) {
     state.result.durationMs = Math.max(0, Date.now() - state.startedAt);
     return state.result;
 }
+function formatDuration(durationMs) {
+    const ms = Math.max(0, Number(durationMs || 0));
+    const totalSeconds = ms / 1000;
+    if (totalSeconds < 60) {
+        return `${totalSeconds.toFixed(1)} วินาที`;
+    }
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = (totalSeconds % 60).toFixed(1);
+    return `${mins} นาที ${secs} วินาที`;
+}
+
 function buildResult(action, result) {
     const skipped = result.skipped ? ` | ออกจากห้องก่อนถึงคิว ${result.skipped} คน` : "";
     const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
-    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}`;
+    const duration = typeof result?.durationMs === "number" ? ` | ใช้เวลา ${formatDuration(result.durationMs)}` : "";
+    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}${duration}`;
 }
 function _isOperationCompleteSuccess(targeted, succeeded, incomplete) {
     return targeted > 0 && succeeded === targeted && incomplete === 0;
@@ -645,7 +848,13 @@ async function ensureBotPermission(guild, source, action, destination = null) {
 async function setVoice(member, type, enabled, reason) { return type === "mute" ? member.voice.setMute(enabled, reason) : member.voice.setDeaf(enabled, reason); }
 async function setVoiceBoth(member, enabled, reason) {
     if (typeof member.edit === "function") return member.edit({ mute: enabled, deaf: enabled, reason });
-    await member.voice.setMute(enabled, reason); return member.voice.setDeaf(enabled, reason);
+    await member.voice.setMute(enabled, reason);
+    try {
+        return await member.voice.setDeaf(enabled, reason);
+    } catch (deafErr) {
+        deafErr.muteCompleted = true;
+        throw deafErr;
+    }
 }
 async function restoreLockSnapshot(guildId, userId, type, previous, expectedVersion) {
     const field = fieldFor(type);
@@ -676,12 +885,17 @@ async function lockVoiceState(guild, members, type, actorId, options = {}) {
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
         if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
         const ownerForced = type === "mute" && options.ownerForced === true;
-        if (isAdministrator(member, guild) && !ownerForced) return setVoice(member, type, true, "voiceadmin temporary lock");
+        const alreadyInState = type === "mute" ? member?.voice?.serverMute === true : member?.voice?.serverDeaf === true;
+        if (isAdministrator(member, guild) && !ownerForced) {
+            if (alreadyInState) return;
+            return setVoice(member, type, true, "voiceadmin temporary lock");
+        }
         const written = await writeLock(guild.id, member.id, type, actorId, undefined, { ownerForced });
         if (!isStillInSource(member, options.source)) {
             await clearLockField(guild.id, member.id, type, written.version);
             return BULK_SKIPPED;
         }
+        if (alreadyInState) return;
         try { await setVoice(member, type, true, "voiceadmin lock"); }
         catch (error) {
             try { await clearLockField(guild.id, member.id, type, written.version); }
@@ -700,6 +914,8 @@ async function unlockVoiceState(guild, members, type, options = {}) {
             if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
             return BULK_SKIPPED;
         }
+        const alreadyOpen = type === "mute" ? member?.voice?.serverMute === false : member?.voice?.serverDeaf === false;
+        if (alreadyOpen) return;
         try { await setVoice(member, type, false, "voiceadmin unlock"); }
         catch (error) {
             if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
@@ -716,9 +932,16 @@ async function unlockBoth(guild, members, options = {}) {
             if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
             return BULK_SKIPPED;
         }
+        if (member?.voice?.serverMute === false && member?.voice?.serverDeaf === false) return;
         try { await setVoiceBoth(member, false, "voiceadmin unlock all"); }
         catch (error) {
-            if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
+            if (cleared) {
+                if (error?.muteCompleted) {
+                    await restoreLockSnapshot(guild.id, member.id, "deaf", previous, cleared.versions?.deaf);
+                } else {
+                    await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
+                }
+            }
             throw error;
         }
     }, controller));
@@ -728,6 +951,7 @@ async function disconnectMembers(guild, sourceOrMembers, maybeMembers = null) {
     const members = Array.isArray(sourceOrMembers) ? sourceOrMembers : maybeMembers;
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => {
         if (!isStillInSource(member, source)) return BULK_SKIPPED;
+        if (!member?.voice?.channelId && !member?.voice?.channel) return BULK_SKIPPED;
         return member.voice.disconnect("voiceadmin disconnect");
     }, controller));
 }
@@ -735,6 +959,8 @@ async function moveMembers(guild, source, destination, members) {
     await ensureBotPermission(guild, source, "move", destination);
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => {
         if (!isStillInSource(member, source)) return BULK_SKIPPED;
+        const currentChannelId = member?.voice?.channelId || member?.voice?.channel?.id;
+        if (currentChannelId && String(currentChannelId) === String(destination?.id)) return;
         return member.voice.setChannel(destination, "voiceadmin move");
     }, controller));
 }
@@ -822,8 +1048,8 @@ function describePanelActionFailure(error) {
     if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
     if (error.message?.startsWith("VOICE_ADMIN_ACCESS:")) return error.message.slice("VOICE_ADMIN_ACCESS:".length);
     if (error.code === "VOICE_ADMIN_DESTINATION_INVALID") return "ห้องปลายทางไม่ถูกต้องหรือบอตเข้าไม่ได้";
-    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "บันทึกสถานะไม่สำเร็จ กรุณาลองใหม่";
-    if (error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
+    if (error.code === "VOICE_ADMIN_SQLITE_PERSISTENCE_FAILED" || error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "บันทึกสถานะไม่สำเร็จ กรุณาลองใหม่";
+    if (error.code === "VOICE_ADMIN_SQLITE_LOCK_CONFLICT" || error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_STOPPING") return "บอตกำลังปิดระบบ ลองใหม่หลังระบบพร้อม";
     if (error.code === "VOICE_ADMIN_NOT_INITIALIZED") return "ระบบ Voice Admin ยังไม่พร้อม";
     if (error.code === "VOICE_ADMIN_BOT_PERMISSION_MISSING") return describeBotPermissionMissing(error);
@@ -875,6 +1101,20 @@ function resultColor(result) {
     return config.system?.themeColors?.error || "#ED4245";
 }
 
+function formatFailureReasons(failedDetails) {
+    if (!Array.isArray(failedDetails) || failedDetails.length === 0) return [];
+    const counts = new Map();
+    for (const detail of failedDetails) {
+        const reason = detail?.reason || "ข้อผิดพลาดที่ไม่ทราบสาเหตุ";
+        counts.set(reason, (counts.get(reason) || 0) + 1);
+    }
+    const lines = [];
+    for (const [reason, count] of counts.entries()) {
+        lines.push(`• ${reason}: **${count}** คน`);
+    }
+    return lines;
+}
+
 function buildSecretResultEmbed(command, result, guild = null) {
     const isFullSuccess = isResultFullSuccess(result);
     const color = resultColor(result);
@@ -900,6 +1140,14 @@ function buildSecretResultEmbed(command, result, guild = null) {
     if (result.failed > 0) lines.push(`• ${errorEmoji} ไม่สำเร็จ: **${result.failed}** คน`);
     if (result.skipped > 0) lines.push(`• ออกจากห้องก่อนถึงคิว: **${result.skipped}** คน`);
     if (result.timedOut > 0) lines.push(`• ${loadingEmoji} หมดเวลา: **${result.timedOut}** คน`);
+    if (typeof result?.durationMs === "number") {
+        lines.push(`• ⏱️ ใช้เวลาดำเนินการ: **${formatDuration(result.durationMs)}**`);
+    }
+
+    const failureReasons = formatFailureReasons(result.failedDetails);
+    if (failureReasons.length > 0) {
+        lines.push("\n**สาเหตุข้อผิดพลาด:**", ...failureReasons);
+    }
 
     const embed = new EmbedBuilder()
         .setColor(color)
@@ -971,8 +1219,6 @@ async function handleSecretMessage(message) {
     const prefix = getSecretCommandPrefix(String(message?.content || "").trim());
     if (!prefix) return false;
 
-    await message.delete?.().catch(() => {});
-
     const parsed = parseSecretCommand(message.content);
     if (!parsed || parsed.invalid) return true;
     if (!isVoiceChannel(message.channel)) return true;
@@ -982,30 +1228,40 @@ async function handleSecretMessage(message) {
         excludeId: parsed.includeAdministrators ? message.author.id : null
     });
 
-    const pendingMessage = await sendSecretMessage(message, {
+    const pendingPromise = sendSecretMessage(message, {
         content: `> ${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`
-    });
+    }).catch(() => null);
 
     try {
         const result = await runSecretVoiceCommand(message, parsed, members);
-        await pendingMessage?.delete?.().catch(() => {});
-        await sendSecretMessage(message, {
-            embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)]
-        });
+        const pendingMessage = await pendingPromise;
+        const payload = { embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)] };
+        if (typeof pendingMessage?.edit === "function") {
+            await pendingMessage.edit({ content: null, ...payload }).catch(async () => {
+                await sendSecretMessage(message, payload);
+            });
+        } else {
+            await sendSecretMessage(message, payload);
+        }
     } catch (error) {
-        await pendingMessage?.delete?.().catch(() => {});
         const detail = describeSecretCommandFailure(error);
-        await sendSecretMessage(message, {
-            embeds: [buildSecretErrorEmbed(detail, message.guild)]
-        });
+        const pendingMessage = await pendingPromise;
+        const payload = { embeds: [buildSecretErrorEmbed(detail, message.guild)] };
+        if (typeof pendingMessage?.edit === "function") {
+            await pendingMessage.edit({ content: null, ...payload }).catch(async () => {
+                await sendSecretMessage(message, payload);
+            });
+        } else {
+            await sendSecretMessage(message, payload);
+        }
     }
     return true;
 }
 function describeSecretCommandFailure(error) {
     if (error.code === "VOICE_ADMIN_ACTION_IN_PROGRESS") return "มีงานจัดการห้องนี้กำลังทำงานอยู่";
     if (error.code === "VOICE_ADMIN_DESTINATION_INVALID") return "ID ห้องปลายทางไม่ถูกต้อง, เป็นห้องเดิม, ไม่ใช่ห้องเสียง หรือบอตเข้าไม่ได้";
-    if (error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "บันทึกสถานะไม่สำเร็จ กรุณาลองใหม่";
-    if (error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
+    if (error.code === "VOICE_ADMIN_SQLITE_PERSISTENCE_FAILED" || error.code === "VOICE_ADMIN_PERSISTENCE_FAILED") return "บันทึกสถานะไม่สำเร็จ กรุณาลองใหม่";
+    if (error.code === "VOICE_ADMIN_SQLITE_LOCK_CONFLICT" || error.code === "VOICE_ADMIN_LOCK_CONFLICT") return "สถานะถูกเปลี่ยนโดยงานอื่น กรุณาลองใหม่";
     if (error.code === "VOICE_ADMIN_STOPPING") return "บอตกำลังปิดระบบ ลองใหม่หลังระบบพร้อม";
     if (error.code === "VOICE_ADMIN_NOT_INITIALIZED") return "ระบบ Voice Admin ยังไม่พร้อม";
     if (error.code === "VOICE_ADMIN_BOT_PERMISSION_MISSING") return describeBotPermissionMissing(error);
@@ -1080,6 +1336,7 @@ async function enforceLock(guild, userId, type, expectedVersion = undefined, opt
             const result = await enforceLockOnce(guild, userId, type, requestedVersion);
             if (result.complete) return result.enforced;
             lastError = result.error || lastError;
+            if (isPermanentDiscordError(lastError)) break;
         }
         if (!stopping && !controller.cancelled) {
             await reportEnforcementFailure("lock_enforcement", { guildId: guild.id, userId, type, code: lastError?.code || lastError?.name || "discord_api_failed" });
@@ -1271,8 +1528,9 @@ function handleAuditLogEntry(entry, guild, client) {
         if (matched) { clearPending(guild.id, entry.targetId, type); processExternalUnlock(guild, entry.targetId, type, matched, client, pending).catch(() => {}); }
     }
 }
-function handleMemberUpdate(_oldMember, member) {
+function handleMemberUpdate(oldMember, member) {
     if (!initialized || stopping || !member?.guild || !isAdministrator(member, member.guild)) return;
+    if (oldMember && isAdministrator(oldMember, member.guild)) return;
     const lock = getLock(member.guild.id, member.id);
     if (!lock) return;
     if (!lock.muteOwnerForced) {
@@ -1387,7 +1645,9 @@ module.exports = {
         parseSecretCommand, sourceMembers, isVoiceChannel, isStillInSource, buildResult, resultEmoji, buildPersistenceFailureContext, getLock, setCachedLock, lockKey, noticeKey, BULK_SKIPPED,
         changeContains, buildPanel, isAdministrator, verifyVoiceAdminAccess, runBulkUnsafe, withDeadline, isVoiceAdminInteraction,
         operationWasAcknowledged, writeLock, clearLockField, clearBothLocks, clearAllLocksForMember, lockVoiceState,
-        unlockVoiceState, unlockBoth, disconnectMembers, moveMembers, ensureBotPermission, runPanelAction,
+        unlockVoiceState, unlockBoth, disconnectMembers, moveMembers, ensureBotPermission, runPanelAction, setVoiceBoth,
+        isPermanentDiscordError, classifyVoiceAdminError, formatFailureReasons, buildSecretResultEmbed,
+        getRepository, setRepository, VoiceAdminRepository, defaultLockAdapter, defaultNoticeAdapter, countActiveGuildLocks, formatDuration,
         sendUnauthorizedNotice, deletePreviousNotice, findRecentAuditUnlock, resolveExecutorMember, scheduleFallback, clearPending, enforceLock, reconcileConnectedLocks,
         pendingEnforcement, cachedAuditUnlocks, processedAuditEntries, auditWatermarks, enforcementActions, activeGuildActions, notices, noticeQueues, retiredGuilds, retiredMembers, globalActionWaiters, pruneRuntimeCaches,
         getGlobalMemberOperationCount() { return activeGlobalMemberOperations; },

@@ -1,0 +1,5 @@
+{
+  "rules": {
+    "set-quoted-identifier": "off"
+  }
+}

@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased] - 2026-10-11
+## [Unreleased] - 2026-10-17
+
+- **Voice Admin SQLite Migration & Subsystem Hardening (Migration 013):**
+  - **SQLite Engine Integration:** Migrated Voice Admin persistence (`voice_admin_locks` and `voice_admin_notices`) from MongoDB/Mongoose to high-performance WAL-mode SQLite tables (`013_voice_admin_locks.sql`).
+  - **VoiceAdminRepository Implementation:** Created `database/sqlite/repositories/core/VoiceAdminRepository.js` supporting atomic lock writes, version-bound optimistic concurrency, owner-forced persistence, batched notice upserts, and cascading member/guild deletes.
+  - **Central Table Categories & Cleanup:** Registered `voice_admin_locks` in CORE and `voice_admin_notices` in TEMP categories. Integrated 24-hour notice purge into `database/sqlite/maintenance/cleanup.js`.
+  - **Feature Layer Adaptation:** Updated `discord/features/voiceAdmin.js` with full backward compatibility: secret commands (`//`, `///`), control panel interactions, permanent error classification (stopping retries immediately on HTTP 403 / 50013), and detailed failure breakdown in secret result embeds.
+  - **Boot Lifecycle Alignment:** Initialized Voice Admin directly during SQLite boot in `discord/index.js`.
+  - **Deployment & State Reconciliation:** Migration 013 initializes fresh SQLite tables. Because Voice Admin locks represent transient live voice room state, legacy MongoDB documents are discarded on upgrade, and active guild voice channels are cleanly reconciled on startup via `reconcileConnectedLocks`.
+  - **Full Test & Release Coverage:** Updated test suites with 69 Voice Admin tests, 100% passing; all coverage thresholds met (`voiceAdmin.js` at 94.83% lines, 88.99% functions, 75.03% branches).
 
 - **Verification Architecture Renovation & Webhook Log System (Phase 0–20):**
   - **Single Entry Point OAuth Start (`/auth/start`):** Unified `/verify-setup` Discord slash command button links and Web Dashboard OAuth links to route through `/auth/start?state=...`, generating an ephemeral nonce, saving signed state cookie, and standardizing authorization redirects.
