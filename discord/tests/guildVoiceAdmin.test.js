@@ -69,7 +69,17 @@ function mockSecretMessage(guild, channel, content, replies = []) {
         deleted: false,
         async delete() { this.deleted = true; },
         async reply(payload) {
-            const msg = { ...payload, deleted: false, async delete() { this.deleted = true; } };
+            const msg = {
+                ...payload,
+                deleted: false,
+                edits: [],
+                async delete() { this.deleted = true; },
+                async edit(nextPayload) {
+                    this.edits.push(nextPayload);
+                    Object.assign(this, nextPayload);
+                    return this;
+                }
+            };
             replies.push(msg);
             return msg;
         }
@@ -1186,7 +1196,7 @@ test("secret commands reply with clean rich embeds with server thumbnail and exi
     assert.equal(replies.length, 0);
 });
 
-test("secret command executes instant lifecycle: preserves trigger message, skips interim progress overhead, and replies with summary embed", async () => {
+test("secret command executes instant lifecycle: preserves trigger message, launches parallel pending feedback, and edits into summary embed", async () => {
     const target = member("target");
     const owner = member(config.system.ownerId, true);
     const guild = guildFixture([target, owner]);
@@ -1203,10 +1213,12 @@ test("secret command executes instant lifecycle: preserves trigger message, skip
     // 1. Owner's message was preserved (not deleted)
     assert.equal(message.deleted, false);
 
-    // 2. Exactly one reply recorded: direct reply with the final summary
+    // 2. Exactly one reply message recorded (pending message was edited in-place)
     assert.equal(replies.length, 1);
 
-    // 3. Reply was the final summary with server thumbnail
+    // 3. Pending message was edited into final summary embed with thumbnail
+    assert.equal(replies[0].edits.length, 1);
+    assert.equal(replies[0].content, null);
     assert.match(replies[0].embeds[0].data.title, /ตัดหมด/);
     assert.equal(replies[0].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
     assert.equal(replies[0].deleted, false);

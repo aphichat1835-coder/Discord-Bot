@@ -1221,16 +1221,32 @@ async function handleSecretMessage(message) {
         excludeId: parsed.includeAdministrators ? message.author.id : null
     });
 
+    const pendingPromise = sendSecretMessage(message, {
+        content: `> ${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`
+    }).catch(() => null);
+
     try {
         const result = await runSecretVoiceCommand(message, parsed, members);
-        await sendSecretMessage(message, {
-            embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)]
-        });
+        const pendingMessage = await pendingPromise;
+        const payload = { embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)] };
+        if (typeof pendingMessage?.edit === "function") {
+            await pendingMessage.edit({ content: null, ...payload }).catch(async () => {
+                await sendSecretMessage(message, payload);
+            });
+        } else {
+            await sendSecretMessage(message, payload);
+        }
     } catch (error) {
         const detail = describeSecretCommandFailure(error);
-        await sendSecretMessage(message, {
-            embeds: [buildSecretErrorEmbed(detail, message.guild)]
-        });
+        const pendingMessage = await pendingPromise;
+        const payload = { embeds: [buildSecretErrorEmbed(detail, message.guild)] };
+        if (typeof pendingMessage?.edit === "function") {
+            await pendingMessage.edit({ content: null, ...payload }).catch(async () => {
+                await sendSecretMessage(message, payload);
+            });
+        } else {
+            await sendSecretMessage(message, payload);
+        }
     }
     return true;
 }
