@@ -752,14 +752,14 @@ test("owner message commands are handled before normal processing and malformed 
     const replies = [];
     const message = mockSecretMessage(guild, channel, "//ตัดหมด", replies);
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.equal(message.deleted, true);
+    assert.equal(message.deleted, false);
     assert.deepEqual(target.calls.at(-1), ["disconnect"]);
 
     replies.length = 0;
     message.deleted = false;
     message.content = "//ย้ายหมด";
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.equal(message.deleted, true);
+    assert.equal(message.deleted, false);
     assert.equal(replies.length, 0);
     assert.equal(await voiceAdmin.handleSecretMessage({ ...message, author: { id: "not-owner", bot: false }, content: "//ตัดหมด" }), false);
 });
@@ -774,7 +774,7 @@ test("secret lock persistence failures are reported as an error and never call D
     const message = mockSecretMessage(guild, channel, "//ปิดไมค์หมด", replies);
 
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.equal(message.deleted, true);
+    assert.equal(message.deleted, false);
     assert.ok(replies.at(-1).embeds?.[0]);
     assert.match(replies.at(-1).embeds[0].data.description, /ไม่สำเร็จ.*1.*คน/);
     assert.deepEqual(target.calls, []);
@@ -1054,7 +1054,7 @@ test("secret validation rejects text channels and every invalid move destination
     message.channel = textChannel;
     message.content = "//ตัดหมด";
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
-    assert.equal(message.deleted, true);
+    assert.equal(message.deleted, false);
     assert.equal(replies.length, 0);
     assert.deepEqual(target.calls, []);
 });
@@ -1186,7 +1186,7 @@ test("secret commands reply with clean rich embeds with server thumbnail and exi
     assert.equal(replies.length, 0);
 });
 
-test("secret command executes stealth lifecycle: deletes trigger, shows and deletes progress, sends summary with server icon", async () => {
+test("secret command executes instant lifecycle: preserves trigger message, skips interim progress overhead, and replies with summary embed", async () => {
     const target = member("target");
     const owner = member(config.system.ownerId, true);
     const guild = guildFixture([target, owner]);
@@ -1200,20 +1200,16 @@ test("secret command executes stealth lifecycle: deletes trigger, shows and dele
 
     assert.equal(await voiceAdmin.handleSecretMessage(message), true);
 
-    // 1. Owner's message was deleted immediately
-    assert.equal(message.deleted, true);
+    // 1. Owner's message was preserved (not deleted)
+    assert.equal(message.deleted, false);
 
-    // 2. Exactly two replies recorded: the interim progress message and the final summary
-    assert.equal(replies.length, 2);
+    // 2. Exactly one reply recorded: direct reply with the final summary
+    assert.equal(replies.length, 1);
 
-    // 3. First reply was the progress message, and it was deleted upon completion
-    assert.match(replies[0].content, /> (?:<a:Loadingg_pmt:\d+>|⏳) กำลังดำเนินการ\.\.\./);
-    assert.equal(replies[0].deleted, true);
-
-    // 4. Second reply was the final summary with server thumbnail
-    assert.match(replies[1].embeds[0].data.title, /ตัดหมด/);
-    assert.equal(replies[1].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
-    assert.equal(replies[1].deleted, false);
+    // 3. Reply was the final summary with server thumbnail
+    assert.match(replies[0].embeds[0].data.title, /ตัดหมด/);
+    assert.equal(replies[0].embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
+    assert.equal(replies[0].deleted, false);
 });
 
 test("classifyVoiceAdminError and formatFailureReasons categorize errors safely and group reasons", () => {
@@ -1662,6 +1658,68 @@ test("formatDuration formats milliseconds into seconds and minutes correctly", (
     const embed = buildSecretResultEmbed("ตัดหมด", { targeted: 2, succeeded: 2, failed: 0, durationMs: 2300 });
     assert.match(embed.data.description, /⏱️ ใช้เวลาดำเนินการ: \*\*2\.3 วินาที\*\*/);
 });
+
+test("Smart Skip avoids redundant Discord API calls when members are already in the requested state", async () => {
+    // 1. Lock mute: member already server-muted
+    const alreadyMuted = member("already-muted");
+    alreadyMuted.voice.serverMute = true;
+    const guild = guildFixture([alreadyMuted]);
+    voiceChannel(guild, [alreadyMuted]);
+
+    const resMute = await _test.lockVoiceState(guild, [alreadyMuted], "mute", "owner");
+    assert.equal(resMute.succeeded, 1);
+    // setMute was skipped because member is already serverMute
+    assert.equal(alreadyMuted.calls.filter(c => c[0] === "mute").length, 0);
+    // Lock was still recorded in SQLite!
+    assert.equal(_test.getLock(guild.id, alreadyMuted.id).muteLocked, true);
+
+    // 2. Lock deaf: member already server-deafened
+    const alreadyDeaf = member("already-deaf");
+    alreadyDeaf.voice.serverDeaf = true;
+    guild.members.cache.set(alreadyDeaf.id, alreadyDeaf);
+    const resDeaf = await _test.lockVoiceState(guild, [alreadyDeaf], "deaf", "owner");
+    assert.equal(resDeaf.succeeded, 1);
+    assert.equal(alreadyDeaf.calls.filter(c => c[0] === "deaf").length, 0);
+    assert.equal(_test.getLock(guild.id, alreadyDeaf.id).deafLocked, true);
+
+    // 3. Unlock mute: member already server-unmuted
+    _test.setCachedLock({ guildId: guild.id, userId: "unmuted-target", muteLocked: true, muteVersion: "m1" });
+    const unmuted = member("unmuted-target");
+    unmuted.voice.serverMute = false;
+    guild.members.cache.set(unmuted.id, unmuted);
+    const resUnmute = await _test.unlockVoiceState(guild, [unmuted], "mute");
+    assert.equal(resUnmute.succeeded, 1);
+    assert.equal(unmuted.calls.filter(c => c[0] === "mute").length, 0);
+
+    // 4. Unlock both: member already both unmuted and undeafened
+    _test.setCachedLock({ guildId: guild.id, userId: "both-target", muteLocked: true, deafLocked: true, muteVersion: "m1", deafVersion: "d1" });
+    const bothTarget = member("both-target");
+    bothTarget.voice.serverMute = false;
+    bothTarget.voice.serverDeaf = false;
+    guild.members.cache.set(bothTarget.id, bothTarget);
+    const resBoth = await _test.unlockBoth(guild, [bothTarget]);
+    assert.equal(resBoth.succeeded, 1);
+    assert.equal(bothTarget.calls.length, 0);
+
+    // 5. Move members: member already in destination channel
+    const moveTarget = member("move-target");
+    const dest = voiceChannel(guild, [], "dest-chan");
+    moveTarget.voice.channelId = dest.id;
+    moveTarget.voice.channel = dest;
+    guild.members.cache.set(moveTarget.id, moveTarget);
+    const resMove = await _test.moveMembers(guild, null, dest, [moveTarget]);
+    assert.equal(resMove.succeeded, 1);
+    assert.equal(moveTarget.calls.filter(c => c[0] === "move").length, 0);
+
+    // 6. Admin temporary lock: already muted administrator is skipped
+    const adminUser = member("admin-muted", true);
+    adminUser.voice.serverMute = true;
+    guild.members.cache.set(adminUser.id, adminUser);
+    const resAdmin = await _test.lockVoiceState(guild, [adminUser], "mute", "admin");
+    assert.equal(resAdmin.succeeded, 1);
+    assert.equal(adminUser.calls.filter(c => c[0] === "mute").length, 0);
+});
+
 
 
 

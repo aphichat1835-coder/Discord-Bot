@@ -877,12 +877,17 @@ async function lockVoiceState(guild, members, type, actorId, options = {}) {
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, async member => {
         if (!isStillInSource(member, options.source)) return BULK_SKIPPED;
         const ownerForced = type === "mute" && options.ownerForced === true;
-        if (isAdministrator(member, guild) && !ownerForced) return setVoice(member, type, true, "voiceadmin temporary lock");
+        const alreadyInState = type === "mute" ? member?.voice?.serverMute === true : member?.voice?.serverDeaf === true;
+        if (isAdministrator(member, guild) && !ownerForced) {
+            if (alreadyInState) return;
+            return setVoice(member, type, true, "voiceadmin temporary lock");
+        }
         const written = await writeLock(guild.id, member.id, type, actorId, undefined, { ownerForced });
         if (!isStillInSource(member, options.source)) {
             await clearLockField(guild.id, member.id, type, written.version);
             return BULK_SKIPPED;
         }
+        if (alreadyInState) return;
         try { await setVoice(member, type, true, "voiceadmin lock"); }
         catch (error) {
             try { await clearLockField(guild.id, member.id, type, written.version); }
@@ -901,6 +906,8 @@ async function unlockVoiceState(guild, members, type, options = {}) {
             if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
             return BULK_SKIPPED;
         }
+        const alreadyOpen = type === "mute" ? member?.voice?.serverMute === false : member?.voice?.serverDeaf === false;
+        if (alreadyOpen) return;
         try { await setVoice(member, type, false, "voiceadmin unlock"); }
         catch (error) {
             if (cleared) await restoreLockSnapshot(guild.id, member.id, type, previous, cleared.version);
@@ -917,6 +924,7 @@ async function unlockBoth(guild, members, options = {}) {
             if (cleared) await restoreBothLockSnapshots(guild.id, member.id, previous, cleared.versions);
             return BULK_SKIPPED;
         }
+        if (member?.voice?.serverMute === false && member?.voice?.serverDeaf === false) return;
         try { await setVoiceBoth(member, false, "voiceadmin unlock all"); }
         catch (error) {
             if (cleared) {
@@ -935,6 +943,7 @@ async function disconnectMembers(guild, sourceOrMembers, maybeMembers = null) {
     const members = Array.isArray(sourceOrMembers) ? sourceOrMembers : maybeMembers;
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => {
         if (!isStillInSource(member, source)) return BULK_SKIPPED;
+        if (!member?.voice?.channelId && !member?.voice?.channel) return BULK_SKIPPED;
         return member.voice.disconnect("voiceadmin disconnect");
     }, controller));
 }
@@ -942,6 +951,8 @@ async function moveMembers(guild, source, destination, members) {
     await ensureBotPermission(guild, source, "move", destination);
     return withGuildAction(guild.id, controller => runBulkUnsafe(members, member => {
         if (!isStillInSource(member, source)) return BULK_SKIPPED;
+        const currentChannelId = member?.voice?.channelId || member?.voice?.channel?.id;
+        if (currentChannelId && String(currentChannelId) === String(destination?.id)) return;
         return member.voice.setChannel(destination, "voiceadmin move");
     }, controller));
 }
@@ -1201,8 +1212,6 @@ async function handleSecretMessage(message) {
     const prefix = getSecretCommandPrefix(String(message?.content || "").trim());
     if (!prefix) return false;
 
-    await message.delete?.().catch(() => {});
-
     const parsed = parseSecretCommand(message.content);
     if (!parsed || parsed.invalid) return true;
     if (!isVoiceChannel(message.channel)) return true;
@@ -1212,18 +1221,12 @@ async function handleSecretMessage(message) {
         excludeId: parsed.includeAdministrators ? message.author.id : null
     });
 
-    const pendingMessage = await sendSecretMessage(message, {
-        content: `> ${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`
-    });
-
     try {
         const result = await runSecretVoiceCommand(message, parsed, members);
-        await pendingMessage?.delete?.().catch(() => {});
         await sendSecretMessage(message, {
             embeds: [buildSecretResultEmbed(parsed.command, result, message.guild)]
         });
     } catch (error) {
-        await pendingMessage?.delete?.().catch(() => {});
         const detail = describeSecretCommandFailure(error);
         await sendSecretMessage(message, {
             embeds: [buildSecretErrorEmbed(detail, message.guild)]
