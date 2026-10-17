@@ -473,6 +473,24 @@ describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test asser
                 4500
             );
             assert.equal(muteOnlyRes.matchedCount, 1);
+
+            // Clear lock field when version is NULL
+            voiceAdminRepo.writeLock({ guildId, userId: "u_null_ver", type: "deaf", actorId: "a", version: null, now: 4600 });
+            const clearNullRes = voiceAdminRepo.clearLockField(guildId, "u_null_ver", "deaf", null, "deaf_v_cleared", 4700);
+            assert.equal(clearNullRes.matchedCount, 1);
+
+            // Version-bound update when expectedVersion is NULL
+            voiceAdminRepo.writeLock({ guildId, userId: "u_null_update", type: "mute", actorId: "a", version: null, now: 4800 });
+            const updateNullRes = voiceAdminRepo.writeLock({
+                guildId,
+                userId: "u_null_update",
+                type: "mute",
+                actorId: "admin_null",
+                expectedVersion: null,
+                version: "m_from_null",
+                now: 4900
+            });
+            assert.equal(updateNullRes.matchedCount, 1);
         });
 
         test("deleteLock and deleteGuildLocks remove locks cleanly", () => {

@@ -98,16 +98,17 @@ class VoiceAdminRepository {
                     updated_at = excluded.updated_at
             `);
 
+        const versionParam = version === null || version === undefined ? null : String(version);
         const result = isMute
             ? stmt.run(
                 String(guildId), String(userId),
                 String(actorId), lockedAt,
-                String(version), ownerForcedVal, String(actorId), now
+                versionParam, ownerForcedVal, String(actorId), now
             )
             : stmt.run(
                 String(guildId), String(userId),
                 String(actorId), lockedAt,
-                String(version), String(actorId), now
+                versionParam, String(actorId), now
             );
 
         return {
@@ -129,23 +130,25 @@ class VoiceAdminRepository {
             ? `UPDATE voice_admin_locks SET 
                 ${lockCol} = 1, ${byCol} = ?, ${atCol} = ?, ${verCol} = ?, 
                 mute_owner_forced = ?, locked_by = ?, updated_at = ? 
-               WHERE guild_id = ? AND user_id = ? AND ${verCol} = ?`
+               WHERE guild_id = ? AND user_id = ? AND ${verCol} IS ?`
             : `UPDATE voice_admin_locks SET 
                 ${lockCol} = 1, ${byCol} = ?, ${atCol} = ?, ${verCol} = ?, 
                 locked_by = ?, updated_at = ? 
-               WHERE guild_id = ? AND user_id = ? AND ${verCol} = ?`;
+               WHERE guild_id = ? AND user_id = ? AND ${verCol} IS ?`;
 
+        const expectedParam = expectedVersion === null ? null : String(expectedVersion);
+        const versionParam = version === null || version === undefined ? null : String(version);
         const stmt = db.prepare(sql);
         const result = isMute
             ? stmt.run(
-                String(actorId), lockedAt, String(version),
+                String(actorId), lockedAt, versionParam,
                 ownerForcedVal, String(actorId), now,
-                String(guildId), String(userId), String(expectedVersion)
+                String(guildId), String(userId), expectedParam
             )
             : stmt.run(
-                String(actorId), lockedAt, String(version),
+                String(actorId), lockedAt, versionParam,
                 String(actorId), now,
-                String(guildId), String(userId), String(expectedVersion)
+                String(guildId), String(userId), expectedParam
             );
 
         return {
@@ -188,11 +191,12 @@ class VoiceAdminRepository {
             ${lockCol} = 0, ${byCol} = NULL, ${atCol} = NULL, 
             ${verCol} = ?, updated_at = ? 
             ${isMute ? ", mute_owner_forced = 0" : ""}
-            WHERE guild_id = ? AND user_id = ? AND ${verCol} = ?`;
+            WHERE guild_id = ? AND user_id = ? AND ${verCol} IS ?`;
 
+        const expectedParam = expectedVersion === null ? null : String(expectedVersion);
         const result = db.prepare(sql).run(
             String(newVersion), now,
-            String(guildId), String(userId), String(expectedVersion)
+            String(guildId), String(userId), expectedParam
         );
 
         return {

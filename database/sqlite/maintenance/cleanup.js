@@ -106,7 +106,7 @@ function cleanExpiredVoiceAdminNotices(db, now = Date.now(), maxBatches = 5) {
         }
         return totalDeleted;
     } catch (_err) {
-        // Return 0 if notice cleanup fails gracefully without interrupting remaining tasks
+        // Ignored: Table may not exist or notice cleanup fails safely
         return 0;
     }
 }
