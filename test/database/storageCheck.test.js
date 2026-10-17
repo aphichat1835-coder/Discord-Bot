@@ -4,15 +4,21 @@ const { test, describe } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const { evaluateStoragePaths, isPathInside } = require("../../database/sqlite/maintenance/storageCheck");
+const { evaluateStoragePaths, isPathInside, isUnderPath } = require("../../database/sqlite/maintenance/storageCheck");
 
 describe("Storage Check & Volume Mount Probe Suite", () => {
-    test("isPathInside: correctly checks parent child relationships", () => {
+    test("isPathInside and isUnderPath: correctly checks parent child relationships and prevents false prefix match", () => {
         const repoRoot = "/workspaces/discordbot3";
         assert.equal(isPathInside("/workspaces/discordbot3/data/test.sqlite", repoRoot), true);
         assert.equal(isPathInside("/workspaces/discordbot3/backups", repoRoot), true);
         assert.equal(isPathInside("/persistent/discordbot.sqlite", repoRoot), false);
         assert.equal(isPathInside("/var/data/backups", repoRoot), false);
+
+        // Boundary enforcement: /persistent-unsafe must NOT match /persistent
+        assert.equal(isUnderPath("/persistent/discordbot.sqlite", "/persistent"), true);
+        assert.equal(isUnderPath("/persistent", "/persistent"), true);
+        assert.equal(isUnderPath("/persistent-unsafe/test.sqlite", "/persistent"), false);
+        assert.equal(isUnderPath("/persistent-something", "/persistent"), false);
     });
 
     test("evaluateStoragePaths: allows local workspace in development mode with informational warning", () => {
@@ -27,22 +33,36 @@ describe("Storage Check & Volume Mount Probe Suite", () => {
         assert.ok(res.warnings.length > 0);
     });
 
-    test("evaluateStoragePaths: warns on in-source paths in production mode without fatal crash", () => {
+    test("evaluateStoragePaths: rejects in-source paths in production mode when ALLOW_IN_SOURCE_STORAGE is not set", () => {
         const repoRoot = path.resolve(process.cwd());
         const res = evaluateStoragePaths({
             env: "production",
+            allowInSource: false,
             dbPath: path.join(repoRoot, "data", "test.sqlite"),
             backupDir: path.join(repoRoot, "backups"),
             assetDir: path.join(repoRoot, "data", "cache-assets")
         });
 
         assert.equal(res.isProduction, true);
-        // Architecture invariant: In-source storage does NOT fatal crash the bot!
+        assert.equal(res.ok, false);
+        assert.ok(res.errors.length > 0);
+        assert.ok(res.errors.some(e => e.includes("PRODUCTION_STORAGE") && e.includes("must not reside inside source tree")));
+    });
+
+    test("evaluateStoragePaths: permits in-source paths in production mode when ALLOW_IN_SOURCE_STORAGE=true override is active", () => {
+        const repoRoot = path.resolve(process.cwd());
+        const res = evaluateStoragePaths({
+            env: "production",
+            allowInSource: true,
+            dbPath: path.join(repoRoot, "data", "test.sqlite"),
+            backupDir: path.join(repoRoot, "backups"),
+            assetDir: path.join(repoRoot, "data", "cache-assets")
+        });
+
+        assert.equal(res.isProduction, true);
         assert.equal(res.ok, true);
         assert.equal(res.errors.length, 0);
-        assert.equal(res.pathWarning, true);
-        assert.equal(res.persistentRecommended, true);
-        assert.ok(res.warnings.some(w => w.includes("PRODUCTION_STORAGE")));
+        assert.ok(res.warnings.some(w => w.includes("ALLOW_IN_SOURCE_STORAGE=true is active")));
     });
 
     test("evaluateStoragePaths: passes cleanly when external persistent paths are provided in production", () => {

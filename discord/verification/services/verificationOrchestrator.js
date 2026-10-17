@@ -168,6 +168,9 @@ async function saveVerifyLogSafe(payload) {
     return safeSideEffect("saveVerifyLog", async () => {
         let doc = {
             ...payload,
+            ...(payload.result === "success" ? {
+                webhookDelivery: { status: "pending" }
+            } : {}),
             ...(payload.trackingSnapshot ? {
                 ipHistoryMigrationVersion: 1,
                 ipHistoryMigratedAt: Date.now()
@@ -1028,12 +1031,37 @@ async function _dispatchVerificationWebhookAndDM({
 }) {
     const roleAssignedOk = roleAssignResult?.ok === true || roleAssignResult?.alreadyHadRole === true || roleAssignResult?.joinedWithRole === true;
     if (verifyLogSaved?._id && verifyLogSaved.result === "success" && roleAssignedOk) {
-        verificationWebhookManager.dispatchLiveEvent({
-            guildId,
-            userId: profile.id,
-            logId: String(verifyLogSaved._id),
-            eventData: verifyLogSaved
-        }).catch(err => console.error("[VERIFY] live webhook dispatch failed:", err.message));
+        try {
+            const deliveryId = await verificationWebhookManager.dispatchLiveEvent({
+                guildId,
+                userId: profile.id,
+                logId: String(verifyLogSaved._id),
+                eventData: verifyLogSaved
+            });
+            if (deliveryId) {
+                await VerifyLog.updateOne(
+                    { _id: verifyLogSaved._id },
+                    {
+                        $set: {
+                            "webhookDelivery.status": "enqueued",
+                            "webhookDelivery.deliveryId": deliveryId,
+                            "webhookDelivery.enqueuedAt": Date.now()
+                        }
+                    }
+                ).catch(() => {});
+            }
+        } catch (err) {
+            console.error("[VERIFY] live webhook dispatch failed:", err.message);
+            await VerifyLog.updateOne(
+                { _id: verifyLogSaved._id },
+                {
+                    $set: {
+                        "webhookDelivery.status": "pending",
+                        "webhookDelivery.lastError": err.message
+                    }
+                }
+            ).catch(() => {});
+        }
     }
 
     await safeSideEffect("sendVerificationDM", () => discord.sendVerificationDM(profile.id, {

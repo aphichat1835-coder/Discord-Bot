@@ -834,11 +834,103 @@ class VerificationWebhookManager {
     }
 
     /**
+     * Reconciles verify logs that were marked successful in MongoDB but whose webhook
+     * delivery was never enqueued into SQLite (e.g. process crash between log save and dispatch,
+     * or temporary database contention).
+     */
+    async reconcilePendingVerifyLogs() {
+        if (mongoose.connection?.readyState !== 1) return 0;
+        try {
+            const cutoffMs = Date.now() - (24 * 60 * 60 * 1000); // 24 hour recovery window
+            const pendingLogs = await VerifyLog.find({
+                result: "success",
+                verifiedAt: { $gte: cutoffMs },
+                $or: [
+                    { "webhookDelivery.status": "pending" },
+                    { "webhookDelivery.status": { $exists: false } }
+                ]
+            })
+            .sort({ verifiedAt: 1 })
+            .limit(100)
+            .lean();
+
+            if (!pendingLogs || pendingLogs.length === 0) return 0;
+
+            let enqueuedCount = 0;
+            for (const log of pendingLogs) {
+                if (!isEligibleVerifyLog(log)) {
+                    await VerifyLog.updateOne(
+                        { _id: log._id },
+                        { $set: { "webhookDelivery.status": "skipped", "webhookDelivery.lastError": "not_eligible" } }
+                    ).catch(() => {});
+                    continue;
+                }
+
+                const config = await GuildConfig.findOne().where("guildId").equals(String(log.guildId)).lean();
+                const webhookConfig = config?.verification?.webhookLog;
+                if (!webhookConfig?.enabled || !webhookConfig?.url) {
+                    await VerifyLog.updateOne(
+                        { _id: log._id },
+                        { $set: { "webhookDelivery.status": "skipped", "webhookDelivery.lastError": "webhook_disabled" } }
+                    ).catch(() => {});
+                    continue;
+                }
+
+                const destinationVersion = Number(webhookConfig.destinationVersion) || 1;
+                const eventId = String(log._id);
+                const deliveryId = `del_${log.guildId}_v${destinationVersion}_${eventId}`;
+
+                // Check if already present in SQLite delivery queue
+                let existingDelivery = null;
+                if (typeof this.repo.getDeliveryById === "function") {
+                    existingDelivery = this.repo.getDeliveryById(deliveryId);
+                }
+                if (existingDelivery) {
+                    const status = (existingDelivery.status === "SENT" || existingDelivery.status === "DELIVERED") ? "delivered" : "enqueued";
+                    await VerifyLog.updateOne(
+                        { _id: log._id },
+                        { $set: { "webhookDelivery.status": status, "webhookDelivery.deliveryId": deliveryId } }
+                    ).catch(() => {});
+                    continue;
+                }
+
+                // Enqueue via dispatchLiveEvent
+                const enqueuedId = await this.dispatchLiveEvent({
+                    guildId: log.guildId,
+                    userId: log.userId,
+                    logId: String(log._id),
+                    eventData: log
+                });
+
+                if (enqueuedId) {
+                    enqueuedCount++;
+                    await VerifyLog.updateOne(
+                        { _id: log._id },
+                        {
+                            $set: {
+                                "webhookDelivery.status": "enqueued",
+                                "webhookDelivery.deliveryId": enqueuedId,
+                                "webhookDelivery.enqueuedAt": Date.now()
+                            }
+                        }
+                    ).catch(() => {});
+                }
+            }
+
+            return enqueuedCount;
+        } catch (err) {
+            console.error("[VerificationWebhook] reconcilePendingVerifyLogs failed:", err?.message || err);
+            return 0;
+        }
+    }
+
+    /**
      * Performs cold-start recovery for webhook deliveries:
      * 1. Recovers stuck SENDING deliveries from ungraceful shutdown
      * 2. Recovers active backfill jobs
-     * 3. Wakes workers for all guilds with PENDING or ready RETRY deliveries
-     * 4. Schedules timers for future RETRY deliveries
+     * 3. Reconciles pending verify logs that failed prior to enqueue
+     * 4. Wakes workers for all guilds with PENDING or ready RETRY deliveries
+     * 5. Schedules timers for future RETRY deliveries
      */
     async performStartupRecovery() {
         if (this.isRecovering) return false;
@@ -865,6 +957,11 @@ class VerificationWebhookManager {
             if (mongoose.connection?.readyState === 1 && typeof this.repo.getAllActiveJobs === "function") {
                 const activeJobs = this.repo.getAllActiveJobs();
                 await Promise.all(activeJobs.map(job => this._recoverActiveJob(job)));
+            }
+
+            // 2.5. Reconcile verified logs whose webhook enqueue failed prior to crash/restart
+            if (mongoose.connection?.readyState === 1) {
+                await this.reconcilePendingVerifyLogs();
             }
 
             // 3. Wake up all guilds with PENDING or ready RETRY deliveries
@@ -1706,6 +1803,20 @@ class VerificationWebhookManager {
                         "verification.webhookLog.lastError": null
                     }
                 });
+
+                if (item.event_id && mongoose.connection?.readyState === 1) {
+                    try {
+                        await VerifyLog.updateOne(
+                            { _id: item.event_id },
+                            {
+                                $set: {
+                                    "webhookDelivery.status": "delivered",
+                                    "webhookDelivery.deliveredAt": Date.now()
+                                }
+                            }
+                        );
+                    } catch (_) {}
+                }
             }
 
         } catch (sendErr) {

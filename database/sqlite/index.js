@@ -14,9 +14,18 @@ let startupInfo = null;
 function initialize(options = {}) {
     const db = connection.openDatabase(options);
     const dbPath = connection.getCurrentDbPath();
-    startupInfo = runStartupCheck(db, { dbPath, ...options });
-    isInitialized = true;
-    return startupInfo;
+    try {
+        startupInfo = runStartupCheck(db, { dbPath, ...options });
+        isInitialized = true;
+        return startupInfo;
+    } catch (err) {
+        try {
+            connection.closeDatabase();
+        } catch (_) {}
+        isInitialized = false;
+        startupInfo = null;
+        throw err;
+    }
 }
 
 function getDb() {

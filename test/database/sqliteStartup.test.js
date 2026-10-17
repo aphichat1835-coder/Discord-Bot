@@ -201,4 +201,24 @@ test("SQLite Foundation & Maintenance Engine Suite", async (t) => {
         assert.ok(fs.existsSync(bkpRes.path));
         assert.ok(bkpRes.sizeBytes > 0);
     });
+
+    await t.test("initialize() releases process lock and closes connection if startup check fails", () => {
+        closeDatabase();
+        const failDbPath = path.join(tempDir, "fail_startup.sqlite");
+
+        assert.throws(
+            () => {
+                database.sqlite.initialize({
+                    path: failDbPath,
+                    // Intentionally provide invalid migrations dir to trigger startup check failure
+                    migrationsDir: "/nonexistent/path/that/cannot/exist_12345"
+                });
+            },
+            /(?:ENOENT|Write\/Rollback probe failed|no such table)/
+        );
+
+        const lockFile = `${failDbPath}.lock`;
+        assert.equal(fs.existsSync(lockFile), false, "Process lock file must be released on startup check error");
+        assert.equal(database.sqlite.isReady(), false, "Database isReady must be false after failed initialization");
+    });
 });

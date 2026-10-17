@@ -373,22 +373,7 @@ function isRecoverableRuntimeError(err) {
 function initCrashShield(config) {
     const criticalAlerts = createCriticalAlertDispatcher();
     process.on("uncaughtException", async (err) => {
-        if (isRecoverableRuntimeError(err)) {
-            originalWarn(sanitizeLogText(`[GATEWAY/RUNTIME] ⚠️ Recoverable exception shielded from fatal exit (keeping process alive): ${err.message}`));
-            await criticalAlerts.dispatch("recoverableException", err, buildWebhookEventPayload({
-                target: "ALERT",
-                severity: "WARNING",
-                category: "RUNTIME",
-                code: "runtime.recoverable_exception",
-                state: "UPDATE",
-                title: "RECOVERABLE EXCEPTION SHIELDED",
-                description: `${safeError(err)}\n\nระบบตรวจพบข้อผิดพลาดที่ไม่ร้ายแรงและทำการป้องกันไม่ให้ระบบหยุดทำงาน`,
-                impact: "งานหรือคำสั่งที่เกิดข้อผิดพลาดอาจไม่สำเร็จ แต่บอทและระบบหลักยังคงทำงานต่อเนื่อง",
-                action: "ตรวจสอบข้อผิดพลาดใน Runtime Log เพื่อปรับปรุงคำสั่งที่เกี่ยวข้อง"
-            })).catch(() => {});
-            return;
-        }
-
+        // Uncaught synchronous exceptions corrupt process memory; they must never be shielded
         originalError(sanitizeLogText(`[CRITICAL] uncaughtException: ${err.message}\n${err.stack || ""}`));
         await criticalAlerts.dispatch("uncaughtException", err, buildWebhookEventPayload({
             target: "ALERT",
@@ -398,7 +383,7 @@ function initCrashShield(config) {
             state: "OPEN",
             title: "UNCAUGHT EXCEPTION",
             description: `${safeError(err)}\n\n${sanitizeLogText(err.stack || "").substring(0, 800)}`,
-            impact: "Process อาจอยู่ในสถานะไม่สมบูรณ์หรือหยุดทำงานระหว่างเริ่มระบบ",
+            impact: "Process อยู่ในสถานะไม่สมบูรณ์และจำเป็นต้องเริ่มระบบใหม่เพื่อความปลอดภัย",
             action: "ตรวจ Stack Trace และ Runtime Log ทันที"
         }));
         if (!crashShieldReady) {
@@ -412,18 +397,20 @@ function initCrashShield(config) {
         const error = reason instanceof Error ? reason : new Error(String(reason));
         const msg = error.message;
 
-        if (isRecoverableRuntimeError(error)) {
-            originalWarn(sanitizeLogText(`[GATEWAY/RUNTIME] ⚠️ Recoverable rejection shielded from fatal exit (keeping process alive): ${msg}`));
-            await criticalAlerts.dispatch("recoverableRejection", error, buildWebhookEventPayload({
+        // Only true transient gateway errors (Cloudflare 5xx, socket disconnect, handshake timeout)
+        // are shielded because Discord.js will automatically resume via shardResume
+        if (isTransientGatewayError(error)) {
+            originalWarn(sanitizeLogText(`[GATEWAY/RUNTIME] ⚠️ Transient gateway rejection shielded from fatal exit (gateway will resume): ${msg}`));
+            await criticalAlerts.dispatch("transientGatewayRejection", error, buildWebhookEventPayload({
                 target: "ALERT",
                 severity: "WARNING",
-                category: "RUNTIME",
-                code: "runtime.recoverable_rejection",
+                category: "GATEWAY",
+                code: "gateway.transient_rejection_shielded",
                 state: "UPDATE",
-                title: "RECOVERABLE REJECTION SHIELDED",
-                description: `${sanitizeLogText(msg).substring(0, 900)}\n\nระบบตรวจพบข้อผิดพลาดที่ไม่ร้ายแรงและทำการป้องกันไม่ให้ระบบหยุดทำงาน เพื่อรักษาความต่อเนื่องของบริการ`,
-                impact: "งานหรือคำสั่งที่เกิดข้อผิดพลาดอาจไม่สำเร็จ แต่บอทและระบบหลักยังคงทำงานต่อเนื่องได้ 100%",
-                action: "ไม่ต้องดำเนินการใดๆ ระบบจัดการทรัพยากรให้อัตโนมัติ"
+                title: "TRANSIENT GATEWAY REJECTION SHIELDED",
+                description: `${sanitizeLogText(msg).substring(0, 900)}\n\nระบบตรวจพบข้อผิดพลาดเครือข่ายชั่วคราวของ Discord/Gateway และทำการป้องกันไม่ให้ระบบหยุดทำงาน โดย Gateway จะทำการ Reconnect/Resume อัตโนมัติ`,
+                impact: "การเชื่อมต่อ Gateway อาจกระตุกชั่วขณะ แต่ระบบหลักยังคงทำงานต่อเนื่อง",
+                action: "ระบบจะเชื่อมต่อใหม่โดยอัตโนมัติ ไม่จำเป็นต้องเริ่มระบบใหม่"
             })).catch(() => {});
             return;
         }

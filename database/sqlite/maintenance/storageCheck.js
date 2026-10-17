@@ -11,6 +11,13 @@ function isPathInside(childPath, parentPath) {
     return !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
+function isUnderPath(childPath, targetPath) {
+    if (!childPath || !targetPath) return false;
+    const resolvedChild = path.resolve(childPath);
+    const resolvedTarget = path.resolve(targetPath);
+    return resolvedChild === resolvedTarget || isPathInside(resolvedChild, resolvedTarget);
+}
+
 function checkPhysicalPersistentMount() {
     try {
         if (fs.existsSync("/persistent")) {
@@ -91,9 +98,9 @@ function classifyPersistence(pathsInfo, isProduction) {
     } = pathsInfo;
 
     const isAutoDetectedPersistent = hasPhysicalMount && !hasInSource && (
-        resolvedDbPath.startsWith("/persistent") &&
-        resolvedBackupDir.startsWith("/persistent") &&
-        resolvedAssetDir.startsWith("/persistent")
+        isUnderPath(resolvedDbPath, "/persistent") &&
+        isUnderPath(resolvedBackupDir, "/persistent") &&
+        isUnderPath(resolvedAssetDir, "/persistent")
     );
 
     const missingExplicitEnvs = [];
@@ -107,7 +114,14 @@ function classifyPersistence(pathsInfo, isProduction) {
         process.env.SQLITE_PERSISTENCE_CONFIRMED === "true" ||
         process.env.PERSISTENT_STORAGE_CONFIRMED === "true"
     );
-    const persistentMountVerified = configuredPersistentPath && persistenceConfirmed;
+    const persistentMountVerified = isAutoDetectedPersistent || (configuredPersistentPath && persistenceConfirmed);
+
+    let persistenceStatus = "unverified";
+    if (isAutoDetectedPersistent) {
+        persistenceStatus = "verified";
+    } else if (configuredPersistentPath && persistenceConfirmed) {
+        persistenceStatus = "operator_attested";
+    }
 
     return {
         isAutoDetectedPersistent,
@@ -115,12 +129,13 @@ function classifyPersistence(pathsInfo, isProduction) {
         configuredPersistentPath,
         persistenceConfirmed,
         persistentMountVerified,
+        persistenceStatus,
         isPersistent: configuredPersistentPath
     };
 }
 
 function assessPlacementWarnings(pathsInfo, persistenceInfo, isProduction, allowInSource, repoRoot) {
-    const { dbInSource, backupInSource, assetInSource } = pathsInfo;
+    const { dbInSource, backupInSource, assetInSource, hasInSource } = pathsInfo;
     const { configuredPersistentPath, missingExplicitEnvs } = persistenceInfo;
 
     const inSourceNames = [];
@@ -128,27 +143,37 @@ function assessPlacementWarnings(pathsInfo, persistenceInfo, isProduction, allow
     if (backupInSource) inSourceNames.push("backup");
     if (assetInSource) inSourceNames.push("asset-cache");
 
+    const errors = [];
+    const warnings = [];
+
     if (configuredPersistentPath) {
-        return { persistentRecommended: false, pathWarning: false, warnings: [] };
+        return { persistentRecommended: false, pathWarning: false, warnings: [], errors: [] };
     }
 
     if (allowInSource) {
         return {
             persistentRecommended: true,
             pathWarning: false,
-            warnings: [`[STORAGE] ℹ️ ALLOW_IN_SOURCE_STORAGE=true is active. Local in-source paths [${inSourceNames.join(", ") || "default"}] are permitted by owner override.`]
+            warnings: [`[STORAGE] ℹ️ ALLOW_IN_SOURCE_STORAGE=true is active. Local in-source paths [${inSourceNames.join(", ") || "default"}] are permitted by owner override.`],
+            errors: []
         };
     }
 
     if (isProduction) {
         const missingDetails = missingExplicitEnvs.length > 0 ? `Missing explicit external path ENV(s): [${missingExplicitEnvs.join(", ")}]. ` : "";
         const sourceDetails = inSourceNames.length > 0 ? `Storage path(s) [${inSourceNames.join(", ")}] reside inside source directory (${repoRoot}). ` : "";
-        const msg = `[PRODUCTION_STORAGE] ⚠️ Production storage is not using verified external persistent mount. ${missingDetails}${sourceDetails}In containerized production (Pterodactyl/Docker/VPS), data may be lost on container rebuild or redeploy unless external persistent mounts (e.g. /persistent/...) are configured or ALLOW_IN_SOURCE_STORAGE=true is explicitly set.`;
-        return { persistentRecommended: true, pathWarning: true, warnings: [msg] };
+        const warnMsg = `[PRODUCTION_STORAGE] ⚠️ Production storage is not using verified external persistent mount. ${missingDetails}${sourceDetails}In containerized production (Pterodactyl/Docker/VPS), data may be lost on container rebuild or redeploy unless external persistent mounts (e.g. /persistent/...) are configured or ALLOW_IN_SOURCE_STORAGE=true is explicitly set.`;
+        warnings.push(warnMsg);
+
+        if (hasInSource) {
+            const fatalMsg = `[PRODUCTION_STORAGE] ❌ In production mode, SQLite storage must not reside inside source tree (${repoRoot}) without explicit operator override ALLOW_IN_SOURCE_STORAGE=true. (Mount external volume e.g. /persistent/... or configure explicit external paths SQLITE_DB_PATH, SQLITE_BACKUP_DIR, SQLITE_ASSET_DIR).`;
+            errors.push(fatalMsg);
+        }
+        return { persistentRecommended: true, pathWarning: true, warnings, errors };
     }
 
     const msg = `[STORAGE] ℹ️ Storage path(s) [${inSourceNames.join(", ") || "default"}] reside in local workspace. Ensure persistent volumes are mounted before deploying to production.`;
-    return { persistentRecommended: true, pathWarning: true, warnings: [msg] };
+    return { persistentRecommended: true, pathWarning: true, warnings: [msg], errors: [] };
 }
 
 function probeDirectoryPermissions(targetDirs, repoRoot) {
@@ -239,7 +264,7 @@ function checkVolumeSpaces(targetDirs, permissions) {
 function evaluateStoragePaths(options = {}) {
     const isProduction = (options.env || process.env.NODE_ENV) === "production";
     const repoRoot = path.resolve(process.cwd());
-    const allowInSource = process.env.ALLOW_IN_SOURCE_STORAGE === "true";
+    const allowInSource = options.allowInSource !== undefined ? Boolean(options.allowInSource) : process.env.ALLOW_IN_SOURCE_STORAGE === "true";
 
     const pathsInfo = resolveStoragePaths(options, repoRoot);
     const persistenceInfo = classifyPersistence(pathsInfo, isProduction);
@@ -254,13 +279,14 @@ function evaluateStoragePaths(options = {}) {
     const probeResult = probeDirectoryPermissions(targetDirs, repoRoot);
     const spaceResult = checkVolumeSpaces(targetDirs, probeResult.permissions);
 
-    const errors = [...probeResult.errors, ...spaceResult.errors];
+    const errors = [...placementWarnings.errors, ...probeResult.errors, ...spaceResult.errors];
     const warnings = [...placementWarnings.warnings, ...probeResult.warnings, ...spaceResult.warnings];
 
     const results = {
         ok: errors.length === 0,
         isProduction,
         isPersistent: persistenceInfo.isPersistent,
+        persistenceStatus: persistenceInfo.persistenceStatus,
         configuredPersistentPath: persistenceInfo.configuredPersistentPath,
         persistentMountVerified: persistenceInfo.persistentMountVerified,
         persistenceConfirmed: persistenceInfo.persistenceConfirmed,
@@ -290,5 +316,6 @@ function evaluateStoragePaths(options = {}) {
 
 module.exports = {
     evaluateStoragePaths,
-    isPathInside
+    isPathInside,
+    isUnderPath
 };

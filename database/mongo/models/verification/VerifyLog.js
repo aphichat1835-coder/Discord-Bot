@@ -123,6 +123,14 @@ const schema = new mongoose.Schema({
     deletedAt: Number,
     deletedBy: String,
 
+    webhookDelivery: {
+        status: { type: String, enum: ['pending', 'enqueued', 'delivered', 'skipped'], default: 'pending' },
+        deliveryId: String,
+        enqueuedAt: Number,
+        deliveredAt: Number,
+        lastError: String
+    },
+
     createdAt: { type: Number, default: Date.now },
     verifiedAt: { type: Number, default: Date.now }
 }, { minimize: false });
@@ -131,6 +139,7 @@ schema.index({ guildId: 1, userId: 1 });
 schema.index({ userId: 1, snapshotVersion: 1 });
 schema.index({ guildId: 1, verifiedAt: -1 });
 schema.index({ guildId: 1, result: 1, verifiedAt: -1 });
+schema.index({ result: 1, 'webhookDelivery.status': 1, verifiedAt: -1 });
 schema.index({ 'ipInfo.ipHash': 1 });
 schema.index({ 'device.fingerprintHash': 1 });
 schema.index({ stateMode: 1 });

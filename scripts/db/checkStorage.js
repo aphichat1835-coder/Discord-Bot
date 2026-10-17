@@ -4,9 +4,11 @@ const { evaluateStoragePaths } = require("../../database/sqlite/maintenance/stor
 
 function runStorageCli() {
     console.log("[CHECK-STORAGE] 🔍 Starting Production Storage & Volume Mount Probe...");
-    console.log(`[CHECK-STORAGE] Mode:               ${process.env.NODE_ENV || "development"}`);
-
     const res = evaluateStoragePaths();
+
+    console.log(`[CHECK-STORAGE] Mode:               ${process.env.NODE_ENV || "development"}`);
+    console.log(`[CHECK-STORAGE] Persistence Status: ${res.persistenceStatus || (res.persistentMountVerified ? "verified" : "unverified")}`);
+    console.log(`[CHECK-STORAGE] Allow In-Source:    ${res.allowInSource ? "true" : "false"}`);
 
     console.log("------------------------------------------------------------");
     console.log(`[CHECK-STORAGE] Database Path:      ${res.paths.database.path}`);

@@ -49,19 +49,24 @@ class TokenCoordinator extends EventEmitter {
             state = {
                 tokenType: 'unknown',
                 voice: null,
+                voiceSessions: new Map(),
                 quest: null,
                 activities: new Map(),
                 quarantine: null,
                 backoffUntil: 0,
                 rateLimiter: {
                     tokens: this.rateLimitConfig.capacity,
-                    lastRefill: Date.now()
+                    lastRefill: Date.now(),
+                    queue: [],
+                    pumpTimer: null
                 },
                 lastActivity: Date.now()
             };
             this.tokenStates.set(tokenHash, state);
-        } else if (!state.activities) {
-            state.activities = new Map();
+        } else {
+            if (!state.activities) state.activities = new Map();
+            if (!state.voiceSessions) state.voiceSessions = new Map();
+            if (state.rateLimiter && !state.rateLimiter.queue) state.rateLimiter.queue = [];
         }
         return state;
     }
@@ -119,6 +124,13 @@ class TokenCoordinator extends EventEmitter {
      * @param {object} [metadata]
      * @returns {boolean}
      */
+    /**
+     * Dynamic Activity Registry: Acquire an activity slot for a token
+     * @param {string} token
+     * @param {string} subsystem
+     * @param {object} [metadata]
+     * @returns {boolean}
+     */
     acquireActivity(token, subsystem, metadata = {}) {
         const hash = this.hashToken(token);
         if (!hash || !subsystem) return false;
@@ -130,14 +142,18 @@ class TokenCoordinator extends EventEmitter {
         });
         state.lastActivity = Date.now();
 
-        // Backward compatibility mappings
+        // Multi-Session Voice Activity Isolation
         if (subsystem === 'voice') {
-            state.voice = {
+            const sessionId = String(metadata?.sessionId || metadata?.guildId || `voice_${Date.now()}`);
+            const sessionDetails = {
                 guildId: String(metadata?.guildId || ''),
                 channelId: String(metadata?.channelId || ''),
-                sessionId: String(metadata?.sessionId || ''),
+                sessionId,
                 activeAt: Date.now()
             };
+            state.voiceSessions.set(sessionId, sessionDetails);
+            // Backward compatibility reference points to most recently active session
+            state.voice = sessionDetails;
         } else if (subsystem === 'quest') {
             state.quest = {
                 startedAt: Date.now(),
@@ -154,27 +170,64 @@ class TokenCoordinator extends EventEmitter {
      * Dynamic Activity Registry: Release an activity slot for a token
      * @param {string} token
      * @param {string} subsystem
+     * @param {object|string} [options]
      * @returns {boolean}
      */
-    releaseActivity(token, subsystem) {
+    releaseActivity(token, subsystem, options = {}) {
         const hash = this.hashToken(token);
         if (!hash || !subsystem) return false;
 
         const state = this.tokenStates.get(hash);
         if (!state) return false;
 
-        const deleted = state.activities?.delete(String(subsystem));
+        let deleted = false;
+        if (subsystem === 'voice') {
+            const targetSessionId = typeof options === 'string' ? options : (options?.sessionId || null);
+            if (targetSessionId && state.voiceSessions?.has(targetSessionId)) {
+                deleted = state.voiceSessions.delete(targetSessionId);
+                if (state.voiceSessions.size > 0) {
+                    // Pick the most recently active remaining session
+                    const remaining = Array.from(state.voiceSessions.values());
+                    remaining.sort((a, b) => (b.activeAt || 0) - (a.activeAt || 0));
+                    state.voice = remaining[0];
+                    state.lastActivity = Date.now();
+                    this.emit('token:activity_end', { tokenHash: hash, subsystem, options });
+                    return true;
+                }
+                state.voice = null;
+            } else if (!targetSessionId) {
+                // Legacy caller without specific sessionId
+                if (state.voiceSessions?.size <= 1) {
+                    state.voiceSessions?.clear();
+                    state.voice = null;
+                    deleted = true;
+                } else {
+                    // Ambiguous unregister when multiple voice sessions active
+                    return false;
+                }
+            } else {
+                // Stale or already unregistered session cleanup is safe and idempotent
+                return true;
+            }
+            if (!state.voiceSessions || state.voiceSessions.size === 0) {
+                state.voice = null;
+                deleted = state.activities?.delete('voice') || deleted;
+            }
+        } else if (subsystem === 'quest') {
+            state.quest = null;
+            deleted = state.activities?.delete(String(subsystem));
+        } else {
+            deleted = state.activities?.delete(String(subsystem));
+        }
+
         state.lastActivity = Date.now();
 
-        // Backward compatibility mappings
-        if (subsystem === 'voice') state.voice = null;
-        if (subsystem === 'quest') state.quest = null;
-
-        if ((!state.activities || state.activities.size === 0) && !state.voice && !state.quest && !state.quarantine) {
+        const hasVoice = Boolean(state.voiceSessions && state.voiceSessions.size > 0);
+        if ((!state.activities || state.activities.size === 0) && !hasVoice && !state.voice && !state.quest && !state.quarantine) {
             this.tokenStates.delete(hash);
         }
 
-        this.emit('token:activity_end', { tokenHash: hash, subsystem });
+        this.emit('token:activity_end', { tokenHash: hash, subsystem, options });
         return Boolean(deleted);
     }
 
@@ -182,15 +235,26 @@ class TokenCoordinator extends EventEmitter {
      * Check if a token currently has a specific active activity
      * @param {string} token
      * @param {string} subsystem
+     * @param {object|string} [options]
      * @returns {boolean}
      */
-    hasActivity(token, subsystem) {
+    hasActivity(token, subsystem, options = {}) {
         const hash = this.hashToken(token);
         if (!hash) return false;
         const state = this.tokenStates.get(hash);
         if (!state) return false;
 
-        if (subsystem === 'voice') return Boolean(state.voice?.guildId && state.voice?.channelId);
+        if (subsystem === 'voice') {
+            const targetSessionId = typeof options === 'string' ? options : (options?.sessionId || null);
+            if (targetSessionId) {
+                return Boolean(state.voiceSessions?.has(targetSessionId));
+            }
+            const targetGuildId = options?.guildId || null;
+            if (targetGuildId && state.voiceSessions) {
+                return Array.from(state.voiceSessions.values()).some(s => s.guildId === targetGuildId);
+            }
+            return Boolean((state.voiceSessions && state.voiceSessions.size > 0) || (state.voice?.guildId && state.voice?.channelId));
+        }
         if (subsystem === 'quest') return Boolean(state.quest);
         return Boolean(state.activities?.has(String(subsystem)));
     }
@@ -229,28 +293,51 @@ class TokenCoordinator extends EventEmitter {
     /**
      * Unregister voice activity for a token
      * @param {string} token
+     * @param {object|string} [options] Optional sessionId or { sessionId, guildId }
      */
-    unregisterVoiceActivity(token) {
-        return this.releaseActivity(token, 'voice');
+    unregisterVoiceActivity(token, options = {}) {
+        return this.releaseActivity(token, 'voice', options);
     }
 
     /**
      * Check if a token currently has an active voice connection
      * @param {string} token
+     * @param {object|string} [options] Optional sessionId or { sessionId, guildId }
      * @returns {boolean}
      */
-    isVoiceActive(token) {
-        return this.hasActivity(token, 'voice');
+    isVoiceActive(token, options = {}) {
+        return this.hasActivity(token, 'voice', options);
     }
 
     /**
      * Get active voice details for a token
      * @param {string} token
+     * @param {object|string} [options] Optional sessionId or { sessionId, guildId }
      * @returns {{ guildId: string, channelId: string, sessionId: string, activeAt: number } | null}
      */
-    getVoiceActivity(token) {
+    getVoiceActivity(token, options = {}) {
         const hash = this.hashToken(token);
-        return this.tokenStates.get(hash)?.voice || null;
+        const state = this.tokenStates.get(hash);
+        if (!state) return null;
+
+        const targetSessionId = typeof options === 'string' ? options : (options?.sessionId || null);
+        if (targetSessionId && state.voiceSessions?.has(targetSessionId)) {
+            return state.voiceSessions.get(targetSessionId);
+        }
+
+        const targetGuildId = options?.guildId || null;
+        if (targetGuildId && state.voiceSessions) {
+            const match = Array.from(state.voiceSessions.values()).find(s => s.guildId === targetGuildId);
+            if (match) return match;
+        }
+
+        if (state.voiceSessions && state.voiceSessions.size > 0) {
+            const sessions = Array.from(state.voiceSessions.values());
+            sessions.sort((a, b) => (b.activeAt || 0) - (a.activeAt || 0));
+            return sessions[0];
+        }
+
+        return state.voice || null;
     }
 
     /**
@@ -305,7 +392,39 @@ class TokenCoordinator extends EventEmitter {
             return { application_id: quest.applicationId, terminal };
         }
 
-        // Priority 2: Check if account is in guild voice
+        const hash = this.hashToken(token);
+        const state = this.tokenStates.get(hash);
+        const sessions = Array.from(state?.voiceSessions?.values() || []);
+
+        // Priority 2: Explicit guild match when quest specifies guildId
+        if (quest?.guildId && sessions.length > 0) {
+            const match = sessions.find(s => s.guildId === String(quest.guildId));
+            if (match?.guildId && match?.channelId) {
+                return {
+                    stream_key: `guild:${match.guildId}:${match.channelId}`,
+                    terminal
+                };
+            }
+        }
+
+        // Single active voice session
+        if (sessions.length === 1 && sessions[0].guildId && sessions[0].channelId) {
+            return {
+                stream_key: `guild:${sessions[0].guildId}:${sessions[0].channelId}`,
+                terminal
+            };
+        }
+
+        // Multiple active sessions across different guilds without explicit quest match:
+        // Ambiguous stream key could disconnect the account from one of its guilds; fallback safely to call stream
+        if (sessions.length > 1) {
+            return {
+                stream_key: `call:${quest?.id || 'default'}:1`,
+                terminal
+            };
+        }
+
+        // Priority 2 fallback: single legacy voice activity check
         const voice = this.getVoiceActivity(token);
         if (voice?.guildId && voice?.channelId) {
             return {
@@ -402,6 +521,11 @@ class TokenCoordinator extends EventEmitter {
             source
         });
 
+        // Repump queue to respect new backoff deadline
+        if (state.rateLimiter) {
+            this._pumpRateLimitQueue(hash);
+        }
+
         if (backoffSeconds >= 15) {
             try {
                 const { sendWebhookEvent } = require('../core/webhooks');
@@ -429,8 +553,63 @@ class TokenCoordinator extends EventEmitter {
         }
     }
 
+    _refillTokens(limiter) {
+        const now = Date.now();
+        const elapsedSec = (now - limiter.lastRefill) / 1000;
+        if (elapsedSec > 0) {
+            limiter.tokens = Math.min(
+                this.rateLimitConfig.capacity,
+                limiter.tokens + (elapsedSec * this.rateLimitConfig.refillRatePerSec)
+            );
+            limiter.lastRefill = now;
+        }
+    }
+
+    _pumpRateLimitQueue(tokenHash) {
+        const state = this.tokenStates.get(tokenHash);
+        if (!state || !state.rateLimiter) return;
+        const limiter = state.rateLimiter;
+        if (limiter.pumpTimer) {
+            clearTimeout(limiter.pumpTimer);
+            limiter.pumpTimer = null;
+        }
+
+        const now = Date.now();
+        if (state.backoffUntil && state.backoffUntil > now) {
+            const waitMs = state.backoffUntil - now;
+            limiter.pumpTimer = setTimeout(() => this._pumpRateLimitQueue(tokenHash), waitMs + 5);
+            return;
+        }
+
+        this._refillTokens(limiter);
+
+        while (limiter.queue && limiter.queue.length > 0) {
+            const head = limiter.queue[0];
+            if (head.cancelled) {
+                limiter.queue.shift();
+                continue;
+            }
+
+            const isCritical = head.priority === 'CRITICAL';
+            const cost = 1;
+            const canAcquire = isCritical ? limiter.tokens >= 0.5 : limiter.tokens >= cost;
+
+            if (canAcquire) {
+                limiter.queue.shift();
+                if (head.timer) clearTimeout(head.timer);
+                limiter.tokens = Math.max(0, limiter.tokens - cost);
+                head.resolve();
+            } else {
+                const needed = (isCritical ? 0.5 : 1) - limiter.tokens;
+                const waitMs = Math.max(10, Math.ceil((needed / this.rateLimitConfig.refillRatePerSec) * 1000));
+                limiter.pumpTimer = setTimeout(() => this._pumpRateLimitQueue(tokenHash), waitMs);
+                break;
+            }
+        }
+    }
+
     /**
-     * Acquire a rate limit slot for a token using adaptive leaky bucket
+     * Acquire a rate limit slot for a token using queue-based reservation
      * @param {string} tokenHash
      * @param {{ maxWaitMs?: number, priority?: 'CRITICAL'|'NORMAL'|'BACKGROUND' }} [options]
      */
@@ -439,8 +618,8 @@ class TokenCoordinator extends EventEmitter {
         const maxWaitMs = options.maxWaitMs ?? 20000;
         const priority = String(options.priority || 'NORMAL').toUpperCase();
         const state = this._getOrCreateState(tokenHash);
+        const limiter = state.rateLimiter;
 
-        // Check if token is in 429 backoff pause
         const now = Date.now();
         if (state.backoffUntil && state.backoffUntil > now) {
             const backoffWaitMs = state.backoffUntil - now;
@@ -449,54 +628,94 @@ class TokenCoordinator extends EventEmitter {
                 err.code = 'RATE_LIMIT_BACKOFF';
                 throw err;
             }
-            const jitter = crypto.randomInt(10, 30);
-            await new Promise((resolve) => setTimeout(resolve, backoffWaitMs + jitter));
         }
 
-        const limiter = state.rateLimiter;
-        const currentNow = Date.now();
+        this._refillTokens(limiter);
 
-        // Refill tokens
-        const elapsedSec = (currentNow - limiter.lastRefill) / 1000;
-        limiter.tokens = Math.min(
-            this.rateLimitConfig.capacity,
-            limiter.tokens + (elapsedSec * this.rateLimitConfig.refillRatePerSec)
-        );
-        limiter.lastRefill = currentNow;
-
-        // CRITICAL priority (e.g. Voice session keepalive) bypasses wait if capacity has at least 0.5 slot
-        if (priority === 'CRITICAL' && limiter.tokens >= 0.5) {
-            limiter.tokens = Math.max(0, limiter.tokens - 1);
-            return;
+        if (options?.signal?.aborted) {
+            const abortErr = options.signal.reason || new Error('This operation was aborted');
+            return Promise.reject(abortErr);
         }
 
-        if (limiter.tokens >= 1) {
-            limiter.tokens -= 1;
-            return;
+        const inBackoff = Boolean(state.backoffUntil && state.backoffUntil > now);
+        if (!inBackoff && (!limiter.queue || limiter.queue.length === 0)) {
+            if (priority === 'CRITICAL' && limiter.tokens >= 0.5) {
+                limiter.tokens = Math.max(0, limiter.tokens - 1);
+                return;
+            }
+            if (limiter.tokens >= 1) {
+                limiter.tokens -= 1;
+                return;
+            }
         }
 
-        // Calculate needed wait time to refill 1 token
-        const needed = 1 - limiter.tokens;
-        const waitMs = Math.ceil((needed / this.rateLimitConfig.refillRatePerSec) * 1000);
-        if (waitMs > maxWaitMs) {
-            const err = new Error(`RATE_LIMIT_TIMEOUT: Token rate limit capacity exhausted (wait ${waitMs}ms > max ${maxWaitMs}ms)`);
-            err.code = 'RATE_LIMIT_TIMEOUT';
-            throw err;
-        }
+        return new Promise((resolve, reject) => {
+            let onAbort = null;
+            const cleanupAbort = () => {
+                if (options?.signal && onAbort) {
+                    try {
+                        options.signal.removeEventListener('abort', onAbort);
+                    } catch {}
+                }
+            };
 
-        // Micro-jitter to prevent thundering herd
-        const jitter = crypto.randomInt(2, 12);
-        await new Promise((resolve) => setTimeout(resolve, waitMs + jitter));
+            const ticket = {
+                resolve: () => {
+                    cleanupAbort();
+                    resolve();
+                },
+                reject: (err) => {
+                    cleanupAbort();
+                    reject(err);
+                },
+                priority,
+                maxWaitMs,
+                enqueuedAt: Date.now(),
+                timer: null,
+                cancelled: false
+            };
 
-        // Double check after waking
-        const postNow = Date.now();
-        const postElapsed = (postNow - limiter.lastRefill) / 1000;
-        limiter.tokens = Math.min(
-            this.rateLimitConfig.capacity,
-            limiter.tokens + (postElapsed * this.rateLimitConfig.refillRatePerSec)
-        );
-        limiter.tokens = Math.max(0, limiter.tokens - 1);
-        limiter.lastRefill = postNow;
+            if (options?.signal) {
+                onAbort = () => {
+                    ticket.cancelled = true;
+                    if (ticket.timer) clearTimeout(ticket.timer);
+                    if (limiter.queue) {
+                        const idx = limiter.queue.indexOf(ticket);
+                        if (idx !== -1) limiter.queue.splice(idx, 1);
+                    }
+                    ticket.reject(options.signal.reason || new Error('This operation was aborted'));
+                };
+                options.signal.addEventListener('abort', onAbort, { once: true });
+            }
+
+            ticket.timer = setTimeout(() => {
+                ticket.cancelled = true;
+                cleanupAbort();
+                if (limiter.queue) {
+                    const idx = limiter.queue.indexOf(ticket);
+                    if (idx !== -1) limiter.queue.splice(idx, 1);
+                }
+                const waitTime = Date.now() - ticket.enqueuedAt;
+                const err = new Error(`RATE_LIMIT_TIMEOUT: Token rate limit capacity exhausted (wait ${waitTime}ms > max ${maxWaitMs}ms)`);
+                err.code = 'RATE_LIMIT_TIMEOUT';
+                reject(err);
+            }, maxWaitMs);
+
+            if (!limiter.queue) limiter.queue = [];
+            const priorityWeight = { CRITICAL: 0, NORMAL: 1, BACKGROUND: 2 };
+            const ticketWeight = priorityWeight[priority] ?? 1;
+            let insertIdx = limiter.queue.length;
+            for (let i = 0; i < limiter.queue.length; i++) {
+                const existingWeight = priorityWeight[limiter.queue[i].priority] ?? 1;
+                if (ticketWeight < existingWeight) {
+                    insertIdx = i;
+                    break;
+                }
+            }
+            limiter.queue.splice(insertIdx, 0, ticket);
+
+            this._pumpRateLimitQueue(tokenHash);
+        });
     }
 
     /**
@@ -511,19 +730,31 @@ class TokenCoordinator extends EventEmitter {
      */
     _parse429WaitMs(err) {
         let waitSec = 2.5;
-        const headerVal = err?.response?.headers?.get?.('retry-after') || err?.headers?.['retry-after'];
+        const headerVal = err?.response?.headers?.get?.('retry-after') ||
+            err?.headers?.['retry-after'] ||
+            err?.headers?.['Retry-After'];
+
         if (headerVal && !Number.isNaN(Number(headerVal))) {
             waitSec = Number.parseFloat(headerVal);
+        } else if (typeof err?.retryAfter === 'number') {
+            waitSec = err.retryAfter >= 20 ? err.retryAfter / 1000 : err.retryAfter;
         } else if (typeof err?.retry_after === 'number') {
-            waitSec = err.retry_after > 100 ? err.retry_after / 1000 : err.retry_after;
+            waitSec = err.retry_after >= 20 ? err.retry_after / 1000 : err.retry_after;
+        } else if (typeof err?.rawError?.retry_after === 'number') {
+            const raw = err.rawError.retry_after;
+            waitSec = raw >= 20 ? raw / 1000 : raw;
         }
-        return Math.ceil(waitSec * 1000) + 100;
+        const calculatedMs = Math.max(300, Math.ceil(waitSec * 1000) + 100);
+        return Math.min(calculatedMs, 60000);
     }
 
     _is429Error(err) {
+        if (err?.code === 'RATE_LIMIT_TIMEOUT' || err?.code === 'RATE_LIMIT_BACKOFF') {
+            return false;
+        }
         const status = err?.status || err?.statusCode || err?.response?.status;
         const msg = String(err?.message || '');
-        return status === 429 || msg.includes('429') || msg.toLowerCase().includes('rate limit');
+        return status === 429 || msg.includes('429') || (msg.toLowerCase().includes('rate limit') && !msg.startsWith('RATE_LIMIT_'));
     }
 
     _checkAndQuarantineOnAuthError(hash, subsystem, err) {
@@ -598,7 +829,7 @@ class TokenCoordinator extends EventEmitter {
     /**
      * Universal Standard Task Runner for current and future subsystems
      * @param {string} token
-     * @param {{ subsystem: string, priority?: 'CRITICAL'|'NORMAL'|'BACKGROUND', timeoutMs?: number, retryOn429?: boolean, metadata?: object }} options
+     * @param {{ subsystem: string, priority?: 'CRITICAL'|'NORMAL'|'BACKGROUND', timeoutMs?: number, retryOn429?: boolean, metadata?: object, signal?: any }} options
      * @param {() => Promise<any>} taskFn
      * @returns {Promise<any>}
      */
@@ -614,18 +845,36 @@ class TokenCoordinator extends EventEmitter {
             this.acquireActivity(token, subsystem, options?.metadata || {});
         }
 
-        let timeoutTimer;
+        let timeoutTimer = null;
         let timedOut = false;
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        if (options?.signal && controller) {
+            if (options.signal.aborted) {
+                controller.abort(options.signal.reason);
+            } else {
+                options.signal.addEventListener('abort', () => controller.abort(options.signal.reason), { once: true });
+            }
+        }
+
         try {
-            const taskPromise = this.executeWithToken(token, subsystem, taskFn, options);
+            const wrappedFn = () => {
+                if (taskFn.length > 0) {
+                    return taskFn({ signal: controller?.signal });
+                }
+                return taskFn();
+            };
+
+            const taskPromise = this.executeWithToken(token, subsystem, wrappedFn, options);
             if (timeoutMs > 0) {
                 const timeoutPromise = new Promise((_, reject) => {
                     timeoutTimer = setTimeout(() => {
                         timedOut = true;
                         const err = new Error(`TASK_TIMEOUT: Subsystem ${subsystem} timed out after ${timeoutMs}ms`);
                         err.code = 'TASK_TIMEOUT';
+                        if (controller) controller.abort(err);
                         reject(err);
                     }, timeoutMs);
+                    timeoutTimer?.unref?.();
                 });
                 taskPromise.catch(() => {}).finally(() => {
                     if (timedOut && hash) {
@@ -853,13 +1102,28 @@ class TokenCoordinator extends EventEmitter {
      */
     getStatusSummary() {
         const states = Array.from(this.tokenStates.entries());
-        const voiceSessions = states.filter(([_, s]) => Boolean(s.voice)).map(([hash, s]) => ({
-            tokenHash: hash,
-            guildId: s.voice.guildId,
-            channelId: s.voice.channelId,
-            sessionId: s.voice.sessionId,
-            activeAt: s.voice.activeAt
-        }));
+        const voiceSessions = [];
+        for (const [hash, s] of states) {
+            if (s.voiceSessions && s.voiceSessions.size > 0) {
+                for (const vs of s.voiceSessions.values()) {
+                    voiceSessions.push({
+                        tokenHash: hash,
+                        guildId: vs.guildId,
+                        channelId: vs.channelId,
+                        sessionId: vs.sessionId,
+                        activeAt: vs.activeAt
+                    });
+                }
+            } else if (s.voice) {
+                voiceSessions.push({
+                    tokenHash: hash,
+                    guildId: s.voice.guildId,
+                    channelId: s.voice.channelId,
+                    sessionId: s.voice.sessionId,
+                    activeAt: s.voice.activeAt
+                });
+            }
+        }
 
         const questSessions = states.filter(([_, s]) => Boolean(s.quest)).map(([hash, s]) => ({
             tokenHash: hash,
@@ -907,6 +1171,18 @@ class TokenCoordinator extends EventEmitter {
      * Reset all internal states (useful for testing or full cleanup)
      */
     reset() {
+        for (const state of this.tokenStates.values()) {
+            if (state.rateLimiter?.pumpTimer) {
+                clearTimeout(state.rateLimiter.pumpTimer);
+                state.rateLimiter.pumpTimer = null;
+            }
+            if (state.rateLimiter?.queue) {
+                for (const ticket of state.rateLimiter.queue) {
+                    if (ticket.timer) clearTimeout(ticket.timer);
+                }
+                state.rateLimiter.queue = [];
+            }
+        }
         this.tokenStates.clear();
         this.tokenLocks.clear();
         this.subsystems.clear();

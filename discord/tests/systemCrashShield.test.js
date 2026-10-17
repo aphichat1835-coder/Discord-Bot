@@ -223,3 +223,18 @@ test("isRecoverableRuntimeError shields DiscordAPIError, messaging issues, and M
     assert.equal(isRecoverableRuntimeError(undefined), false);
 });
 
+test("error classification separates fatal programmer errors from transient gateway errors", () => {
+    // Fatal errors that must never be shielded
+    assert.equal(isTransientGatewayError(new TypeError("Cannot read properties of null (reading 'id')")), false);
+    assert.equal(isTransientGatewayError(new ReferenceError("unresolvedVariable is not defined")), false);
+    assert.equal(isTransientGatewayError(new RangeError("Maximum call stack size exceeded")), false);
+
+    // True transient gateway errors that can be resumed
+    assert.equal(isTransientGatewayError(new Error("Unexpected server response: 524")), true);
+    assert.equal(isTransientGatewayError(new Error("Opening handshake has timed out")), true);
+    const connReset = new Error("read ECONNRESET");
+    connReset.code = "ECONNRESET";
+    connReset.stack = "Error: read ECONNRESET at TLSWrap.onStreamRead (/app/node_modules/ws/lib/websocket.js:930)";
+    assert.equal(isTransientGatewayError(connReset), true);
+});
+

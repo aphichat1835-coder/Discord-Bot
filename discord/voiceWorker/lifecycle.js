@@ -750,7 +750,7 @@ function setupVoiceConnectionListeners({ connection, client, guild, guildId, tok
     });
 
     connection.on(VoiceConnectionStatus.Destroyed, () => {
-        tokenCoordinator.unregisterVoiceActivity(tokenHash);
+        tokenCoordinator.unregisterVoiceActivity(tokenHash, { sessionId, guildId });
     });
 
     let disconnectHandling = false;
