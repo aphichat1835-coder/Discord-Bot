@@ -1,4 +1,4 @@
-# Phomueangtai Personal Multi-Tool Discord Bot
+# Phomueangtai Personal Multi-Tool Discord Bot่ืืืืืืืืืืแปกำเ
 
 Personal Discord bot with slash commands, voice/session automation, moderation
 cases, protection features, role buttons, a private bot-control dashboard, and OAuth2 verification.
