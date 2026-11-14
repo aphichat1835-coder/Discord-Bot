@@ -485,6 +485,20 @@ async function _validateVerificationPreconditions(stateObj) {
         };
     }
 
+    if (guildConfig.verification?.roleId && stateRoleId && String(guildConfig.verification.roleId) !== String(stateRoleId)) {
+        return {
+            ok: false,
+            response: {
+                statusCode: 200,
+                body: {
+                    success: false,
+                    error: "ลิงก์ยืนยันไม่ตรงกับการตั้งค่าปัจจุบัน กรุณาใช้แผงล่าสุด",
+                    code: "role_mismatch"
+                }
+            }
+        };
+    }
+
     const revisionCheck = isPanelRevisionValid(guildConfig, stateObj);
     if (!revisionCheck.ok) {
         return {

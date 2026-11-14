@@ -25,7 +25,7 @@ const { AttachmentBuilder, MessageEmbed, MessageActionRow, MessageButton } = req
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../voiceWorker/sessionManager");
-const { createCompactCallbackState } = require("../verification/utils/state");
+const { createCompactCallbackState, createDirectPanelState } = require("../verification/utils/state");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
@@ -196,7 +196,60 @@ function buildOAuthStartUrl({
     return url;
 }
 
-const buildDiscordAuthorizeUrl = buildOAuthStartUrl;
+function buildDiscordAuthorizeUrl({
+    interaction = null,
+    clientId = null,
+    baseUrl = null,
+    guildId,
+    roleId,
+    expectedUserId = null,
+    panelRevision = null,
+    scope = VERIFY_SCOPE
+}) {
+    const resolvedClientId = String(
+        clientId ||
+        getDiscordClientId(interaction)
+    ).trim();
+
+    if (!resolvedClientId) {
+        throw new Error("Missing DISCORD_CLIENT_ID");
+    }
+
+    const resolvedBaseUrl = String(
+        baseUrl ||
+        getDashboardUrl()
+    ).trim();
+
+    if (!resolvedBaseUrl) {
+        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL/PUBLIC_BASE_URL");
+    }
+
+    const redirectUri = `${resolvedBaseUrl.replace(/\/+$/, "")}/auth/callback`;
+
+    const state = createDirectPanelState({
+        guildId,
+        roleId,
+        expectedUserId,
+        panelRevision
+    });
+
+    const params = new URLSearchParams({
+        client_id: resolvedClientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        scope,
+        state,
+        prompt: "consent"
+    });
+
+    const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
+
+    if (url.length > 512) {
+        throw new Error(`OAuth URL too long (${url.length}/512). Use a shorter domain or panel revision.`);
+    }
+
+    return url;
+}
 
 function isLikelyUnicodeEmoji(raw) {
     if (!raw || typeof raw !== "string") return false;

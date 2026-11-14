@@ -31,6 +31,7 @@ const IpIdentityLink = require("../models/IpIdentityLink");
 
 const {
   createCompactCallbackState,
+  createDirectPanelState,
   getStateSecret
 } = require("../utils/state");
 const {
@@ -714,8 +715,45 @@ function buildOAuthStartUrl(req, { guildId, roleId, panelRevision = null }) {
   return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 }
 
-function buildDiscordAuthorizeUrl(req, options) {
-  return buildOAuthStartUrl(req, options);
+const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
+
+function buildDiscordAuthorizeUrl(req, {
+  guildId,
+  roleId,
+  panelRevision = null,
+  expectedUserId = null,
+  clientId = null,
+  scope = VERIFY_SCOPE
+} = {}) {
+  const dashboardUrl = getPublicBaseUrl();
+  const resolvedClientId = clientId || process.env.DISCORD_CLIENT_ID;
+
+  if (!dashboardUrl) throw new Error("Missing PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL");
+  if (!resolvedClientId) throw new Error("Missing DISCORD_CLIENT_ID");
+
+  const redirectUri = `${dashboardUrl.replace(/\/+$/, "")}/auth/callback`;
+  const state = createDirectPanelState({
+    guildId,
+    roleId,
+    expectedUserId,
+    panelRevision
+  });
+
+  const params = new URLSearchParams({
+    client_id: resolvedClientId,
+    response_type: "code",
+    redirect_uri: redirectUri,
+    scope,
+    state,
+    prompt: "consent"
+  });
+
+  const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
+  if (url.length > 512) {
+    throw new Error(`Direct OAuth URL too long (${url.length}/512). Use a shorter domain or panel revision.`);
+  }
+
+  return url;
 }
 
 function makePanelPayload(req, { guildId, verification }) {
@@ -725,7 +763,7 @@ function makePanelPayload(req, { guildId, verification }) {
   let oauthUrl = "";
 
   if (mode === "oauth") {
-    oauthUrl = buildOAuthStartUrl(req, {
+    oauthUrl = buildDiscordAuthorizeUrl(req, {
       guildId,
       roleId: verification.roleId,
       panelRevision: verification.panelRevision

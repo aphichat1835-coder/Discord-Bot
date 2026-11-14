@@ -147,6 +147,42 @@ test("validateCallbackStateNonce handles missing code, invalid state, and nonce 
     assert.equal(res4.sentJson.code, "callback_state_replayed");
 });
 
+test("validateCallbackStateNonce allows multiple users on static direct panel state v5 without replay collision", async () => {
+    const { createDirectPanelState } = require("../discord/verification/utils/state");
+
+    const directPanelState = createDirectPanelState({
+        guildId: "123456789012345678",
+        roleId: "234567890123456789",
+        expectedUserId: null,
+        panelRevision: "panel_rev_prod1"
+    });
+
+    // User 1 uses the panel link
+    const resUser1 = mockResponse();
+    const r1 = await validateCallbackStateNonce({ code: "oauth_code_user_1", state: directPanelState }, resUser1, "req_u1");
+    assert.equal(r1.ok, true);
+    assert.equal(r1.code, "oauth_code_user_1");
+    assert.equal(r1.stateObj.v, 5);
+    assert.equal(r1.stateObj.stateType, "panel");
+    assert.equal(r1.stateObj.guildId, "123456789012345678");
+    assert.equal(r1.stateObj.roleId, "234567890123456789");
+    assert.equal(r1.stateObj.panelRevision, "panel_rev_prod1");
+
+    // User 2 uses the same panel link simultaneously -> MUST SUCCEED (no single-use nonce collision!)
+    const resUser2 = mockResponse();
+    const r2 = await validateCallbackStateNonce({ code: "oauth_code_user_2", state: directPanelState }, resUser2, "req_u2");
+    assert.equal(r2.ok, true);
+    assert.equal(r2.code, "oauth_code_user_2");
+    assert.equal(r2.stateObj.v, 5);
+    assert.equal(r2.stateObj.stateType, "panel");
+
+    // Tampered direct panel state fails
+    const resTampered = mockResponse();
+    const rTampered = await validateCallbackStateNonce({ code: "oauth_code_tampered", state: directPanelState + "tampered" }, resTampered, "req_tampered");
+    assert.equal(rTampered.ok, false);
+    assert.equal(resTampered.sentJson.code, "invalid_callback_state");
+});
+
 test("buildPolicySnapshot builds normalized snapshot with defaults and overrides", () => {
     const defaultSnap = buildPolicySnapshot();
     assert.equal(defaultSnap.enabled, true);

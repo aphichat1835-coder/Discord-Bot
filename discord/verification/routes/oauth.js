@@ -68,6 +68,22 @@ async function validateCallbackStateNonce(body, res, requestId) {
         };
     }
 
+    if (stateObj.stateType === "panel" || stateObj.mode === "direct-panel-oauth") {
+        if (!stateObj.guildId || !stateObj.roleId || !stateObj.panelRevision) {
+            return {
+                ok: false,
+                response: jsonFail(
+                    res,
+                    "ข้อมูลแผงยืนยันไม่ครบถ้วน กรุณากดปุ่มใหม่อีกครั้ง",
+                    "invalid_panel_state",
+                    200,
+                    requestId
+                )
+            };
+        }
+        return { ok: true, code, stateObj };
+    }
+
     if (stateObj?.nonce) {
         const consumed = await consumeVerificationState(stateObj);
         if (!consumed) {

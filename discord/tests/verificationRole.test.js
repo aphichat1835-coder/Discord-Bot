@@ -128,10 +128,12 @@ test("verification setup failure explains each recovery state without nested for
     );
 });
 
-test("buildOAuthStartUrl and buildDiscordAuthorizeUrl alias build OAuth start trampoline URL with compact state", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("buildOAuthStartUrl builds OAuth start trampoline URL and buildDiscordAuthorizeUrl builds direct Discord authorization URL", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
+    const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
         process.env.PUBLIC_BASE_URL = "https://example.test";
+        process.env.DISCORD_CLIENT_ID = "999888777666555444";
 
         const startUrl = _test.buildOAuthStartUrl({
             interaction: {},
@@ -148,12 +150,26 @@ test("buildOAuthStartUrl and buildDiscordAuthorizeUrl alias build OAuth start tr
         });
 
         assert.ok(startUrl.startsWith("https://example.test/auth/start?state="));
-        assert.ok(url.startsWith("https://example.test/auth/start?state="));
+        assert.ok(url.startsWith("https://discord.com/oauth2/authorize?"));
+        assert.ok(!url.includes("/auth/start"));
+        assert.ok(url.length <= 512, "URL length must be within 512 characters");
+
+        const parsedUrl = new URL(url);
+        assert.equal(parsedUrl.origin, "https://discord.com");
+        assert.equal(parsedUrl.pathname, "/oauth2/authorize");
+        assert.equal(parsedUrl.searchParams.get("client_id"), "999888777666555444");
+        assert.equal(parsedUrl.searchParams.get("response_type"), "code");
+        assert.equal(parsedUrl.searchParams.get("redirect_uri"), "https://example.test/auth/callback");
+        assert.equal(parsedUrl.searchParams.get("scope"), "identify email connections guilds guilds.members.read guilds.join");
+        assert.equal(parsedUrl.searchParams.get("prompt"), "consent");
+
         const { decodeCallbackState } = require("../verification/utils/state");
         const decodedStart = decodeCallbackState(new URL(startUrl).searchParams.get("state"));
-        const decoded = decodeCallbackState(new URL(url).searchParams.get("state"));
+        const decoded = decodeCallbackState(parsedUrl.searchParams.get("state"));
         assert.ok(decodedStart);
         assert.ok(decoded);
+        assert.equal(decoded.v, 5);
+        assert.equal(decoded.stateType, "panel");
         assert.equal(decoded.guildId, "11111111111111111");
         assert.equal(decoded.roleId, "22222222222222222");
         assert.equal(decoded.panelRevision, "panel_test123");
@@ -163,17 +179,21 @@ test("buildOAuthStartUrl and buildDiscordAuthorizeUrl alias build OAuth start tr
     } finally {
         if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL;
         else process.env.PUBLIC_BASE_URL = prevBase;
+        if (prevClient === undefined) delete process.env.DISCORD_CLIENT_ID;
+        else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
 
-test("buildOAuthStartUrl and buildDiscordAuthorizeUrl throw when public URL is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+test("buildOAuthStartUrl and buildDiscordAuthorizeUrl throw when public URL or client ID is missing", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const prevBase = process.env.PUBLIC_BASE_URL;
     const prevDashboard = process.env.PUBLIC_DASHBOARD_URL;
+    const prevClient = process.env.DISCORD_CLIENT_ID;
     try {
         delete process.env.PUBLIC_BASE_URL;
         delete process.env.PUBLIC_DASHBOARD_URL;
         delete process.env.DASHBOARD_URL;
         delete process.env.RENDER_EXTERNAL_URL;
+        process.env.DISCORD_CLIENT_ID = "999888777666555444";
 
         assert.throws(
             () => _test.buildOAuthStartUrl({ interaction: {}, guildId: "1", roleId: "2" }),
@@ -183,11 +203,20 @@ test("buildOAuthStartUrl and buildDiscordAuthorizeUrl throw when public URL is m
             () => _test.buildDiscordAuthorizeUrl({ interaction: {}, guildId: "1", roleId: "2" }),
             /Missing PUBLIC_DASHBOARD_URL/
         );
+
+        process.env.PUBLIC_BASE_URL = "https://example.test";
+        delete process.env.DISCORD_CLIENT_ID;
+        assert.throws(
+            () => _test.buildDiscordAuthorizeUrl({ interaction: {}, guildId: "1", roleId: "2" }),
+            /Missing DISCORD_CLIENT_ID/
+        );
     } finally {
         if (prevBase === undefined) delete process.env.PUBLIC_BASE_URL;
         else process.env.PUBLIC_BASE_URL = prevBase;
         if (prevDashboard === undefined) delete process.env.PUBLIC_DASHBOARD_URL;
         else process.env.PUBLIC_DASHBOARD_URL = prevDashboard;
+        if (prevClient === undefined) delete process.env.DISCORD_CLIENT_ID;
+        else process.env.DISCORD_CLIENT_ID = prevClient;
     }
 });
 

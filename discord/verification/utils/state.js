@@ -69,6 +69,73 @@ function normalizePanelRevision(panelRevision) {
         .slice(0, 80) || "legacy";
 }
 
+const DEFAULT_PANEL_STATE_TTL_MS = 1000 * 60 * 60 * 24 * 365 * 10;
+
+function createDirectPanelState({
+    guildId,
+    roleId,
+    expectedUserId = null,
+    panelRevision = null,
+    expiresAt = null
+}) {
+    if (!guildId || !roleId) {
+        throw new Error("guildId and roleId are required to create panel state");
+    }
+    const user = expectedUserId || "0";
+    const revision = normalizePanelRevision(panelRevision);
+    const exp = (expiresAt != null && Number.isFinite(Number(expiresAt)) && Number(expiresAt) > 0)
+        ? Number(expiresAt)
+        : Date.now() + DEFAULT_PANEL_STATE_TTL_MS;
+    const ts = exp.toString(36);
+    const salt = crypto.randomBytes(6).toString("base64url");
+
+    const data = `5|${guildId}|${roleId}|${user}|${revision}|${ts}|${salt}`;
+    const sig = signCompactStateData(data);
+
+    return `5.${guildId}.${roleId}.${user}.${revision}.${ts}.${salt}.${sig}`;
+}
+
+function decodeCompactCallbackStateV5(parts) {
+    if (parts.length !== 8) return null;
+
+    const [version, guildId, roleId, user, panelRevision, ts36, salt, sig] = parts;
+
+    if (
+        version !== "5" ||
+        !guildId ||
+        !roleId ||
+        !user ||
+        !panelRevision ||
+        !ts36 ||
+        !salt ||
+        !sig
+    ) {
+        return null;
+    }
+
+    const data = `${version}|${guildId}|${roleId}|${user}|${panelRevision}|${ts36}|${salt}`;
+    const expected = signCompactStateData(data);
+
+    if (!safeEqual(sig, expected)) return null;
+
+    const ts = Number.parseInt(ts36, 36);
+
+    if (!Number.isFinite(ts)) return null;
+
+    return {
+        v: 5,
+        type: "verify-callback",
+        stateType: "panel",
+        guildId,
+        roleId,
+        expectedUserId: user === "0" ? null : user,
+        panelRevision,
+        ts,
+        salt,
+        mode: "direct-panel-oauth"
+    };
+}
+
 function createCompactCallbackState({
     guildId,
     roleId,
@@ -117,6 +184,7 @@ function decodeCompactCallbackStateV4(parts) {
     return {
         v: 4,
         type: "verify-callback",
+        stateType: "execution",
         guildId,
         roleId,
         expectedUserId: user === "0" ? null : user,
@@ -148,6 +216,7 @@ function decodeCompactCallbackStateV3(parts) {
     return {
         v: 3,
         type: "verify-callback",
+        stateType: "execution",
         guildId,
         roleId,
         expectedUserId: user === "0" ? null : user,
@@ -162,6 +231,7 @@ function decodeCompactCallbackState(token) {
     try {
         const parts = String(token || "").split(".");
 
+        if (parts[0] === "5") return decodeCompactCallbackStateV5(parts);
         if (parts[0] === "4") return decodeCompactCallbackStateV4(parts);
         if (parts[0] === "3") return decodeCompactCallbackStateV3(parts);
 
@@ -183,7 +253,7 @@ function decodeCallbackState(state, options = {}) {
     const compact = decodeCompactCallbackState(state);
 
     if (compact) {
-        if ((compact.v === 4 || compact.v === 3) && isCompactCallbackStateExpired(compact)) {
+        if ([3, 4, 5].includes(compact.v) && isCompactCallbackStateExpired(compact)) {
             return null;
         }
 
@@ -200,6 +270,7 @@ function decodeCallbackState(state, options = {}) {
 
     return {
         ...parsed,
+        stateType: parsed.stateType || "execution",
         expectedUserId: parsed.expectedUserId || parsed.userId || null,
         panelRevision: parsed.panelRevision || null,
         mode: "legacy-json-oauth"
@@ -208,12 +279,15 @@ function decodeCallbackState(state, options = {}) {
 
 module.exports = {
     DEFAULT_CALLBACK_STATE_MAX_AGE_MS,
+    DEFAULT_PANEL_STATE_TTL_MS,
     getStateSecret,
     requireStateSecret,
     safeEqual,
     signCompactStateData,
     encodeSignedState,
     decodeSignedState,
+    createDirectPanelState,
+    decodeCompactCallbackStateV5,
     createCompactCallbackState,
     decodeCompactCallbackState,
     isCompactCallbackStateExpired,
