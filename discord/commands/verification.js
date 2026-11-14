@@ -25,7 +25,8 @@ const { AttachmentBuilder, MessageEmbed, MessageActionRow, MessageButton } = req
 const config = require("../config.json");
 const { isConfiguredOwner } = require("../core/env");
 const sessionManager = require("../voiceWorker/sessionManager");
-const { createCompactCallbackState, createDirectPanelState } = require("../verification/utils/state");
+const { createCompactCallbackState } = require("../verification/utils/state");
+const { buildDirectDiscordAuthorizeUrl, VERIFY_SCOPE } = require("../verification/utils/directAuthorizeUrl");
 const { resolvePublicBaseUrl } = require("../core/publicUrl");
 const { markCommandAccepted } = require("../guards/commandGuards");
 const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks");
@@ -38,7 +39,6 @@ try {
     console.warn("[VERIFY] GuildConfig model unavailable:", err.message);
 }
 
-const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
 const PANEL_LIMITS = Object.freeze({ content: 2000, title: 256, description: 4096, footer: 2048, url: 2048 });
 const PERSIST_RETRY_DELAYS_MS = Object.freeze([0, 150, 400]);
 const SNOWFLAKE_RE = /^\d{17,22}$/;
@@ -211,44 +211,20 @@ function buildDiscordAuthorizeUrl({
         getDiscordClientId(interaction)
     ).trim();
 
-    if (!resolvedClientId) {
-        throw new Error("Missing DISCORD_CLIENT_ID");
-    }
-
     const resolvedBaseUrl = String(
         baseUrl ||
         getDashboardUrl()
     ).trim();
 
-    if (!resolvedBaseUrl) {
-        throw new Error("Missing PUBLIC_DASHBOARD_URL/DASHBOARD_URL/PUBLIC_BASE_URL");
-    }
-
-    const redirectUri = `${resolvedBaseUrl.replace(/\/+$/, "")}/auth/callback`;
-
-    const state = createDirectPanelState({
+    return buildDirectDiscordAuthorizeUrl({
+        clientId: resolvedClientId,
+        baseUrl: resolvedBaseUrl,
         guildId,
         roleId,
         expectedUserId,
-        panelRevision
+        panelRevision,
+        scope
     });
-
-    const params = new URLSearchParams({
-        client_id: resolvedClientId,
-        response_type: "code",
-        redirect_uri: redirectUri,
-        scope,
-        state,
-        prompt: "consent"
-    });
-
-    const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
-
-    if (url.length > 512) {
-        throw new Error(`OAuth URL too long (${url.length}/512). Use a shorter domain or panel revision.`);
-    }
-
-    return url;
 }
 
 function isLikelyUnicodeEmoji(raw) {

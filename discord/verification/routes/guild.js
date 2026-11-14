@@ -31,9 +31,12 @@ const IpIdentityLink = require("../models/IpIdentityLink");
 
 const {
   createCompactCallbackState,
-  createDirectPanelState,
   getStateSecret
 } = require("../utils/state");
+const {
+  buildDirectDiscordAuthorizeUrl,
+  VERIFY_SCOPE
+} = require("../utils/directAuthorizeUrl");
 const {
   normalizeGuildPermissions,
   canAccessGuildDashboard
@@ -715,8 +718,6 @@ function buildOAuthStartUrl(req, { guildId, roleId, panelRevision = null }) {
   return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 }
 
-const VERIFY_SCOPE = "identify email connections guilds guilds.members.read guilds.join";
-
 function buildDiscordAuthorizeUrl(req, {
   guildId,
   roleId,
@@ -728,32 +729,15 @@ function buildDiscordAuthorizeUrl(req, {
   const dashboardUrl = getPublicBaseUrl();
   const resolvedClientId = clientId || process.env.DISCORD_CLIENT_ID;
 
-  if (!dashboardUrl) throw new Error("Missing PUBLIC_BASE_URL/DASHBOARD_PUBLIC_URL");
-  if (!resolvedClientId) throw new Error("Missing DISCORD_CLIENT_ID");
-
-  const redirectUri = `${dashboardUrl.replace(/\/+$/, "")}/auth/callback`;
-  const state = createDirectPanelState({
+  return buildDirectDiscordAuthorizeUrl({
+    clientId: resolvedClientId,
+    baseUrl: dashboardUrl,
     guildId,
     roleId,
+    panelRevision,
     expectedUserId,
-    panelRevision
+    scope
   });
-
-  const params = new URLSearchParams({
-    client_id: resolvedClientId,
-    response_type: "code",
-    redirect_uri: redirectUri,
-    scope,
-    state,
-    prompt: "consent"
-  });
-
-  const url = `https://discord.com/oauth2/authorize?${params.toString()}`;
-  if (url.length > 512) {
-    throw new Error(`Direct OAuth URL too long (${url.length}/512). Use a shorter domain or panel revision.`);
-  }
-
-  return url;
 }
 
 function makePanelPayload(req, { guildId, verification }) {
@@ -2008,6 +1992,8 @@ router.delete("/api/guild/:guildId/member/:userId", requireAdmin, requireGuildAd
 router.get("/api/guild/:guildId", requireAdmin, requireGuildAdmin, (req, res) => handleGetGuildConfig(req, res, "get-guild", "โหลดการตั้งค่าเซิร์ฟเวอร์ไม่สำเร็จ"));
 
 router._test = {
+  buildDiscordAuthorizeUrl,
+  buildOAuthStartUrl,
   maskWebhookUrl,
   mergeVerificationConfig,
   tokenRevealErrorStatus,
