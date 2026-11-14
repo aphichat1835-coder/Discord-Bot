@@ -127,8 +127,7 @@ function buildMemberLogEmbed({
             { name: '🆔 User ID', value: `\`${member.id}\``, inline: true },
             { name: '📊 สถานะ', value: statusText, inline: false },
             { name: '⏰ เวลาที่ส่ง', value: `<t:${Math.floor(Date.now() / 1000)}:T> (<t:${Math.floor(Date.now() / 1000)}:R>)`, inline: false }
-        )
-        .setTimestamp();
+        );
 
     if (avatarUrl) {
         embed.setThumbnail(avatarUrl);
@@ -163,8 +162,7 @@ function buildFinalSummaryEmbed({
             { name: '⏱️ เวลาที่ใช้ทั้งหมด', value: `\`${formatDuration(durationMs)}\``, inline: true },
             { name: '🤖 บอทผู้ส่ง (ตัวรอง)', value: `\`${botUser?.tag || botUser?.id || 'Unknown'}\``, inline: true },
             { name: `${serverEmoji} เซิร์ฟเวอร์`, value: `\`${guild?.name}\` (\`${guild?.id}\`)`, inline: true }
-        )
-        .setTimestamp();
+        );
 
     if (guild?.iconUrl) {
         embed.setThumbnail(guild.iconUrl);
@@ -297,8 +295,7 @@ async function notifyFatalError(webhookClient, { jobErr, activeJob }) {
                     value: `ส่งสำเร็จ: **${activeJob?.sent || 0}** | ล้มเหลว: **${activeJob?.failed || 0}**`,
                     inline: true
                 }
-            )
-            .setTimestamp();
+            );
         await webhookClient.send({ embeds: [errorEmbed] }).catch(() => {});
     } catch {}
 }

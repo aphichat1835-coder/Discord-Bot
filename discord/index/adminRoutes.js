@@ -12,6 +12,7 @@ const { sendWebhookEvent, getDiscordGuildIconUrl } = require("../core/webhooks")
 const { getQuestLogRepository, getScheduledRunnerRepository } = require("../../database/repositories/quest");
 const { stopScheduledJob } = require("../quest");
 const tokenCoordinator = require("../tokens/tokenCoordinator");
+const { presenceManager, STATUS_OPTIONS, PLATFORM_CONFIGS } = require("../features/presence");
 
 function wait(ms) {
     return awaitedDelay(ms);
@@ -429,7 +430,76 @@ function registerAdminRoutes({
         }
     });
 
-    // ── Presence ──
+    // ── Presence State & Controls ──
+    app.get("/api/presence", async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            res.json({ success: true, ...presenceManager.getState() });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post("/api/presence/status", express.json(), async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const { status } = req.body || {};
+            if (!STATUS_OPTIONS.includes(String(status || "").toLowerCase())) {
+                return res.status(400).json({
+                    success: false,
+                    error: `สถานะไม่ถูกต้อง (ต้องเป็น: ${STATUS_OPTIONS.join(", ")})`
+                });
+            }
+            const result = await presenceManager.setStatus(status);
+            res.json({ success: true, ...result });
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post("/api/presence/platform", express.json(), async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const { platform, force } = req.body || {};
+            const cleanPlatform = String(platform || "").toLowerCase().trim();
+            if (!cleanPlatform || !PLATFORM_CONFIGS[cleanPlatform]) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Invalid platform: ${platform}. Must be one of: ${Object.keys(PLATFORM_CONFIGS).join(", ")}`
+                });
+            }
+            const result = await presenceManager.setPlatform(cleanPlatform, { force: force === true });
+            if (!result.success && result.error) {
+                return res.status(429).json({ success: false, error: result.error });
+            }
+            res.json(result);
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post("/api/presence/rotation", express.json(), async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const { enabled, items } = req.body || {};
+            const result = await presenceManager.saveRotation({ enabled, items });
+            res.json(result);
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    app.post("/api/presence/rotation/toggle", express.json(), async (req, res) => {
+        if (!checkAuth(req, res)) return;
+        try {
+            const result = await presenceManager.toggleRotation();
+            res.json(result);
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // ── Presence (Legacy Compatibility) ──
     app.post("/api/presence", express.json(), async (req, res) => {
         if (!checkAuth(req, res)) return;
 
@@ -517,7 +587,9 @@ function registerAdminRoutes({
             await sessionManager.setSetting("rotateInterval", interval);
             await sessionManager.setSetting("rotateMessages", msgs);
 
-            await startRotateTimer();
+            if (typeof startRotateTimer === "function") {
+                await startRotateTimer();
+            }
 
             res.json({ success: true });
         } catch (e) {

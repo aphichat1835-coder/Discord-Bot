@@ -126,7 +126,7 @@ function panelRollbackPayload(message = {}) {
 
 function panelColorHex(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? `#${number.toString(16).padStart(6, "0").slice(-6)}`.toUpperCase() : "#5865F2";
+  return Number.isFinite(number) ? `#${number.toString(16).padStart(6, "0").slice(-6)}`.toUpperCase() : "#DCDCDC";
 }
 
 function panelConfigFromDiscordMessage(message = {}) {
@@ -155,7 +155,7 @@ function comparablePanel(panel = {}) {
     content: normalized.content || "",
     title: normalized.title || "",
     description: normalized.description || "",
-    color: String(normalized.color || "#5865F2").toUpperCase(),
+    color: String(normalized.color || "#DCDCDC").toUpperCase(),
     imageUrl: normalized.imageUrl || "",
     thumbnailUrl: normalized.thumbnailUrl || "",
     footerText: normalized.footerText || "",
@@ -390,11 +390,24 @@ function makeRequestId(prefix = "req") {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
 }
 
+function sanitizeBooleanFlag(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "false" || trimmed === "0" || trimmed === "off" || trimmed === "no" || trimmed === "") {
+      return false;
+    }
+    if (trimmed === "true" || trimmed === "1" || trimmed === "on" || trimmed === "yes") {
+      return true;
+    }
+  }
+  return Boolean(value);
+}
+
 function sanitizeVerificationBasicFlags(input = {}) {
   const out = {};
   const BOOLEAN_FLAGS = ["enabled", "blockVPN", "blockHosting", "requireEmail", "requireEmailVerified", "requireConnections"];
   for (const flag of BOOLEAN_FLAGS) {
-    if (flag in input) out[flag] = Boolean(input[flag]);
+    if (flag in input) out[flag] = sanitizeBooleanFlag(input[flag]);
   }
 
   if ("minAccountAgeDays" in input) {
@@ -416,7 +429,7 @@ function sanitizeVerificationBasicFlags(input = {}) {
 function sanitizeSingleSecurityRule(rawRule, key) {
   if (!rawRule || typeof rawRule !== "object" || Array.isArray(rawRule)) return null;
   const rule = {};
-  if ("enabled" in rawRule) rule.enabled = rawRule.enabled === true || rawRule.enabled === "true" || rawRule.enabled === "on";
+  if ("enabled" in rawRule) rule.enabled = sanitizeBooleanFlag(rawRule.enabled);
   if ("action" in rawRule) rule.action = normalizeRuleAction(rawRule.action, "allow");
   if ("timeoutMinutes" in rawRule) rule.timeoutMinutes = clampNumber(rawRule.timeoutMinutes, 1, 40320, 60);
   if ((key === "ipDuplicate" || key === "deviceDuplicate") && "threshold" in rawRule) {
@@ -514,6 +527,36 @@ function resolveMergedSecurityRules(hasIncomingSecurityRules, clean, current) {
   ])), current);
 }
 
+function syncVpnProxyTor(clean, existing, merged) {
+  if (clean.securityRules && Object.hasOwn(clean.securityRules, "vpnProxyTor")) {
+    merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
+  } else if (Object.hasOwn(clean, "blockVPN") && merged.securityRules?.vpnProxyTor) {
+    merged.securityRules.vpnProxyTor.enabled = clean.blockVPN === true;
+    merged.blockVPN = clean.blockVPN === true;
+  } else if (merged.securityRules?.vpnProxyTor) {
+    const rawRules = existing?.securityRules;
+    if (existing?.blockVPN !== undefined && (!rawRules || !Object.hasOwn(rawRules, "vpnProxyTor"))) {
+      merged.securityRules.vpnProxyTor.enabled = existing.blockVPN === true;
+    }
+    merged.blockVPN = merged.securityRules.vpnProxyTor.enabled === true;
+  }
+}
+
+function syncHosting(clean, existing, merged) {
+  if (clean.securityRules && Object.hasOwn(clean.securityRules, "hosting")) {
+    merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
+  } else if (Object.hasOwn(clean, "blockHosting") && merged.securityRules?.hosting) {
+    merged.securityRules.hosting.enabled = clean.blockHosting === true;
+    merged.blockHosting = clean.blockHosting === true;
+  } else if (merged.securityRules?.hosting) {
+    const rawRules = existing?.securityRules;
+    if (existing?.blockHosting !== undefined && (!rawRules || !Object.hasOwn(rawRules, "hosting"))) {
+      merged.securityRules.hosting.enabled = existing.blockHosting === true;
+    }
+    merged.blockHosting = merged.securityRules.hosting.enabled === true;
+  }
+}
+
 function mergeVerificationConfig(existing = {}, incoming = {}) {
   const current = normalizeVerificationConfig(existing || {});
   const clean = sanitizeVerification(incoming || {});
@@ -534,20 +577,20 @@ function mergeVerificationConfig(existing = {}, incoming = {}) {
   merged.oauthMode = normalizeVerifyMode(merged.verifyType || merged.panel?.verifyType);
   merged.verifyType = merged.oauthMode;
   merged.panel.verifyType = merged.oauthMode;
-  if (hasIncomingSecurityRules) {
-    if (clean.securityRules && Object.hasOwn(clean.securityRules, "vpnProxyTor")) {
-      merged.blockVPN = merged.securityRules?.vpnProxyTor?.enabled === true;
-    }
-    if (clean.securityRules && Object.hasOwn(clean.securityRules, "hosting")) {
-      merged.blockHosting = merged.securityRules?.hosting?.enabled === true;
-    }
-  }
+  syncVpnProxyTor(clean, existing, merged);
+  syncHosting(clean, existing, merged);
   return normalizeVerificationConfig(merged);
 }
 
 function serializeConfig(doc) {
   const raw = doc?.toObject ? doc.toObject() : doc || {};
   const verification = normalizeVerificationConfig(raw.verification || {});
+  if (verification.securityRules?.vpnProxyTor) {
+    verification.blockVPN = verification.securityRules.vpnProxyTor.enabled === true;
+  }
+  if (verification.securityRules?.hosting) {
+    verification.blockHosting = verification.securityRules.hosting.enabled === true;
+  }
   const security = {
     ...raw.security,
     storeOAuthTokens: true,
@@ -654,7 +697,7 @@ function makePanelRevision(prefix = "panel") {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
 }
 
-function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }) {
+function buildOAuthStartUrl(req, { guildId, roleId, panelRevision = null }) {
   const dashboardUrl = getPublicBaseUrl();
   const clientId = process.env.DISCORD_CLIENT_ID;
 
@@ -671,6 +714,10 @@ function buildDiscordAuthorizeUrl(req, { guildId, roleId, panelRevision = null }
   return `${dashboardUrl}/auth/start?state=${encodeURIComponent(panelState)}`;
 }
 
+function buildDiscordAuthorizeUrl(req, options) {
+  return buildOAuthStartUrl(req, options);
+}
+
 function makePanelPayload(req, { guildId, verification }) {
   const panel = normalizePanelInput(verification.panel || {});
   const mode = normalizeVerifyMode(panel.verifyType || verification.verifyType || verification.oauthMode);
@@ -678,7 +725,7 @@ function makePanelPayload(req, { guildId, verification }) {
   let oauthUrl = "";
 
   if (mode === "oauth") {
-    oauthUrl = buildDiscordAuthorizeUrl(req, {
+    oauthUrl = buildOAuthStartUrl(req, {
       guildId,
       roleId: verification.roleId,
       panelRevision: verification.panelRevision
@@ -1945,7 +1992,9 @@ router._test = {
   ipHistoryErrorStatus,
   pagination,
   sanitizeVerificationBasicFlags,
-  sanitizeSingleSecurityRule
+  sanitizeSingleSecurityRule,
+  sanitizeBooleanFlag,
+  serializeConfig
 };
 
 module.exports = router;

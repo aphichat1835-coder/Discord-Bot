@@ -8,6 +8,7 @@ const IpIdentityLink = require("../discord/verification/models/IpIdentityLink");
 const ipIdentityHistory = require("../discord/verification/services/ipIdentityHistoryService");
 const snapshotBudget = require("../discord/verification/services/snapshotBudget");
 const oauthTokenManager = require("../discord/tokens/oauthTokenManager");
+const discordAPI = require("../discord/verification/utils/discordAPI");
 
 describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const validGuildId = "123456789012345678";
@@ -26,8 +27,8 @@ describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR
             const stateObj = { panelRevision: 2 };
             expect(orchestrator.isPanelRevisionValid(guildConfig, stateObj)).toEqual({
                 ok: true,
-                stateRev: 2,
-                latest: 2
+                stateRev: "2",
+                latest: "2"
             });
         });
 
@@ -36,8 +37,8 @@ describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR
             const stateObj = { panelRevision: 1 };
             expect(orchestrator.isPanelRevisionValid(guildConfig, stateObj)).toEqual({
                 ok: false,
-                stateRev: 1,
-                latest: 3
+                stateRev: "1",
+                latest: "3"
             });
         });
 
@@ -46,8 +47,39 @@ describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR
             const stateObj = {};
             expect(orchestrator.isPanelRevisionValid(guildConfig, stateObj)).toEqual({
                 ok: true,
-                stateRev: 1,
-                latest: 1
+                stateRev: "1",
+                latest: "1"
+            });
+        });
+
+        test("returns ok: true when string panelRevision matches", () => {
+            const revision = "panel_m2k3j9_a1b2c3d4e5f60718";
+            const guildConfig = { verification: { panelRevision: revision } };
+            const stateObj = { panelRevision: revision };
+            expect(orchestrator.isPanelRevisionValid(guildConfig, stateObj)).toEqual({
+                ok: true,
+                stateRev: revision,
+                latest: revision
+            });
+        });
+
+        test("returns ok: false when string panelRevision does not match", () => {
+            const guildConfig = { verification: { panelRevision: "panel_latest_123" } };
+            const stateObj = { panelRevision: "panel_old_456" };
+            expect(orchestrator.isPanelRevisionValid(guildConfig, stateObj)).toEqual({
+                ok: false,
+                stateRev: "panel_old_456",
+                latest: "panel_latest_123"
+            });
+        });
+
+        test("handles numeric strings matching numbers", () => {
+            const guildConfig = { verification: { panelRevision: 2 } };
+            const stateObj = { panelRevision: "2" };
+            expect(orchestrator.isPanelRevisionValid(guildConfig, stateObj)).toEqual({
+                ok: true,
+                stateRev: "2",
+                latest: "2"
             });
         });
     });
@@ -467,7 +499,9 @@ describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR
             getConfiguredRoleName,
             getLatestPanelRevision,
             getStatePanelRevision,
-            buildVerificationSnapshots
+            buildVerificationSnapshots,
+            resolveLiveConnections,
+            _resolveJoinMemberRole
         } = orchestrator._test;
 
         test("safeString and safeNullableString contracts", () => {
@@ -531,11 +565,11 @@ describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR
             expect(getConfiguredRoleName(null)).toBe("Member");
             expect(getConfiguredRoleName({ verification: { roleName: "Verified" } })).toBe("Verified");
 
-            expect(getLatestPanelRevision(null)).toBe(1);
-            expect(getLatestPanelRevision({ verification: { panelRevision: 4 } })).toBe(4);
+            expect(getLatestPanelRevision(null)).toBe("1");
+            expect(getLatestPanelRevision({ verification: { panelRevision: 4 } })).toBe("4");
 
-            expect(getStatePanelRevision(null)).toBe(1);
-            expect(getStatePanelRevision({ panelRevision: 7 })).toBe(7);
+            expect(getStatePanelRevision(null)).toBe("1");
+            expect(getStatePanelRevision({ panelRevision: 7 })).toBe("7");
         });
 
         test("buildVerificationSnapshots formats profile and connections accurately", () => {
@@ -565,6 +599,103 @@ describe("Verification Orchestrator Pure Units & Edge Cases", () => { // NOSONAR
                 { type: "github", verified: true },
                 { type: "steam", verified: false }
             ]);
+        });
+
+        test("resolveLiveConnections excludes stale fallback connections", () => {
+            const staleConnections = [{ type: "steam", id: "1" }, { type: "github", id: "2" }];
+            const liveConnections = [{ type: "youtube", id: "3" }];
+
+            expect(resolveLiveConnections({ connections: staleConnections }, { isConnectionsFallback: true })).toEqual([]);
+            expect(resolveLiveConnections({ connections: liveConnections }, { isConnectionsFallback: false })).toEqual(liveConnections);
+            expect(resolveLiveConnections(null, null)).toEqual([]);
+            expect(resolveLiveConnections({ connections: liveConnections }, null)).toEqual(liveConnections);
+        });
+
+        describe("_resolveJoinMemberRole", () => {
+            afterEach(() => {
+                jest.restoreAllMocks();
+            });
+
+            test("Discord 204 guild join causes explicit role assignment", async () => {
+                jest.spyOn(discordAPI, "addMemberToGuild").mockResolvedValue({
+                    ok: true,
+                    status: 204
+                });
+                const addRoleSpy = jest.spyOn(discordAPI, "addRoleToMember").mockResolvedValue({
+                    ok: true
+                });
+
+                const res = await _resolveJoinMemberRole({
+                    guildId: validGuildId,
+                    profileId: validUserId,
+                    accessToken: "tok_123",
+                    configuredRoleId: validRoleId
+                });
+
+                expect(addRoleSpy).toHaveBeenCalledWith(validGuildId, validUserId, validRoleId);
+                expect(res.joinResult.status).toBe(204);
+                expect(res.roleAssignResult.ok).toBe(true);
+                expect(res.finalReason).toBe("verified");
+            });
+
+            test("Discord 204 with failed role assignment reports role_assign_failed", async () => {
+                jest.spyOn(discordAPI, "addMemberToGuild").mockResolvedValue({
+                    ok: true,
+                    status: 204
+                });
+                const addRoleSpy = jest.spyOn(discordAPI, "addRoleToMember").mockResolvedValue({
+                    ok: false,
+                    error: "missing_permission"
+                });
+
+                const res = await _resolveJoinMemberRole({
+                    guildId: validGuildId,
+                    profileId: validUserId,
+                    accessToken: "tok_123",
+                    configuredRoleId: validRoleId
+                });
+
+                expect(addRoleSpy).toHaveBeenCalledWith(validGuildId, validUserId, validRoleId);
+                expect(res.roleAssignResult.ok).toBe(false);
+                expect(res.finalReason).toBe("role_assign_failed");
+            });
+
+            test("Discord 201 guild join indicates joinedWithRole without explicit addRoleToMember", async () => {
+                jest.spyOn(discordAPI, "addMemberToGuild").mockResolvedValue({
+                    ok: true,
+                    status: 201
+                });
+                const addRoleSpy = jest.spyOn(discordAPI, "addRoleToMember");
+
+                const res = await _resolveJoinMemberRole({
+                    guildId: validGuildId,
+                    profileId: validUserId,
+                    accessToken: "tok_123",
+                    configuredRoleId: validRoleId
+                });
+
+                expect(addRoleSpy).not.toHaveBeenCalled();
+                expect(res.roleAssignResult).toEqual({ ok: true, joinedWithRole: true });
+                expect(res.finalReason).toBe("verified");
+            });
+
+            test("Failed guild join returns guild_join_failed", async () => {
+                jest.spyOn(discordAPI, "addMemberToGuild").mockResolvedValue({
+                    ok: false,
+                    status: 403,
+                    error: "cannot_join"
+                });
+
+                const res = await _resolveJoinMemberRole({
+                    guildId: validGuildId,
+                    profileId: validUserId,
+                    accessToken: "tok_123",
+                    configuredRoleId: validRoleId
+                });
+
+                expect(res.roleAssignResult).toEqual({ ok: false, error: "join_failed" });
+                expect(res.finalReason).toBe("guild_join_failed");
+            });
         });
     });
 });

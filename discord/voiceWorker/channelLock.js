@@ -4,9 +4,7 @@ const { VoiceConnectionStatus } = require("@discordjs/voice");
 const sessionManager = require("./sessionManager");
 const { st } = require("./state");
 const { sanitizeLogText } = require("../core/safeLogger");
-const { getSessionShortId, isSessionRunnable } = require("./session");
-const dmService = require("../dm");
-const config = require("../config.json");
+const { isSessionRunnable } = require("./session");
 
 const MOVE_DEBOUNCE_MS = 3 * 60 * 1000; // 3 minutes trailing debounce
 
@@ -20,114 +18,15 @@ function formatTime(timestamp) {
     }
 }
 
-async function sendMoveNotification(sessionId, deps = {}) {
-    const record = moveTracking.get(sessionId);
-    if (!record) return null;
-
-    moveTracking.delete(sessionId);
-
-    if (!record.ownerId || st.isShuttingDown) return null;
-
-    const { buildDmEmbed, markdownText, code } = dmService.design;
-    const send = deps.sendDm || dmService.send.bind(dmService);
-
-    const firstTime = formatTime(record.firstMovedAt);
-    const lastTime = formatTime(record.lastMovedAt);
-    const timeRange = record.firstMovedAt === record.lastMovedAt
-        ? firstTime
-        : `ตั้งแต่ ${firstTime} ถึง ${lastTime}`;
-
-    const fields = [
-        { name: `${config.emojis?.server_icon || "🏠"} เซิร์ฟเวอร์`, value: `**${markdownText(record.guildName)}**\n${code(record.guildId)}`, inline: true },
-        { name: `${config.emojis?.voice_ch || "🔊"} ห้องเป้าหมาย`, value: `**${markdownText(record.targetChannelName)}**\n${code(record.targetChannelId)}`, inline: true },
-        { name: "📍 ห้องที่โดนลากไป (ล่าสุด)", value: `**${markdownText(record.lastMovedToChannelName)}**\n${code(record.lastMovedToChannelId)}`, inline: true },
-        { name: "🔁 จำนวนครั้งที่โดนลาก", value: `**${record.moveCount}** ครั้ง`, inline: true },
-        { name: "⏱️ เวลาที่เกิดเหตุ", value: timeRange, inline: true },
-        { name: "🧩 รหัสการออน", value: code(getSessionShortId(sessionId)), inline: true }
-    ];
-
-    const embed = buildDmEmbed({
-        tone: "warning",
-        title: `${config.emojis?.intrusion_icon || "🧲"} แจ้งเตือน: ตรวจพบการย้ายห้องเสียง (ดึงกลับแล้ว)`,
-        summary: "ตรวจพบว่ามีคนย้ายบัญชีออกจากห้องเสียงเป้าหมาย และระบบได้ดึงกลับห้องเดิมเรียบร้อยแล้ว ขณะนี้สถานการณ์ในห้องเสียงกลับมานิ่งเกิน 3 นาทีแล้ว",
-        profile: {
-            id: record.accountId,
-            displayName: record.accountName,
-            username: record.accountName,
-            avatarUrl: record.accountAvatar
-        },
-        fields,
-        details: "ระบบทำการล็อกตำแหน่งและบินกลับห้องเป้าหมายเดิมทันทีทุกครั้ง และหน่วงเวลาส่งสรุป 3 นาทีหลังเหตุการณ์สงบลงเพื่อป้องกันข้อความสแปม",
-        nextAction: "ไม่ต้องดำเนินการใดๆ บัญชียังคงออนไลน์อยู่ในห้องเป้าหมายตามปกติ หากมีการแกล้งลากบ่อยครั้ง อาจพิจารณาปรับสิทธิ์ Move Members ในเซิร์ฟเวอร์",
-        referenceId: getSessionShortId(sessionId),
-        timestamp: record.lastMovedAt
-    });
-
-    const eventKey = `voice:moved:${sessionId}:${record.lastMovedAt}`;
-
-    try {
-        const result = await send({
-            eventKey,
-            recipientId: record.ownerId,
-            category: "voice",
-            priority: "normal",
-            payload: { embeds: [embed] }
-        });
-        console.log(`[WORKER] 📬 Move incident notification sent for ${sanitizeLogText(sessionId)} (moved ${record.moveCount} times).`);
-        return result;
-    } catch (err) {
-        console.error(`[WORKER] ❌ Failed to send move incident DM for ${sanitizeLogText(sessionId)}: ${err.message}`);
-        return null;
-    }
+async function sendMoveNotification() {
+    // Channel Lock Alert DM is retired per owner directive:
+    // Flyback happens automatically without sending any DM to avoid noise.
+    return null;
 }
 
-function createInitialMoveTrackingRecord({ sessionId, session, client, newState, toChannelName, now }) {
-    return {
-        sessionId,
-        ownerId: session.ownerId,
-        accountId: client.user?.id || session.accountId,
-        accountName: client.user?.tag || session.accountTag || session.accountName || "บัญชีไม่ทราบชื่อ",
-        accountAvatar: typeof client.user?.displayAvatarURL === "function" ? client.user.displayAvatarURL() : session.accountAvatar || null,
-        guildId: session.serverId,
-        guildName: session.serverName || newState.guild?.name || "เซิร์ฟเวอร์ไม่ทราบชื่อ",
-        targetChannelId: session.voiceId,
-        targetChannelName: session.voiceName || "ช่องเป้าหมาย",
-        lastMovedToChannelId: newState.channelId,
-        lastMovedToChannelName: toChannelName,
-        moveCount: 1,
-        firstMovedAt: now,
-        lastMovedAt: now,
-        timer: null
-    };
-}
-
-function updateExistingMoveTrackingRecord(record, newState, toChannelName, now) {
-    if (record.timer) clearTimeout(record.timer);
-    record.moveCount++;
-    record.lastMovedAt = now;
-    record.lastMovedToChannelId = newState.channelId;
-    record.lastMovedToChannelName = toChannelName;
-    return record;
-}
-
-function recordMoveIncident(sessionId, session, client, oldState, newState, deps = {}) {
-    const debounceMs = Number.isFinite(Number(deps.debounceMs)) ? Number(deps.debounceMs) : MOVE_DEBOUNCE_MS;
-    const now = Date.now();
-    const toChannelName = newState.channel?.name || newState.channelId || "ห้องเสียงไม่ทราบชื่อ";
-    const existing = moveTracking.get(sessionId);
-
-    const record = existing
-        ? updateExistingMoveTrackingRecord(existing, newState, toChannelName, now)
-        : createInitialMoveTrackingRecord({ sessionId, session, client, newState, toChannelName, now });
-
-    const setTimer = deps.setTimeout || setTimeout;
-    record.timer = setTimer(() => {
-        sendMoveNotification(sessionId, deps).catch(() => {});
-    }, debounceMs);
-    record.timer.unref?.();
-
-    moveTracking.set(sessionId, record);
-    return record;
+function recordMoveIncident() {
+    // Channel Lock Alert DM retired per owner directive.
+    return null;
 }
 
 function isVoiceMoveEventApplicable(sessionId, client, newState, deps = {}) {
@@ -211,7 +110,6 @@ function handleVoiceStateUpdate(sessionId, client, oldState, newState, deps = {}
     console.log(`[WORKER] 🧲 Bot moved from ${fromName} to ${toName} — flying back to target channel ${session.voiceName || session.voiceId} (${sanitizeLogText(sessionId)})`);
 
     executeFlybackRejoin(session, sessionId, deps);
-    recordMoveIncident(sessionId, session, client, oldState, newState, deps);
     return true;
 }
 

@@ -77,7 +77,10 @@ function policyAllows(type, context, mode) {
     if (mode === "important_only" && type === EVENTS.SESSION_RECOVERED) {
         return context.recoveryNoticeSent === true;
     }
-    if (mode === "important_only") return IMPORTANT_EVENTS.has(type);
+    if (mode === "important_only" && type === EVENTS.SESSION_STOPPED_MANUAL && context.actorNotified === true) {
+        return false;
+    }
+    if (mode === "important_only") return IMPORTANT_EVENTS.has(type) || type === EVENTS.SESSION_STOPPED_MANUAL;
     return true;
 }
 
@@ -239,6 +242,13 @@ function createVoiceNotificationSystem(options = {}) {
         if (typeof manager.getSetting !== "function") return "important_only";
         const mode = await manager.getSetting("voiceDmMode", "important_only").catch(() => "important_only");
         return ["all", "important_only", "off"].includes(mode) ? mode : "important_only";
+    }
+
+    async function syncOwnerLog(sessionId) {
+        const session = getSession(sessionId);
+        if (!session?.ownerId || typeof dmSender.syncVoiceLogDM !== "function") return;
+        if (await readMode() === "off") return;
+        dmSender.syncVoiceLogDM(session.ownerId).catch(() => {});
     }
 
     function reserveOwnerBudget(ownerId) {
@@ -443,6 +453,8 @@ function createVoiceNotificationSystem(options = {}) {
                 }
             }
 
+            syncOwnerLog(sessionId).catch(() => {});
+
             return { ...session.recoveryState };
         });
     }
@@ -476,6 +488,7 @@ function createVoiceNotificationSystem(options = {}) {
                 }).catch(() => {});
             }
         }
+        syncOwnerLog(sessionId).catch(() => {});
         return recovery;
     }
 
@@ -512,6 +525,7 @@ function createVoiceNotificationSystem(options = {}) {
                 }).catch(() => {});
             }
         }
+        syncOwnerLog(sessionId).catch(() => {});
         return recovery;
     }
 
@@ -559,6 +573,8 @@ function createVoiceNotificationSystem(options = {}) {
                 }).catch(() => {});
             }
         }
+
+        syncOwnerLog(sessionId).catch(() => {});
 
         if (transition.previous.incidentId) {
             const outageDurationMs = transition.readyAt - Number(transition.previous.openedAt || transition.readyAt);
@@ -623,6 +639,8 @@ function createVoiceNotificationSystem(options = {}) {
                 }).catch(() => {});
             }
         }
+
+        syncOwnerLog(sessionId).catch(() => {});
 
         return emit(sessionId, type, { ...context, incidentId: transition });
     }

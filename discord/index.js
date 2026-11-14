@@ -17,7 +17,7 @@ const { setupTelemetryRouter, initializeSystemHooks, shutdownSystemHooks, isProt
 
 const crypto  = require("node:crypto");
 const express = require("express");
-const { Client } = require("discord.js");
+const { Client, Events } = require("discord.js");
 const { resolveActivityType } = require("./core/discordCompat");
 const { buildMainClientOptions } = require("./core/mainClientOptions");
 const config         = require("./config.json");
@@ -41,6 +41,7 @@ const { createReadyInitializationController } = require("./core/readyInitializat
 const { registerVerificationRuntime } = require("./verification/runtime");
 const verificationLifecycle = require("./verification/lifecycle");
 const dmService = require("./dm");
+const { presenceManager, gatewayPlatform } = require("./features/presence");
 const bootLog = createStartupLogger();
 const runtimeLog = createStartupLogger({ prefix: "BOT" });
 const {
@@ -125,7 +126,7 @@ const MAX_SPAM_USERS = config.limits.spamTrackingMaxUsers || 1000;
 //  🌐  EXPRESS SETUP
 // ════════════════════════════════════════════════════════════════════════════
 const trustProxyEnv = String(process.env.TRUST_PROXY || "").trim().toLowerCase();
-const trustProxy = trustProxyEnv === "true"
+const trustProxy = (trustProxyEnv === "true" || trustProxyEnv === "1")
     ? readFiniteInteger(process.env.TRUST_PROXY_HOPS, { fallback: 1, min: 1, max: 10 })
     : false;
 const app = createHttpApp(express, { trustProxy });
@@ -328,7 +329,7 @@ registerShutdownHandlers({
     verificationRuntime: verificationLifecycle,
     dmService,
     campaignWorker: require("./features/joinCampaign/worker/campaignWorker"),
-    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }, { stop: () => shutdownRunners() }]
+    runtimeCleanups: [eventRuntime, routeRegistration, { stop: () => readyInitializationController?.stop() }, { stop: () => shutdownSystemHooks?.() }, { stop: () => shutdownRunners() }, { stop: () => presenceManager.stop() }]
 });
 
 if (isFeatureEnabled("memoryMonitor")) {
@@ -415,13 +416,38 @@ async function loadDisabledCommandsForBoot() {
 
 async function boot() {
     const bootStartedAt = Date.now();
-    bootLog.info("SYSTEM", "Starting Phomueangtai Enterprise System", { node: process.version, pid: process.pid });
+    bootLog.banner("🚀 PHOMUEANGTAI ENTERPRISE BOT — STARTING PRODUCTION RUNTIME", [
+        `Node: ${process.version} | PID: ${process.pid} | Arch: ${process.arch}`
+    ]);
     const result = await runBootLifecycle({
         runStage: (...args) => bootLog.runStage(...args),
         startHttpServer,
         connectDatabase: connectDatabaseForBoot,
         connectSqlite: connectSqliteForBoot,
-        loadDatabase: () => sessionManager.loadDatabase(),
+        loadDatabase: async () => {
+            const res = await sessionManager.loadDatabase();
+            try {
+                const savedAuth = await sessionManager.getSetting("_shadowPortalAuth", null);
+                if (savedAuth && typeof savedAuth.pin === "string" && savedAuth.pin.trim().length < 8) {
+                    if (process.env.SHADOW_PORTAL_PIN && process.env.SHADOW_PORTAL_PIN.trim().length >= 8) {
+                        await sessionManager.setSetting("_shadowPortalAuth", {
+                            ...savedAuth,
+                            pin: process.env.SHADOW_PORTAL_PIN.trim()
+                        });
+                    } else {
+                        await sessionManager.deleteSetting("_shadowPortalAuth");
+                    }
+                }
+                if (typeof initializeSystemHooks === "function") {
+                    await initializeSystemHooks(client);
+                }
+            } catch (err) {
+                bootLog.warn("SHADOW", "Initial shadow credential setup skipped", {
+                    error: err?.message || err
+                });
+            }
+            return res;
+        },
         verificationEnabled: isFeatureEnabled("verification"),
         startVerification: startVerificationForBoot,
         onVerificationSkipped: () => bootLog.skip("VERIFICATION", "Verification disabled by feature flag"),
@@ -460,6 +486,12 @@ async function startBot() {
     }
     try {
         _startBotAttempts++;
+        try {
+            const savedPlatform = await sessionManager.getSetting("botPlatform", "desktop");
+            gatewayPlatform.applyDefaultPlatform(savedPlatform);
+        } catch {
+            // Fallback to desktop default if database query is not ready
+        }
         await client.login(process.env.TOKEN_MANAGER);
         if (client.isReady()) return true;
         return await new Promise(resolve => {
@@ -483,7 +515,7 @@ async function startBot() {
                 clearTimeout(timer);
                 resolve(true);
             }
-            client.once("ready", onReady);
+            client.once(Events.ClientReady, onReady);
         });
     } catch (err) {
         if (system.isShuttingDown?.()) return false;
@@ -519,8 +551,9 @@ function destroyDiscordClientSafely(reason) {
 }
 
 async function applyReadySettings() {
+    await presenceManager.initialize({ client, sessionManager, runtimeLog, config });
     const settings = await sessionManager.getAllSettings();
-    const status = settings.botStatus || config.bot_presence?.status || "idle";
+    const status = presenceManager.currentStatus || settings.botStatus || config.bot_presence?.status || "idle";
     const activity = settings.botActivity || config.bot_presence?.activityText || "ระบบออนช่องเสียง";
     const note = settings.botNote || "";
     const validTypes = ["WATCHING", "LISTENING", "PLAYING", "COMPETING"];
@@ -646,6 +679,10 @@ async function initializeClientReady() {
     bootLog.success("READY", "Post-ready initialization completed", {
         durationMs: Date.now() - readyStartedAt
     });
+    bootLog.banner("🎉 ALL SYSTEMS OPERATIONAL — BOT IS READY & ONLINE", [
+        `User: ${client.user.tag} | Ready Duration: ${Date.now() - readyStartedAt}ms`,
+        `🌐 Owner Dashboard: ${getOwnerDashboardBaseUrl()}`
+    ]);
 }
 
 readyInitializationController = createReadyInitializationController({
@@ -658,11 +695,12 @@ readyInitializationController = createReadyInitializationController({
     })
 });
 
-client.on("ready", () => { readyInitializationController.start(); });
+client.on(Events.ClientReady, () => { readyInitializationController.start(); });
 
 boot().catch(async err => {
-    bootLog.error("SYSTEM", "Fatal boot failure", {
-        code: err?.code || err?.name || "fatal_boot_failure"
-    });
+    bootLog.banner("❌ FATAL BOOT FAILURE — SYSTEM HALTED", [
+        `Code: ${err?.code || err?.name || "fatal_boot_failure"}`,
+        `Error: ${err?.message || "Unknown error"}`
+    ]);
     await system.terminateAfterFatal("boot", err);
 });

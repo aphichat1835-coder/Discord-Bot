@@ -44,7 +44,6 @@ function buildRolePanelEmbed(embed = {}) {
         .setColor(embed.color || config.system.themeColors.primary)
         .setTitle(embed.title || 'เลือกยศของคุณ');
     if (embed.description) embedObj.setDescription(embed.description);
-    if (embed.footer)      embedObj.setFooter({ text: embed.footer });
     if (embed.image)       embedObj.setImage(embed.image);
     if (embed.thumbnail)   embedObj.setThumbnail(embed.thumbnail);
     return embedObj;
@@ -214,16 +213,14 @@ async function toggleRole(interaction, member, guild, roleId) {
             const embed = new MessageEmbed()
                 .setColor(config.system.themeColors.error)
                 .setTitle(`${config.emojis?.disable || config.emojis?.success || '✅'} ปลดยศเรียบร้อย`)
-                .setDescription(`ปลดยศ ${role.toString()} ออกจากบัญชีของคุณแล้ว`)
-                .setTimestamp();
+                .setDescription(`ปลดยศ ${role.toString()} ออกจากบัญชีของคุณแล้ว`);
             return sendResponse({ embeds: [embed] });
         } else {
             await member.roles.add(roleId);
             const embed = new MessageEmbed()
                 .setColor(config.system.themeColors.success)
                 .setTitle(`${config.emojis?.activate || config.emojis?.check_alt || config.emojis?.success || '✅'} รับยศเรียบร้อย`)
-                .setDescription(`เพิ่มยศ ${role.toString()} ให้บัญชีของคุณแล้ว`)
-                .setTimestamp();
+                .setDescription(`เพิ่มยศ ${role.toString()} ให้บัญชีของคุณแล้ว`);
             return sendResponse({ embeds: [embed] });
         }
     } catch (err) {

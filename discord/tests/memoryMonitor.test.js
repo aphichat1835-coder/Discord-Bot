@@ -100,8 +100,8 @@ test("memory monitor defaults are tuned for 1GB+ hosting with cleanup_only mode"
     try {
         const config = monitor.getMemoryMonitorConfig();
         assert.equal(config.criticalMode, "cleanup_only");
-        assert.equal(config.warnMb, 500);
-        assert.equal(config.criticalMb, 750);
+        assert.equal(config.warnMb, 750);
+        assert.equal(config.criticalMb, 900);
         assert.equal(config.criticalRounds, 3);
         assert.equal(config.trendMax, 24);
     } finally {

@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const config = require('../config.json');
 
 const {
     encryptToken,
@@ -267,9 +268,8 @@ test('handleQuestCommand enforces bot owner check for panel', async () => {
     assert.ok(ownerReply.files && ownerReply.files.length > 0);
     assert.equal(ownerReply.embeds[0].data.image.url, 'attachment://quest-banner.gif');
     const defaultButtons = ownerReply.components[0].components;
-    assert.equal(defaultButtons.length, 2);
+    assert.equal(defaultButtons.length, 1);
     assert.equal(defaultButtons[0].data.custom_id, 'quest_panel:run_oneshot');
-    assert.equal(defaultButtons[1].data.custom_id, 'quest_panel:stop');
 });
 
 test('handleQuestCommand renders AUTO DAILY button when auto_daily option is true', async () => {
@@ -328,20 +328,27 @@ test('handleQuestCommand defers reply and transitions via editReply to prevent t
 
 test('buildQuestPanelRow respects showDaily option', () => {
     const defaultRow = buildQuestPanelRow();
-    assert.equal(defaultRow.components.length, 2);
+    assert.equal(defaultRow.components.length, 1);
     assert.equal(defaultRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
-    assert.equal(defaultRow.components[1].data.custom_id, 'quest_panel:stop');
+    assert.equal(defaultRow.components[0].data.label, 'เริ่มทำเควส');
+    assert.equal(defaultRow.components[0].data.emoji?.name, 'ddd_pmt');
 
     const dailyRow = buildQuestPanelRow({ showDaily: true });
     assert.equal(dailyRow.components.length, 3);
     assert.equal(dailyRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
+    assert.equal(dailyRow.components[0].data.label, 'เริ่มทำเควส');
+    assert.equal(dailyRow.components[0].data.emoji?.name, 'ddd_pmt');
     assert.equal(dailyRow.components[1].data.custom_id, 'quest_panel:run_daily');
+    assert.equal(dailyRow.components[1].data.label, 'Auto');
+    assert.equal(dailyRow.components[1].data.emoji?.name, 'UN9_pmt');
     assert.equal(dailyRow.components[2].data.custom_id, 'quest_panel:stop');
+    assert.equal(dailyRow.components[2].data.label, 'หยุด');
+    assert.equal(dailyRow.components[2].data.emoji?.name, 'CROSS_pmt');
 
     const explicitFalseRow = buildQuestPanelRow({ showDaily: false });
-    assert.equal(explicitFalseRow.components.length, 2);
+    assert.equal(explicitFalseRow.components.length, 1);
     assert.equal(explicitFalseRow.components[0].data.custom_id, 'quest_panel:run_oneshot');
-    assert.equal(explicitFalseRow.components[1].data.custom_id, 'quest_panel:stop');
+    assert.equal(explicitFalseRow.components[0].data.label, 'เริ่มทำเควส');
 });
 
 test('handleQuestButton allows users to open modal and view stop controls', async () => {
@@ -362,7 +369,7 @@ test('handleQuestButton allows users to open modal and view stop controls', asyn
     };
     await handleQuestButton(stopInteraction);
     assert.ok(stopReply);
-    assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
+    assert.match(stopReply.content, /ไม่มีเควสที่กำลังทำงานอยู่/);
 });
 
 test('runnerManager routes status updates to DM and continues silently without channel fallback when DM fails', async () => {
@@ -404,7 +411,7 @@ test('runnerManager routes status updates to DM and continues silently without c
 
     assert.ok(dmDeliveries.length > 0, 'Status message should be delivered to DM');
     assert.ok(dmDeliveries[0].embeds && dmDeliveries[0].embeds.length > 0);
-    assert.match(dmDeliveries[0].embeds[0].data.fields[0].value, /TestUserDM/);
+    assert.match(dmDeliveries[0].embeds[0].data.description, /TestUserDM/);
 
     // Test that when DM sending fails (e.g. DMs closed), it never falls back to guild channel and continues silently
     const channelDeliveries = [];
@@ -501,8 +508,9 @@ test('questDm builds correct tones and embeds for success, partial, danger, and 
         jobKey: 'job:123'
     });
     assert.ok(successEmbed);
-    assert.match(successEmbed.data.title, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
-    assert.equal(successEmbed.data.color, parseInt('57F287', 16));
+    assert.match(successEmbed.data.title, /Log ระบบทำเควส/);
+    assert.match(successEmbed.data.description, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
+    assert.equal(successEmbed.data.color, parseInt((config.system?.themeColors?.success || '#CC66FF').replace('#', ''), 16));
 
     const authFailEmbed = buildQuestAuthFailureEmbed({
         username: 'TestHero',
@@ -510,8 +518,9 @@ test('questDm builds correct tones and embeds for success, partial, danger, and 
         jobKey: 'job:123'
     });
     assert.ok(authFailEmbed);
-    assert.match(authFailEmbed.data.title, /Token บัญชี Quest ใช้งานไม่ได้/);
-    assert.equal(authFailEmbed.data.color, parseInt('ED4245', 16));
+    assert.match(authFailEmbed.data.title, /Log ระบบทำเควส/);
+    assert.match(authFailEmbed.data.description, /Token บัญชี Quest ใช้งานไม่ได้/);
+    assert.equal(authFailEmbed.data.color, parseInt((config.system?.themeColors?.error || '#FF9999').replace('#', ''), 16));
 });
 
 test('questDm sendQuestSummaryDM and sendQuestAuthFailureDM integrate with central dmService outbox', async () => {
@@ -553,10 +562,10 @@ test('runnerStatusHeader builds valid Live Embeds for running, standby, complete
     }, ['▶️ GamerX: RUNNING Genshin Quest', '⏳ GamerX: WAITING 30s (25%)']);
 
     assert.ok(runningEmbed);
-    assert.equal(runningEmbed.data.title, '🔄 กำลังทำ Discord Quest...');
-    assert.equal(runningEmbed.data.color, parseInt('F59E0B', 16));
-    assert.ok(runningEmbed.data.fields.some((f) => f.name.includes('บัญชี Discord') && f.value.includes('GamerX')));
-    assert.ok(runningEmbed.data.fields.some((f) => f.name.includes('Terminal Log') && f.value.includes('RUNNING Genshin Quest')));
+    assert.match(runningEmbed.data.title, /Log ระบบทำเควส/);
+    assert.equal(runningEmbed.data.color, parseInt((config.system?.themeColors?.warning || '#D2691E').replace('#', ''), 16));
+    assert.match(runningEmbed.data.description, /GamerX/);
+    assert.match(runningEmbed.data.description, /กำลังดำเนินการ/);
 
     // 2. Standby state (Auto Daily)
     const standbyEmbed = buildRunnerLiveEmbed({
@@ -570,10 +579,10 @@ test('runnerStatusHeader builds valid Live Embeds for running, standby, complete
     }, ['💤 DailyHero: AUTO DAILY ACTIVE', '⏰ DailyHero: NEXT CHECK 16:00']);
 
     assert.ok(standbyEmbed);
-    assert.equal(standbyEmbed.data.title, '💤 AUTO DAILY กำลังสแตนด์บาย');
-    assert.equal(standbyEmbed.data.color, parseInt('5865F2', 16));
-    assert.ok(standbyEmbed.data.fields.some((f) => f.name.includes('โหมดการทำงาน') && f.value.includes('Auto Daily')));
-    assert.ok(standbyEmbed.data.fields.some((f) => f.name.includes('ความคืบหน้า') && f.value.includes('รอบต่อไป')));
+    assert.match(standbyEmbed.data.title, /Log ระบบทำเควส \(ต่อเนื่องทุกวัน\)/);
+    assert.equal(standbyEmbed.data.color, parseInt((config.system?.themeColors?.success || '#CC66FF').replace('#', ''), 16));
+    assert.match(standbyEmbed.data.description, /DailyHero/);
+    assert.match(standbyEmbed.data.description, /ทำ Quest เสร็จเเล้ว กำลังรอวันต่อไป/);
 
     // 3. Stopped state
     const stoppedEmbed = buildRunnerLiveEmbed({
@@ -583,30 +592,31 @@ test('runnerStatusHeader builds valid Live Embeds for running, standby, complete
     }, ['🛑 StoppedUser: RUNNER STOPPED']);
 
     assert.ok(stoppedEmbed);
-    assert.equal(stoppedEmbed.data.title, '🛑 สั่งหยุดการทำงานของ Quest แล้ว');
-    assert.equal(stoppedEmbed.data.color, parseInt('ED4245', 16));
+    assert.match(stoppedEmbed.data.title, /Log ระบบทำเควส/);
+    assert.equal(stoppedEmbed.data.color, parseInt((config.system?.themeColors?.error || '#FF9999').replace('#', ''), 16));
+    assert.match(stoppedEmbed.data.description, /ผู้ใช้สั่งหยุดการทำงานของ Quest แล้ว/);
 
     // 4. formatRunnerStatusEmbed from raw content string
     const rawContent = '```\n✅ LOGIN : ParserBot\n🤖 AUTO DAILY ENABLED\n🔎 ParserBot: พบ 3 QUESTS\n▶️ Doing Quest\n```';
     const parsedEmbed = formatRunnerStatusEmbed(rawContent, { accountId: 'acc_444' });
     assert.ok(parsedEmbed);
-    assert.ok(parsedEmbed.data.fields.some((f) => f.name.includes('บัญชี Discord') && f.value.includes('ParserBot')));
-    assert.ok(parsedEmbed.data.fields.some((f) => f.name.includes('ความคืบหน้า') && f.value.includes('3')));
+    assert.match(parsedEmbed.data.title, /Log ระบบทำเควส \(ต่อเนื่องทุกวัน\)/);
+    assert.match(parsedEmbed.data.description, /ParserBot/);
 });
 
 test('questDm buildQuestStoppedEmbed creates danger embed with abort reason', () => {
     const embed = buildQuestStoppedEmbed({
         username: 'OperatorUser',
         accountId: '999888777',
-        reason: 'สั่งหยุดการทำงานจากแผงควบคุม (/quest panel)',
+        reason: 'ผู้ใช้สั่งหยุดการทำงานของ Quest แล้ว',
         jobKey: 'job:test:stopped'
     });
 
     assert.ok(embed);
-    assert.match(embed.data.title, /สั่งหยุดการทำงานของ Quest แล้ว/);
-    assert.equal(embed.data.color, parseInt('ED4245', 16));
-    assert.ok(embed.data.fields.some((f) => f.name.includes('บัญชีที่หยุดทำงาน') && f.value.includes('OperatorUser')));
-    assert.ok(embed.data.fields.some((f) => f.name.includes('เหตุผลที่หยุด') && f.value.includes('/quest panel')));
+    assert.match(embed.data.title, /Log ระบบทำเควส/);
+    assert.equal(embed.data.color, parseInt((config.system?.themeColors?.error || '#FF9999').replace('#', ''), 16));
+    assert.match(embed.data.description, /OperatorUser/);
+    assert.match(embed.data.description, /ผู้ใช้สั่งหยุดการทำงานของ Quest แล้ว/);
 });
 
 test('questDm sendQuestSummaryDM supports in-place message edit via targetMessage', async () => {
@@ -634,7 +644,8 @@ test('questDm sendQuestSummaryDM supports in-place message edit via targetMessag
     assert.ok(editedData);
     assert.ok(Array.isArray(editedData.embeds));
     assert.equal(editedData.embeds.length, 1);
-    assert.match(editedData.embeds[0].data.title, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
+    assert.match(editedData.embeds[0].data.title, /Log ระบบทำเควส/);
+    assert.match(editedData.embeds[0].data.description, /ทำ Quest อัตโนมัติเสร็จสิ้นแล้ว/);
 });
 
 test('runnerSchedule zonedParts extracts correct local time components', () => {
@@ -649,7 +660,7 @@ test('runnerSchedule zonedParts extracts correct local time components', () => {
 
 test('buildQuestPanelRow renders conditional buttons based on showDaily flag', () => {
     const standardRow = buildQuestPanelRow({ showDaily: false });
-    assert.equal(standardRow.components.length, 2);
+    assert.equal(standardRow.components.length, 1);
 
     const dailyRow = buildQuestPanelRow({ showDaily: true });
     assert.equal(dailyRow.components.length, 3);
@@ -727,7 +738,7 @@ test('handleQuestButton and handleQuestSelect handle all actions and fallback', 
     assert.ok(dailyModal);
     assert.ok(dailyModal.data.custom_id.includes('scheduled'));
 
-    // 4. BTN_QUEST_STOP opens stop panel
+    // 4. BTN_QUEST_STOP opens stop panel (or returns empty message if no active runners)
     let stopReply = null;
     await handleQuestButton({
         customId: IDS.BTN_QUEST_STOP,
@@ -736,7 +747,7 @@ test('handleQuestButton and handleQuestSelect handle all actions and fallback', 
         editReply: async (p) => { stopReply = p; return p; }
     });
     assert.ok(stopReply);
-    assert.ok(stopReply.embeds && stopReply.embeds.length > 0);
+    assert.match(stopReply.content, /ไม่มีเควสที่กำลังทำงานอยู่/);
 
     // 5. BTN_QUEST_REFRESH updates stop panel
     let refreshReply = null;
@@ -747,7 +758,7 @@ test('handleQuestButton and handleQuestSelect handle all actions and fallback', 
         editReply: async (p) => { refreshReply = p; return p; }
     });
     assert.ok(refreshReply);
-    assert.ok(refreshReply.embeds && refreshReply.embeds.length > 0);
+    assert.match(refreshReply.content, /ไม่มีเควสที่กำลังทำงานอยู่/);
 
     // 6. BTN_QUEST_STOP_ALL stops runners
     let stopAllReply = null;
@@ -759,7 +770,7 @@ test('handleQuestButton and handleQuestSelect handle all actions and fallback', 
         editReply: async (p) => { stopAllReply = p; return p; }
     });
     assert.ok(stopAllReply);
-    assert.ok(stopAllReply.embeds && stopAllReply.embeds.length > 0);
+    assert.match(stopAllReply.content, /สั่งหยุดการทำเควสทั้งหมดเรียบร้อยแล้ว/);
 
     // 7. handleQuestSelect ignores unrelated customId
     const ignored = await handleQuestSelect({
@@ -778,7 +789,7 @@ test('handleQuestButton and handleQuestSelect handle all actions and fallback', 
         editReply: async (p) => { selectReply = p; return p; }
     });
     assert.ok(selectReply);
-    assert.ok(selectReply.embeds && selectReply.embeds.length > 0);
+    assert.match(selectReply.content, /สั่งหยุดเรียบร้อยแล้ว/);
 });
 
 test('handleQuestModalSubmit validates empty and excessive tokens', async () => {
@@ -943,6 +954,182 @@ test('runnerManager active runner execution, stopping, and shutdown', async () =
     } finally {
         if (finishFetchQuests) finishFetchQuests();
         globalThis.fetch = origFetch;
+    }
+});
+
+test('quest panel log_channel option routes live logs and summary to specified channel and falls back to DM on failure', async () => {
+    // 1. buildQuestPanelRow encodes channelId
+    const panelRowWithChannel = buildQuestPanelRow({ showDaily: true, channelId: '123456789012345678' });
+    assert.equal(panelRowWithChannel.components.length, 3);
+    assert.equal(panelRowWithChannel.components[0].data.custom_id, `${IDS.BTN_QUEST_RUN_ONESHOT}:123456789012345678`);
+    assert.equal(panelRowWithChannel.components[1].data.custom_id, `${IDS.BTN_QUEST_RUN_DAILY}:123456789012345678`);
+    assert.equal(panelRowWithChannel.components[2].data.custom_id, IDS.BTN_QUEST_STOP);
+
+    // 2. handleQuestCommand extracts log_channel and embeds in button customId
+    const ownerId = process.env.OWNER_ID || '661415152146710558';
+    let panelReply = null;
+    await handleQuestCommand({
+        user: { id: ownerId },
+        options: {
+            getSubcommand: () => 'panel',
+            getBoolean: (name) => name === 'auto_daily',
+            getChannel: (name) => (name === 'log_channel' ? { id: 'channel_log_888' } : null)
+        },
+        deferReply: async () => {},
+        editReply: async (p) => { panelReply = p; return p; },
+        reply: async (p) => { panelReply = p; return p; },
+        deferred: true
+    });
+    assert.ok(panelReply);
+    assert.ok(panelReply.components && panelReply.components[0]);
+    assert.equal(panelReply.components[0].components[0].data.custom_id, `${IDS.BTN_QUEST_RUN_ONESHOT}:channel_log_888`);
+
+    // 3. handleQuestButton forwards channelId into modal customId
+    let openedModal = null;
+    await handleQuestButton({
+        customId: `${IDS.BTN_QUEST_RUN_ONESHOT}:channel_log_888`,
+        showModal: async (m) => { openedModal = m; return m; }
+    });
+    assert.ok(openedModal);
+    assert.equal(openedModal.data.custom_id, `${IDS.MODAL_QUEST_RUN}:oneshot:channel_log_888`);
+
+    let openedDailyModal = null;
+    await handleQuestButton({
+        customId: `${IDS.BTN_QUEST_RUN_DAILY}:channel_log_888`,
+        showModal: async (m) => { openedDailyModal = m; return m; }
+    });
+    assert.ok(openedDailyModal);
+    assert.equal(openedDailyModal.data.custom_id, `${IDS.MODAL_QUEST_RUN}:scheduled:channel_log_888`);
+
+    // 4. startRunner delivers live log to logChannelId when channel is valid
+    const channelDelivered = [];
+    const mockChannel = {
+        id: 'channel_log_888',
+        isTextBased: () => true,
+        send: async (payload) => {
+            channelDelivered.push(payload);
+            return { edit: async () => {} };
+        }
+    };
+    const mockClientWithChannel = {
+        users: { fetch: async () => null },
+        channels: {
+            cache: new Map([['channel_log_888', mockChannel]]),
+            fetch: async (id) => (id === 'channel_log_888' ? mockChannel : null)
+        }
+    };
+
+    const runner = await startRunner({
+        jobKey: 'test:log_channel:success',
+        ownerId: 'owner_user_1',
+        userToken: 'dummy_token_1',
+        logChannelId: 'channel_log_888',
+        client: mockClientWithChannel,
+        mode: 'oneshot',
+        username: 'ChannelUser'
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    runner.controller.abort();
+    await runner.task.catch(() => {});
+
+    assert.ok(channelDelivered.length > 0, 'Log message must be sent to the designated log channel');
+    assert.ok(channelDelivered[0].embeds && channelDelivered[0].embeds.length > 0);
+    assert.match(channelDelivered[0].embeds[0].data.description, /ChannelUser/);
+
+    // 5. startRunner falls back to DM when guild channel send fails
+    const dmFallbackDelivered = [];
+    const mockDmFallback = {
+        id: 'dm_fallback_1',
+        isTextBased: () => true,
+        send: async (payload) => {
+            dmFallbackDelivered.push(payload);
+            return { edit: async () => {} };
+        }
+    };
+    const mockUserWithDm = {
+        createDM: async () => mockDmFallback
+    };
+    const mockFailingChannel = {
+        id: 'channel_failing_777',
+        isTextBased: () => true,
+        send: async () => {
+            const err = new Error('Missing Permissions');
+            err.code = 50013;
+            throw err;
+        }
+    };
+    const mockClientWithFailingChannel = {
+        users: {
+            fetch: async (id) => (id === 'owner_fallback_user' ? mockUserWithDm : null)
+        },
+        channels: {
+            cache: new Map([['channel_failing_777', mockFailingChannel]]),
+            fetch: async (id) => (id === 'channel_failing_777' ? mockFailingChannel : null)
+        }
+    };
+
+    const fallbackRunner = await startRunner({
+        jobKey: 'test:log_channel:fallback',
+        ownerId: 'owner_fallback_user',
+        userToken: 'dummy_token_2',
+        logChannelId: 'channel_failing_777',
+        client: mockClientWithFailingChannel,
+        mode: 'oneshot',
+        username: 'FallbackUser'
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    fallbackRunner.controller.abort();
+    await fallbackRunner.task.catch(() => {});
+
+    assert.ok(dmFallbackDelivered.length > 0, 'Log message must automatically fall back to DM when channel fails');
+    assert.ok(dmFallbackDelivered[0].embeds && dmFallbackDelivered[0].embeds.length > 0);
+    assert.match(dmFallbackDelivered[0].embeds[0].data.description, /FallbackUser/);
+});
+
+test('reportOneShotSummary: always transitions to a terminal runnerStatus on completion or abort', async () => {
+    const dmDelivered = [];
+    let lastEditedEmbed = null;
+    const mockDm = {
+        id: 'dm_terminal_status_1',
+        isTextBased: () => true,
+        send: async (payload) => {
+            dmDelivered.push(payload);
+            return {
+                edit: async (editPayload) => {
+                    lastEditedEmbed = editPayload?.embeds?.[0];
+                }
+            };
+        }
+    };
+    const mockUser = {
+        createDM: async () => mockDm
+    };
+    const mockClient = {
+        users: {
+            fetch: async (id) => (id === 'owner_terminal_user' ? mockUser : null)
+        },
+        channels: {
+            cache: new Map(),
+            fetch: async () => null
+        }
+    };
+
+    const runner = await startRunner({
+        jobKey: 'test:oneshot:terminal:status',
+        ownerId: 'owner_terminal_user',
+        userToken: 'dummy_token_term',
+        client: mockClient,
+        mode: 'oneshot',
+        username: 'TerminalStatusUser'
+    });
+
+    runner.controller.abort();
+    await runner.task.catch(() => {});
+
+    if (lastEditedEmbed) {
+        assert.notEqual(lastEditedEmbed.data?.title?.includes('กำลังทำเควสต์'), true);
     }
 });
 

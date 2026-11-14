@@ -8,12 +8,14 @@ const {
     maskToken,
     getAccountCreatedAt,
     formatDateBangkok,
+    formatDateBangkokDateOnly,
     getAccountAgeString,
     resolveNitroPlan,
     resolveAvatarUrl,
     resolveInvalidTokenErrorMessage,
     buildSingleTokenEmbed,
     buildBatchSummaryEmbed,
+    buildTokenCheckEmbed,
     THEME_COLORS
 } = require('../features/tokenChecker');
 
@@ -46,9 +48,11 @@ test('tokenChecker helper functions work accurately', () => {
     assert.equal(createdDate.getUTCFullYear(), 2019);
     assert.equal(getAccountCreatedAt('invalid_id'), null);
 
-    // 3. formatDateBangkok
+    // 3. formatDateBangkok & formatDateBangkokDateOnly
     assert.equal(formatDateBangkok(null), '-');
     assert.match(formatDateBangkok(createdDate), /2019|2562/);
+    assert.equal(formatDateBangkokDateOnly(null), '-');
+    assert.equal(formatDateBangkokDateOnly(new Date('2022-05-10T00:00:00Z')), '10/05/2022');
 
     // 4. getAccountAgeString
     assert.equal(getAccountAgeString(null), '-');
@@ -75,19 +79,25 @@ test('tokenChecker helper functions work accurately', () => {
 });
 
 test('tokenChecker embed builders produce correct outputs', () => {
+    const primaryColorInt = parseInt((config.system?.themeColors?.primary || '#CC66FF').replace('#', ''), 16);
+
     // 1. Invalid token embed
     const invalidResult = {
         valid: false,
+        token: 'OTIxNDM2NTUyMTQ2NzEwNTU4.G_XXXX.YYYYZZZZ12345678',
         maskedToken: 'OTIxND...5678',
         errorMessage: 'Token ไม่ถูกต้อง หรือหมดอายุแล้ว'
     };
     const invalidEmbed = buildSingleTokenEmbed(invalidResult);
-    assert.equal(invalidEmbed.data.color, parseInt(THEME_COLORS.INVALID.replace('#', ''), 16));
-    assert.match(invalidEmbed.data.title, /ใช้งานไม่ได้/);
+    assert.equal(invalidEmbed.data.color, primaryColorInt);
+    assert.match(invalidEmbed.data.title, /ตรวจสอบเสร็จเเล้ว/);
+    assert.match(invalidEmbed.data.description, /สรุปผลการตรวจสอบทั้งหมด : 1 Token/);
+    assert.match(invalidEmbed.data.description, /โทเคนนี้ไม่สามารถใช้งานได้/);
 
     // 2. Valid token with Boost embed
     const boostResult = {
         valid: true,
+        token: 'OTIxNDM2NTUyMTQ2NzEwNTU4.G_XXXX.YYYYZZZZ12345678',
         maskedToken: 'OTIxND...5678',
         id: '661415152146710558',
         username: 'Apichat',
@@ -107,8 +117,12 @@ test('tokenChecker embed builders produce correct outputs', () => {
         category: 'boost'
     };
     const boostEmbed = buildSingleTokenEmbed(boostResult);
-    assert.equal(boostEmbed.data.color, parseInt(THEME_COLORS.BOOST.replace('#', ''), 16));
-    assert.match(boostEmbed.data.title, /ข้อมูลบัญชี Discord/);
+    assert.equal(boostEmbed.data.color, primaryColorInt);
+    assert.match(boostEmbed.data.title, /ตรวจสอบเสร็จเเล้ว/);
+    assert.match(boostEmbed.data.description, /สรุปผลการตรวจสอบทั้งหมด : 1 Token/);
+    assert.match(boostEmbed.data.description, /user Token : `Apichat`/);
+    assert.match(boostEmbed.data.description, /Nitro ปกติ : `มี \(เหลือ25วัน\)`/);
+    assert.match(boostEmbed.data.description, /Nitro Boost : `2 Boost`/);
     assert.equal(boostEmbed.data.thumbnail.url, boostResult.avatarUrl);
 
     // 3. Batch summary embed
@@ -125,6 +139,7 @@ test('tokenChecker embed builders produce correct outputs', () => {
             boostResult,
             {
                 valid: true,
+                token: 'normal_token_123',
                 hasBoost: false,
                 hasNitro: false,
                 username: 'NormalUser',
@@ -134,8 +149,9 @@ test('tokenChecker embed builders produce correct outputs', () => {
         ]
     };
     const batchEmbed = buildBatchSummaryEmbed(batchData);
-    assert.equal(batchEmbed.data.color, parseInt(THEME_COLORS.BOOST.replace('#', ''), 16));
-    assert.match(batchEmbed.data.description, /สรุปผลการตรวจสอบทั้งหมด.*3.*Token/);
+    assert.equal(batchEmbed.data.color, primaryColorInt);
+    assert.match(batchEmbed.data.title, /ตรวจสอบเสร็จเเล้ว/);
+    assert.match(batchEmbed.data.description, /สรุปผลการตรวจสอบทั้งหมด : 3 Token/);
     assert.match(batchEmbed.data.description, /Apichat/);
     assert.match(batchEmbed.data.description, /NormalUser/);
 
@@ -143,19 +159,34 @@ test('tokenChecker embed builders produce correct outputs', () => {
     const botResult = {
         valid: true,
         isBot: true,
+        token: 'MTUzMDk5OTk5OTk5OTk5OTk5.G_XXXX.YYYYZZZZ12345678',
         maskedToken: 'MTUzMD...5678',
         id: '153012345678901234',
         username: 'BroadcastHelperBot',
         globalName: 'Broadcast Helper',
+        ownerUsername: 'Somchai',
+        ownerId: '9876543210',
+        guildCount: 24,
         avatarUrl: 'https://cdn.discordapp.com/avatars/153/bot.png',
         createdAt: new Date('2022-01-01T00:00:00Z'),
         category: 'bot'
     };
     const botEmbed = buildSingleTokenEmbed(botResult);
-    assert.match(botEmbed.data.title, /ข้อมูลบัญชี Discord.*Bot/);
-    assert.match(botEmbed.data.description, /Valid Bot Token/);
-    assert.match(botEmbed.data.description, /Broadcast Helper/);
-    assert.match(botEmbed.data.description, /\[BOT\]/);
+    assert.match(botEmbed.data.title, /ตรวจสอบเสร็จเเล้ว/);
+    assert.match(botEmbed.data.description, /ข้อมูลบัญชี Discord \(Bot\)/);
+    assert.match(botEmbed.data.description, /ชื่อบอท: Broadcast Helper/);
+    assert.match(botEmbed.data.description, /ไอดีบอท: 153012345678901234/);
+    assert.match(botEmbed.data.description, /เจ้าของ: @Somchai \(ID: 9876543210\)/);
+    assert.match(botEmbed.data.description, /เซิร์ฟเวอร์: อยู่ใน 24 เซิร์ฟเวอร์/);
+    assert.match(botEmbed.data.description, /คลิกเพื่อดึงบอทเข้าเซิร์ฟเวอร์/);
+
+    // 4.1 Bot token with unknown guild count (null)
+    const botUnknownGuilds = {
+        ...botResult,
+        guildCount: null
+    };
+    const botUnknownEmbed = buildSingleTokenEmbed(botUnknownGuilds);
+    assert.match(botUnknownEmbed.data.description, /เซิร์ฟเวอร์: ไม่ทราบ/);
 
     // 5. resolveInvalidTokenErrorMessage sanitizes technical errors
     assert.equal(resolveInvalidTokenErrorMessage({ errorType: 'INVALID' }), 'Token ไม่ถูกต้อง หรือหมดอายุแล้ว');
@@ -168,6 +199,7 @@ test('tokenChecker embed builders produce correct outputs', () => {
     // 6. Batch summary displays all 20 tokens without truncation
     const batch20Results = Array.from({ length: 20 }, (_, i) => ({
         valid: true,
+        token: `mock_tok_${i + 1}`,
         maskedToken: `to******_${i + 1}`,
         username: `User${i + 1}`,
         id: `10000000000000000${i + 1}`,
@@ -178,10 +210,9 @@ test('tokenChecker embed builders produce correct outputs', () => {
         summary: { total: 20, boost: 0, nitro: 0, normal: 20, bot: 0, invalid: 0, valid: 20 },
         results: batch20Results
     });
-    assert.match(batch20Embed.data.description, /1\. (?:<a:g03_pmt:\d+>|🟢) ปกติ \*\*User1\*\*/);
-    assert.match(batch20Embed.data.description, /20\. (?:<a:g03_pmt:\d+>|🟢) ปกติ \*\*User20\*\*/);
-    assert.equal(batch20Embed.data.description.includes('และอีก'), false);
-    assert.equal(Boolean(batch20Embed.data.footer), false);
+    assert.match(batch20Embed.data.description, /สรุปผลการตรวจสอบทั้งหมด : 20 Token/);
+    assert.match(batch20Embed.data.description, /user Token : `User1`/);
+    assert.match(batch20Embed.data.description, /user Token : `User20`/);
 });
 
 test('tokenCheck command and interactions behave correctly', async () => {
@@ -385,6 +416,13 @@ test('checkSingleToken auto-detects Bot Token on 401 fallback and auto-unquarant
         calls.push({ url, headers: options?.headers });
         const auth = options?.headers?.Authorization || options?.headers?.authorization;
         if (auth && auth.startsWith('Bot ')) {
+            if (typeof url === 'string' && url.includes('/guilds')) {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => []
+                };
+            }
             return {
                 ok: true,
                 status: 200,
@@ -413,10 +451,12 @@ test('checkSingleToken auto-detects Bot Token on 401 fallback and auto-unquarant
         assert.equal(result.username, 'AutoDetectedBot');
         assert.equal(result.category, 'bot');
 
-        // Check that 2 probes occurred (first as user, second as bot)
-        assert.equal(calls.length, 2);
+        // Check that 4 probes occurred (first as user, then as bot profile, application info, and guilds)
+        assert.equal(calls.length, 4);
         assert.equal(calls[0].headers.Authorization, botToken);
         assert.equal(calls[1].headers.Authorization, `Bot ${botToken}`);
+        assert.equal(calls[2].headers.Authorization, `Bot ${botToken}`);
+        assert.equal(calls[3].headers.Authorization, `Bot ${botToken}`);
 
         // Check tokenCoordinator state: NOT quarantined and tokenType is 'bot'
         assert.equal(tokenCoordinator.isQuarantined(botToken), false);
@@ -463,7 +503,7 @@ test('handleTokenCheckModal processes single token and batch tokens successfully
         const finalSingle = singleReplies[singleReplies.length - 1];
         assert.equal(finalSingle.content, null);
         assert.ok(finalSingle.embeds && finalSingle.embeds.length === 1);
-        assert.match(finalSingle.embeds[0].data.title, /ข้อมูลบัญชี Discord/);
+        assert.match(finalSingle.embeds[0].data.title, /ตรวจสอบเสร็จเเล้ว/);
 
         // 2. Batch token flow
         const batchReplies = [];
@@ -497,7 +537,7 @@ test('handleTokenCheckModal processes single token and batch tokens successfully
         const finalBatch = batchReplies[batchReplies.length - 1];
         assert.equal(finalBatch.content, null);
         assert.ok(finalBatch.embeds && finalBatch.embeds.length === 1);
-        assert.match(finalBatch.embeds[0].data.title, /ตรวจสอบเสร็จแล้ว/);
+        assert.match(finalBatch.embeds[0].data.title, /ตรวจสอบเสร็จเเล้ว/);
     } finally {
         tcModule.checkSingleToken = originalCheckSingle;
         tcModule.checkBatchTokens = originalCheckBatch;

@@ -91,6 +91,35 @@ describe("Core SQLite Repositories Suite", () => { // NOSONAR -- node:test asser
             const secondClaim = dmRepo.claimRecord(created, now);
             assert.equal(secondClaim, null);
 
+            // Stale 'sending' row reclamation with leaseUntil
+            const staleRecord = dmRepo.create({
+                eventKey: "stale_sending_key",
+                recipientId: "user_stale",
+                category: "alert",
+                status: "sending",
+                nextAttemptAt: now - 5000,
+                expiresAt: now + 3600000
+            });
+
+            // Claim should succeed when status.$in includes 'sending' and nextAttemptAt <= now
+            const leaseExpiry = now + 60000;
+            const reclaimed = dmRepo.claimRecord({
+                id: staleRecord.id,
+                status: { $in: ["pending", "retrying", "sending"] },
+                nextAttemptAt: { $lte: now }
+            }, now, leaseExpiry);
+            assert.ok(reclaimed);
+            assert.equal(reclaimed.status, "sending");
+            assert.equal(reclaimed.nextAttemptAt, leaseExpiry);
+
+            // Immediate second claim during active lease must return null
+            const concurrentClaim = dmRepo.claimRecord({
+                id: staleRecord.id,
+                status: { $in: ["pending", "retrying", "sending"] },
+                nextAttemptAt: { $lte: now }
+            }, now, leaseExpiry);
+            assert.equal(concurrentClaim, null);
+
             // Claim due candidates
             dmRepo.create({
                 eventKey: "batch_due_1",

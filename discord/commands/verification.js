@@ -57,7 +57,7 @@ const DEFAULT_PANEL = {
     content: "",
     title: "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
     description: "",
-    color: "#5865F2",
+    color: "#DCDCDC",
     footer: "",
     oauthButtonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
     directButtonText: "<a:ddd_pmt:1553844572873040044> vfy (user)",
@@ -168,7 +168,7 @@ function makePanelRevision(prefix = "panel") {
     return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(8).toString("hex")}`;
 }
 
-function buildDiscordAuthorizeUrl({
+function buildOAuthStartUrl({
     guildId,
     roleId,
     expectedUserId = null,
@@ -195,6 +195,8 @@ function buildDiscordAuthorizeUrl({
 
     return url;
 }
+
+const buildDiscordAuthorizeUrl = buildOAuthStartUrl;
 
 function isLikelyUnicodeEmoji(raw) {
     if (!raw || typeof raw !== "string") return false;
@@ -330,7 +332,7 @@ function normalizeColor(input) {
     if (!colorHex.startsWith("#")) colorHex = "#" + colorHex;
 
     if (!/^#[0-9A-Fa-f]{6}$/.test(colorHex)) {
-        return config?.system?.themeColors?.primary || DEFAULT_PANEL.color;
+        return DEFAULT_PANEL.color;
     }
 
     return colorHex.toUpperCase();
@@ -869,8 +871,7 @@ function buildVerificationSetupResultEmbed({
                 value: panelOptions.showTs ? "เปิด" : "ปิด",
                 inline: true
             }
-        )
-        .setTimestamp();
+        );
 }
 
 async function handleSetupVerify(interaction) {
@@ -995,7 +996,6 @@ async function executeDirectRoleAssignment(interaction, member, role, roleId) {
                     .setColor(config.system?.themeColors?.success || "#57F287")
                     .setTitle(`${config.emojis?.check_alt || config.emojis?.success || "✅"} รับยศเรียบร้อย`)
                     .setDescription(`ยศ: ${role.toString()}`)
-                    .setTimestamp()
             ],
             ephemeral: true
         });
@@ -1084,6 +1084,7 @@ module.exports = {
         persistVerificationRecovery,
         verificationRecoverySummary,
         verificationSetupFailureMessage,
+        buildOAuthStartUrl,
         buildDiscordAuthorizeUrl,
         validateSetupChannelAndRole,
         parseVerificationButtonParts,

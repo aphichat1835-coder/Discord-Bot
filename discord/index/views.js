@@ -12,6 +12,7 @@ const auth = require("./auth");
 const { createViewHelpers } = require("./viewHelpers");
 const { buildJoinCampaignPage } = require("./joinCampaignPage");
 const { buildDatabaseCenterPage } = require("./databaseCenterPage");
+const { presenceManager } = require("../features/presence");
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🎨  SHARED CSS — ใช้ทุกหน้า
@@ -27,6 +28,10 @@ const {
     shell,
     toastScript
 } = createViewHelpers(BASE_CSS);
+
+function serializeForScript(data) {
+    return JSON.stringify(data ?? []).replaceAll("<", String.raw`\u003c`);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 //  🏠  หน้าหลัก
@@ -125,6 +130,17 @@ ${navBar("/")}
 
 ${toastScript()}
 <script>
+function handleAvatarError(img){
+    if(!img) return;
+    img.onerror=null;
+    img.src='https://cdn.discordapp.com/embed/avatars/0.png';
+}
+function copyToken(btn){
+    if(!btn||!btn.dataset.copy) return;
+    navigator.clipboard.writeText(btn.dataset.copy);
+    btn.textContent='✅';
+    setTimeout(()=>{ btn.textContent='📋'; },1500);
+}
 function fmtUp(s){
     const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60),ss=s%60;
     if(d>0)return d+'d '+h+'h';
@@ -267,16 +283,16 @@ async function fetchStatus(){
                     : '';
 
                 const tokenBlock=revealed
-                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealed)+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(revealed).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>'
+                    ? '<div class="token-full-wrap"><span style="flex:1;">'+esc(revealed)+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" data-copy="'+esc(revealed)+'" onclick="copyToken(this)">📋</button></div>'
                     : '<span style="color:var(--text3);">ไม่มี Token</span>';
 
                 const recBtn=(s.connectionStatus!=='ready'||s.reconnecting)
-                    ? '<button type="button" class="session-chip" style="color:var(--accent);border-color:rgba(87,242,135,0.4);" onclick="reconnectSessionFromHome(\\''+sid+'\\',this)">เชื่อมต่อใหม่</button>'
+                    ? '<button type="button" class="session-chip" style="color:var(--accent);border-color:rgba(87,242,135,0.4);" data-sid="'+sid+'" onclick="reconnectSessionFromHome(this.dataset.sid,this)">เชื่อมต่อใหม่</button>'
                     : '';
 
                 return '<div class="session-item">'+
                     '<div class="session-head">'+
-                        '<img class="session-avatar" src="'+esc(avatar)+'" alt="avatar" onerror="this.src=\\'https://cdn.discordapp.com/embed/avatars/0.png\\'">'+
+                        '<img class="session-avatar" src="'+esc(avatar)+'" alt="avatar" onerror="handleAvatarError(this)">'+
                         '<div class="session-meta">'+
                             '<div class="session-account">👤 '+acc+'</div>'+
                             '<div class="session-sub">🖥️ '+server+'</div>'+
@@ -289,7 +305,7 @@ async function fetchStatus(){
                     '<div class="session-actions">'+
                         '<a class="session-chip" href="/session/'+sid+'">ดูรายละเอียด →</a>'+
                         recBtn+
-                        '<button type="button" class="session-chip session-stop" onclick="stopSessionFromHome(\\''+sid+'\\',this)">หยุด</button>'+
+                        '<button type="button" class="session-chip session-stop" data-sid="'+sid+'" onclick="stopSessionFromHome(this.dataset.sid,this)">หยุด</button>'+
                         tokenBlock+
                     '</div>'+
                 '</div>';
@@ -993,6 +1009,12 @@ function updateUptime(){
     document.getElementById('uptimeLive').textContent='ออนมา '+up;
     document.getElementById('sUptime').textContent=up;
 }
+function copyToken(btn){
+    if(!btn||!btn.dataset.copy) return;
+    navigator.clipboard.writeText(btn.dataset.copy);
+    btn.textContent='✅';
+    setTimeout(()=>{ btn.textContent='📋'; },1500);
+}
 function showTokenBlock(token){
     const box=document.getElementById('tokenDisplay');
     if(!token){
@@ -1000,7 +1022,7 @@ function showTokenBlock(token){
         return;
     }
     const safe=esc(token);
-    box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" onclick="navigator.clipboard.writeText(\\''+String(token).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")+'\\');this.textContent=\\'✅\\';setTimeout(()=>this.textContent=\\'📋\\',1500)">📋</button></div>';
+    box.innerHTML='<div class="token-full-wrap"><span style="flex:1;">'+safe+'</span><button type="button" class="copy-btn" aria-label="คัดลอก Token" data-copy="'+safe+'" onclick="copyToken(this)">📋</button></div>';
 }
 async function loadSession(){
     if(!SESSION_ID){
@@ -1280,7 +1302,9 @@ function renderRotateMessageRows(messages) {
 }
 
 function buildPresencePageView(settings, config, client) {
-    const botStatus = settings.botStatus ?? config.bot_presence?.status ?? "idle";
+    const presenceState = presenceManager.getState();
+    const botStatus = presenceState.currentStatus || settings.botStatus || config.bot_presence?.status || "online";
+    const botPlatform = presenceState.currentPlatform || settings.botPlatform || "desktop";
     const botNote = escapeHtml(settings.botNote ?? "");
     const statusColors = {
         online: "#4ade80",
@@ -1290,12 +1314,14 @@ function buildPresencePageView(settings, config, client) {
     };
     return {
         botStatus,
+        botPlatform,
         botActivity: escapeHtml(settings.botActivity ?? config.bot_presence?.activityText ?? "ระบบออนช่องเสียง"),
         botNote,
         previewNote: botNote || "ไม่มี note",
         actType: settings.botActivityType || "WATCHING",
         botName: escapeHtml(client?.user?.username || "Bot"),
-        statusColor: statusColors[botStatus] || statusColors.idle
+        statusColor: statusColors[botStatus] || statusColors.online,
+        presenceState
     };
 }
 
@@ -1322,15 +1348,14 @@ function pageSettings(settings, config, client, API_SECRET) {
         idleHrs,
         voiceDmMode,
         botStatus,
+        botPlatform,
         botActivity,
         botNote,
         previewNote,
         actType,
-        rotateEn,
-        rotateInt,
-        rotateMsgs,
         botName,
-        statusColor
+        statusColor,
+        presenceState
     } = buildSettingsPageView(settings, config, client);
 
     return shell("ตั้งค่าระบบ", `
@@ -1345,7 +1370,7 @@ ${navBar("/settings")}
     <h3>🎛️ การตั้งค่าทั่วไป</h3>
 
     <label>จำนวน Session พร้อมกันสูงสุด</label>
-    <input type="number" id="maxSessions" value="${maxSessions}" min="1" max="100">
+    <input type="number" id="maxSessions" value="${maxSessions}" min="1" max="1000">
 
     <label>จำนวนคำขอ API สูงสุดต่อนาที</label>
     <input type="number" id="rateLimitRequests" value="${rateLimitReq}" min="1" max="60">
@@ -1370,15 +1395,25 @@ ${navBar("/settings")}
 </div>
 
 <div class="card">
-    <h3>🖼️ ตัวอย่างโปรไฟล์บอท</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">🖼️ ตัวอย่างโปรไฟล์และแพลตฟอร์มบอท</h3>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <span class="badge" id="previewStatusBadge" style="background:rgba(34,197,94,0.18);color:#4ade80;">🟢 ${escapeHtml(presenceState.currentStatusMetadata?.name || "Online")}</span>
+            <span class="badge" id="previewPlatformBadge" style="background:rgba(124,58,237,0.2);color:#c4b5fd;">${escapeHtml(presenceState.currentPlatformConfig?.icon || "💻")} ${escapeHtml(presenceState.currentPlatformConfig?.name || "Desktop")}</span>
+        </div>
+    </div>
 
-    <div class="preview">
-        <div class="av">
+    <div class="preview" style="position:relative;">
+        <div class="av" style="position:relative;width:54px;height:54px;font-size:28px;">
             🤖
             <div class="av-dot" id="previewDot" style="background:${statusColor};"></div>
+            <div id="previewPlatformIcon" style="position:absolute;bottom:-4px;right:-4px;font-size:16px;background:var(--bg2);border-radius:50%;padding:2px;box-shadow:0 2px 4px rgba(0,0,0,0.5);">${escapeHtml(presenceState.currentPlatformConfig?.icon || "💻")}</div>
         </div>
-        <div>
-            <div style="font-weight:900;color:var(--text);">${botName}</div>
+        <div style="margin-left:14px;">
+            <div style="font-weight:900;color:var(--text);display:flex;align-items:center;gap:6px;">
+                <span>${botName}</span>
+                <span class="badge" style="font-size:0.65em;background:rgba(124,58,237,0.3);color:#d8b4fe;">BOT</span>
+            </div>
             <div id="previewActivity" style="font-size:0.8em;color:var(--text2);margin-top:3px;">${botActivity}</div>
             <div id="previewNote" style="font-size:0.72em;color:var(--text3);margin-top:3px;">${previewNote}</div>
         </div>
@@ -1386,52 +1421,133 @@ ${navBar("/settings")}
 </div>
 
 <div class="card">
-    <h3>🟢 สถานะที่แสดงบนโปรไฟล์บอท</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">🟢 Online Presence Status — สถานะออนไลน์บนโปรไฟล์</h3>
+        <span class="badge" style="background:rgba(34,197,94,0.15);color:#4ade80;">Active: ${escapeHtml(presenceState.currentStatus.toUpperCase())}</span>
+    </div>
+    <p style="font-size:0.82em;color:var(--text3);margin-bottom:14px;">ควบคุมสถานะการออนไลน์ของโปรไฟล์บอท (Online, Idle, Do Not Disturb, Invisible) มีผลเรียลไทม์บนเซิร์ฟเวอร์ Discord</p>
 
-    <label>สถานะบอท</label>
+    <label for="botStatus">สถานะบอท (Online Status)</label>
     <select id="botStatus" onchange="updatePresencePreview()">
-        <option value="online" ${selectedAttr(botStatus, "online")}>🟢 Online</option>
-        <option value="idle" ${selectedAttr(botStatus, "idle")}>🌙 Idle</option>
-        <option value="dnd" ${selectedAttr(botStatus, "dnd")}>⛔ Do Not Disturb</option>
-        <option value="invisible" ${selectedAttr(botStatus, "invisible")}>⚫ Invisible</option>
+        <option value="online" ${selectedAttr(botStatus, "online")}>🟢 Online — ออนไลน์พร้อมใช้งาน</option>
+        <option value="idle" ${selectedAttr(botStatus, "idle")}>🌙 Idle — ไม่อยู่ / สแตนด์บาย</option>
+        <option value="dnd" ${selectedAttr(botStatus, "dnd")}>⛔ Do Not Disturb — ห้ามรบกวน</option>
+        <option value="invisible" ${selectedAttr(botStatus, "invisible")}>⚫ Invisible — ซ่อนตัว / ออฟไลน์</option>
     </select>
 
-    <label>ประเภทกิจกรรม</label>
-    <select id="botActivityType">
-        <option value="WATCHING" ${selectedAttr(actType, "WATCHING")}>👁️ กำลังดู</option>
-        <option value="LISTENING" ${selectedAttr(actType, "LISTENING")}>🎧 กำลังฟัง</option>
-        <option value="PLAYING" ${selectedAttr(actType, "PLAYING")}>🎮 กำลังเล่น</option>
-        <option value="COMPETING" ${selectedAttr(actType, "COMPETING")}>🏆 กำลังแข่ง</option>
-    </select>
+    <div style="margin-top:12px;padding:12px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid var(--border);">
+        <details>
+            <summary style="cursor:pointer;color:var(--text2);font-weight:600;font-size:0.88em;">⚙️ กิจกรรมและข้อความประกอบ (Activity & Note - ตัวเลือกเสริม)</summary>
+            <div style="margin-top:10px;">
+                <label for="botActivityType">ประเภทกิจกรรม</label>
+                <select id="botActivityType">
+                    <option value="WATCHING" ${selectedAttr(actType, "WATCHING")}>👁️ กำลังดู</option>
+                    <option value="LISTENING" ${selectedAttr(actType, "LISTENING")}>🎧 กำลังฟัง</option>
+                    <option value="PLAYING" ${selectedAttr(actType, "PLAYING")}>🎮 กำลังเล่น</option>
+                    <option value="COMPETING" ${selectedAttr(actType, "COMPETING")}>🏆 กำลังแข่ง</option>
+                </select>
 
-    <label>ข้อความกิจกรรม</label>
-    <input id="botActivity" value="${botActivity}" maxlength="128" oninput="updatePresencePreview()">
+                <label for="botActivity" style="margin-top:8px;">ข้อความกิจกรรม</label>
+                <input id="botActivity" value="${botActivity}" maxlength="128" oninput="updatePresencePreview()">
 
-    <label>Note เพิ่มเติม</label>
-    <input id="botNote" value="${botNote}" maxlength="128" oninput="updatePresencePreview()">
+                <label for="botNote" style="margin-top:8px;">Note เพิ่มเติม</label>
+                <input id="botNote" value="${botNote}" maxlength="128" oninput="updatePresencePreview()">
+            </div>
+        </details>
+    </div>
 
-    <button type="button" class="btn btn-primary" onclick="savePresence()">💾 บันทึกสถานะบอท</button>
+    <div style="margin-top:14px;">
+        <button type="button" class="btn btn-primary" onclick="savePresenceStatus()">💾 บันทึกสถานะบอท (Save Status)</button>
+    </div>
 </div>
 
 <div class="card">
-    <h3>🔁 สลับข้อความสถานะอัตโนมัติ</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">📱 Client Platform / Device Indicator — ไอคอนอุปกรณ์และแพลตฟอร์ม</h3>
+        <span class="badge" style="background:rgba(124,58,237,0.2);color:#c4b5fd;">Current: ${escapeHtml(presenceState.currentPlatformConfig?.name || "Desktop")}</span>
+    </div>
+    <p style="font-size:0.82em;color:var(--text3);margin-bottom:14px;">ควบคุมการระบุแพลตฟอร์มใน Gateway IDENTIFY เพื่อแสดงไอคอนประเภทอุปกรณ์บนโปรไฟล์บอท</p>
 
-    <label>เปิดหรือปิดการสลับข้อความอัตโนมัติ</label>
-    <select id="rotateEnabled">
-        <option value="true" ${selectedAttr(rotateEn, true)}>✅ เปิด</option>
-        <option value="false" ${selectedAttr(rotateEn, false)}>❌ ปิด</option>
-    </select>
-
-    <label>สลับทุกกี่นาที</label>
-    <input type="number" id="rotateInterval" value="${rotateInt}" min="1" max="1440">
-
-    <label>ข้อความที่จะเอาไปหมุน</label>
-    <div id="rotate-list">
-        ${renderRotateMessageRows(rotateMsgs)}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-bottom:14px;">
+        ${presenceState.supportedPlatforms.map(p => `
+            <div style="padding:10px;border-radius:8px;background:${p.id === botPlatform ? 'rgba(124,58,237,0.18)' : 'rgba(255,255,255,0.03)'};border:1px solid ${p.id === botPlatform ? 'var(--accent)' : 'var(--border)'};">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:1.2em;">${p.icon}</span>
+                    <strong style="color:var(--text);font-size:0.9em;">${escapeHtml(p.name)}</strong>
+                </div>
+                <div style="margin-top:4px;">
+                    <span class="badge" style="font-size:0.7em;background:rgba(255,255,255,0.08);color:var(--accent3);">${escapeHtml(p.badge)}</span>
+                </div>
+                <div style="font-size:0.75em;color:var(--text3);margin-top:4px;">
+                    ${escapeHtml(p.indicator)}
+                </div>
+            </div>
+        `).join("")}
     </div>
 
-    <button type="button" class="btn btn-info" onclick="addRotate()">➕ เพิ่มข้อความ</button>
-    <button type="button" class="btn btn-primary" onclick="saveRotate()">💾 บันทึกการสลับสถานะ</button>
+    <label for="botPlatformSelect">เลือกแพลตฟอร์มที่ต้องการใช้งาน (Platform Selection)</label>
+    <select id="botPlatformSelect" onchange="updatePlatformSelectionPreview()">
+        ${presenceState.supportedPlatforms.map(p => `
+            <option value="${p.id}" ${selectedAttr(botPlatform, p.id)}>${p.icon} ${escapeHtml(p.name)} [${escapeHtml(p.badge)}]</option>
+        `).join("")}
+    </select>
+
+    <div style="font-size:0.82em;color:var(--text3);margin:12px 0;padding:10px 14px;background:rgba(234,179,8,0.08);border-radius:6px;border-left:3px solid var(--yellow2);">
+        ⚠️ <strong>Gateway Cooldown Guard:</strong> การเปลี่ยนแพลตฟอร์มจะสั่ง Shard ทำการ Re-identify ใหม่ ซึ่งมีระบบป้องกัน Cooldown 15 วินาทีเพื่อป้องกัน Gateway 429 Rate Limit
+    </div>
+
+    <button type="button" class="btn btn-primary" onclick="savePresencePlatform()">🚀 เปลี่ยนแพลตฟอร์ม (Change Platform)</button>
+</div>
+
+<div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">🔁 Presence & Platform Rotation Scheduler — สลับสถานะ & แพลตฟอร์มอัตโนมัติ</h3>
+        <span id="rotStatusBadge" class="badge" style="background:${presenceState.rotation?.isRunning ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'};color:${presenceState.rotation?.isRunning ? '#4ade80' : '#f87171'};">
+            ${presenceState.rotation?.isRunning ? '🟢 ทำงานอยู่ (Active)' : '⏸️ หยุดชั่วคราว (Paused)'}
+        </span>
+    </div>
+    <p style="font-size:0.82em;color:var(--text3);margin-bottom:14px;">ตั้งเวลาสลับสถานะและแพลตฟอร์มแบบลำดับคิว โดยแต่ละรายการสามารถกำหนดระยะเวลาอิสระต่อกัน (Per-item Timers) พร้อมกู้คืนอัตโนมัติเมื่อรีสตาร์ต</p>
+
+    <div id="rotationStatusBanner" style="padding:12px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border);margin-bottom:14px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;">
+        <div>
+            <div style="font-size:0.85em;color:var(--text2);">
+                กำลังรัน: <strong id="rotActiveName" style="color:#fff;">${escapeHtml(presenceState.rotation?.currentItem?.name || "ยังไม่มีรายการรัน")}</strong>
+            </div>
+            <div style="font-size:0.78em;color:var(--text3);margin-top:2px;">
+                รายการถัดไป: <span id="rotNextName">${escapeHtml(presenceState.rotation?.nextItem?.name || "สิ้นสุดคิว")}</span> | 
+                เหลือเวลา: <span id="rotTimeRemaining">${presenceState.rotation?.remainingSeconds ? Math.ceil(presenceState.rotation.remainingSeconds / 60) + ' นาที' : '-'}</span>
+            </div>
+        </div>
+        <div>
+            <button type="button" id="btnToggleRot" class="btn btn-sm ${presenceState.rotation?.isRunning ? 'btn-danger' : 'btn-success'}" onclick="togglePresenceRotation()">
+                ${presenceState.rotation?.isRunning ? '⏸️ หยุดชั่วคราว' : '▶️ เริ่มทำงาน'}
+            </button>
+        </div>
+    </div>
+
+    <div class="table-scroll" style="margin-bottom:14px;">
+        <table id="rotationTable" style="width:100%;text-align:left;border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:1px solid var(--border);color:var(--text2);font-size:0.85em;">
+                    <th style="padding:8px;width:45px;text-align:center;">เปิด</th>
+                    <th style="padding:8px;">ชื่อรายการ</th>
+                    <th style="padding:8px;width:125px;">ประเภท</th>
+                    <th style="padding:8px;width:130px;">สถานะ</th>
+                    <th style="padding:8px;width:140px;">แพลตฟอร์ม</th>
+                    <th style="padding:8px;width:100px;">เวลา (นาที)</th>
+                    <th style="padding:8px;width:110px;text-align:center;">จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="rotationTableBody">
+                <!-- Populated dynamically by JS -->
+            </tbody>
+        </table>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-info" onclick="addPresenceRotationItem()">➕ เพิ่มรายการสลับสถานะ</button>
+        <button type="button" class="btn btn-primary" onclick="savePresenceRotation()">💾 บันทึกตารางสลับสถานะ (Save Rotation)</button>
+    </div>
 </div>
 
 <div class="card">
@@ -1489,7 +1605,9 @@ ${navBar("/settings")}
 
 <script>
 const SECRET='';
-let rotateCount=${rotateMsgs.length};
+let rotItems = ${serializeForScript(presenceState.rotation?.items)};
+let rotIsRunning = ${presenceState.rotation?.isRunning === true};
+const PLATFORMS = ${serializeForScript(presenceState.supportedPlatforms)};
 
 function showMsg(msg, ok){
     const el=document.getElementById('__msg');
@@ -1552,8 +1670,8 @@ function markFeatureLoaded(prefix){
 
 function updatePresencePreview(){
     const status=document.getElementById('botStatus').value;
-    const activity=document.getElementById('botActivity').value.trim()||'ระบบออนช่องเสียง';
-    const note=document.getElementById('botNote').value.trim();
+    const activity=document.getElementById('botActivity')?.value?.trim()||'ระบบออนช่องเสียง';
+    const note=document.getElementById('botNote')?.value?.trim();
 
     const colors={
         online:'#4ade80',
@@ -1563,117 +1681,241 @@ function updatePresencePreview(){
     };
 
     const dot=document.getElementById('previewDot');
-    dot.style.background=colors[status]||colors.idle;
-    document.getElementById('previewActivity').textContent=activity;
-    document.getElementById('previewNote').textContent=note||'ไม่มี note';
+    if(dot) dot.style.background=colors[status]||colors.online;
+    const actEl=document.getElementById('previewActivity');
+    if(actEl) actEl.textContent=activity;
+    const noteEl=document.getElementById('previewNote');
+    if(noteEl) noteEl.textContent=note||'ไม่มี note';
+
+    const statusBadge=document.getElementById('previewStatusBadge');
+    if(statusBadge){
+        const names={online:'🟢 Online',idle:'🌙 Idle',dnd:'⛔ DND',invisible:'⚫ Invisible'};
+        statusBadge.textContent=names[status]||status;
+    }
 }
 
-async function saveSettings(){
-    const maxSessions=Number.parseInt(document.getElementById('maxSessions').value,10)||1;
-    const rateLimitRequests=Number.parseInt(document.getElementById('rateLimitRequests').value,10)||5;
-    const idleTimeoutHrs=Number.parseInt(document.getElementById('idleTimeoutHrs').value,10)||24;
-    const antiRaidEnabled=document.getElementById('antiRaidEnabled').value==='true';
-    const voiceDmMode=document.getElementById('voiceDmMode').value;
+function updatePlatformSelectionPreview(){
+    const plat=document.getElementById('botPlatformSelect')?.value||'desktop';
+    const found=PLATFORMS.find(p=>p.id===plat);
+    const icon=found?.icon||'💻';
+    const previewIconEl=document.getElementById('previewPlatformIcon');
+    if(previewIconEl) previewIconEl.textContent=icon;
+    const badgeEl=document.getElementById('previewPlatformBadge');
+    if(badgeEl) badgeEl.textContent=icon+' '+plat;
+}
+
+async function savePresenceStatus(){
+    const status=document.getElementById('botStatus').value;
+    const activity=document.getElementById('botActivity')?.value?.trim();
+    const note=document.getElementById('botNote')?.value?.trim();
+    const botActivityType=document.getElementById('botActivityType')?.value;
 
     try{
-        const r=await fetch('/api/settings',{
+        const r=await fetch('/api/presence/status',{
             method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({maxSessions,rateLimitRequests,idleTimeoutHrs,antiRaidEnabled,voiceDmMode})
+            headers:{'Content-Type':'application/json','Authorization':SECRET},
+            body:JSON.stringify({status})
         });
-
         const d=await r.json();
-        showMsg(d.success?'✅ บันทึก General แล้ว':'❌ '+(d.error||'Unknown'),d.success);
+
+        if(activity){
+            const presRes = await fetch('/api/presence',{
+                method:'POST',
+                headers:{'Content-Type':'application/json','Authorization':SECRET},
+                body:JSON.stringify({botStatus:status,botActivityType,botActivity:activity,botNote:note})
+            });
+            if(!presRes.ok){
+                const presData = await presRes.json().catch(()=>({}));
+                showMsg('❌ '+(presData.error||'บันทึกกิจกรรมไม่สำเร็จ'), false);
+                return;
+            }
+        }
+
+        showMsg(d.success?'✅ บันทึกสถานะบอทสำเร็จ':'❌ '+(d.error||'บันทึกไม่สำเร็จ'),d.success);
+        updatePresencePreview();
     }catch(e){
         showMsg('❌ เชื่อมต่อไม่ได้',false);
     }
 }
 
-async function savePresence(){
-    const botStatus=document.getElementById('botStatus').value;
-    const botActivityType=document.getElementById('botActivityType').value;
-    const botActivity=document.getElementById('botActivity').value.trim();
-    const botNote=document.getElementById('botNote').value.trim();
-
-    if(!botActivity){
-        return showMsg('❌ กรุณากรอกข้อความกิจกรรม',false);
-    }
-
+async function savePresencePlatform(){
+    const platform=document.getElementById('botPlatformSelect').value;
     try{
-        const r=await fetch('/api/presence',{
+        const r=await fetch('/api/presence/platform',{
             method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({botStatus,botActivityType,botActivity,botNote})
+            headers:{'Content-Type':'application/json','Authorization':SECRET},
+            body:JSON.stringify({platform})
         });
-
         const d=await r.json();
-        showMsg(d.success?'✅ บันทึก Presence แล้ว':'❌ '+(d.error||'Unknown'),d.success);
+        if(d.success){
+            showMsg(d.changed?'✅ เปลี่ยนแพลตฟอร์มเป็น '+d.platform+' เรียบร้อยแล้ว':'ℹ️ แพลตฟอร์มนี้เปิดใช้งานอยู่แล้ว',true);
+            updatePlatformSelectionPreview();
+        }else{
+            showMsg('❌ '+(d.error||'เปลี่ยนแพลตฟอร์มไม่สำเร็จ'),false);
+        }
     }catch(e){
         showMsg('❌ เชื่อมต่อไม่ได้',false);
     }
 }
 
-function addRotate(){
-    const list=document.getElementById('rotate-list');
-    const empty=document.getElementById('ri-empty');
-    if(empty) empty.remove();
+function renderRotationTable(){
+    const tbody=document.getElementById('rotationTableBody');
+    if(!tbody) return;
+    if(!rotItems || !rotItems.length){
+        tbody.innerHTML='<tr><td colspan="7" style="text-align:center;padding:18px;color:var(--text3);">ยังไม่มีรายการสลับสถานะในตาราง</td></tr>';
+        return;
+    }
+    let html='';
+    for(let idx=0; idx<rotItems.length; idx++){
+        const item=rotItems[idx];
+        const isFirst = idx===0;
+        const isLast = idx===(rotItems.length-1);
+        const isStatusOnly = item.type === 'status';
+        const isPlatformOnly = item.type === 'platform';
+        const isCombined = item.type === 'combined' || item.type === 'both';
 
-    const idx=rotateCount++;
-    const div=document.createElement('div');
-    div.className='ri';
-    div.id='ri-'+idx;
-    div.innerHTML='<input maxlength="128" placeholder="ข้อความกิจกรรม..."><button type="button" class="btn btn-danger btn-sm" onclick="removeRotate('+idx+')">ลบ</button>';
-    list.appendChild(div);
+        html += '<tr id="rot-row-'+idx+'" style="border-bottom:1px solid rgba(255,255,255,0.05);">'
+            + '<td style="padding:6px;text-align:center;">'
+            + '<input type="checkbox" id="rot-en-'+idx+'" '+(item.enabled ? 'checked' : '')+' onchange="rotItems['+idx+'].enabled=this.checked">'
+            + '</td>'
+            + '<td style="padding:6px;">'
+            + '<input type="text" id="rot-name-'+idx+'" value="'+(item.name||'').replace(/"/g,'&quot;')+'" style="width:100%;font-size:0.85em;padding:4px 8px;" onchange="rotItems['+idx+'].name=this.value">'
+            + '</td>'
+            + '<td style="padding:6px;">'
+            + '<select id="rot-type-'+idx+'" style="font-size:0.8em;padding:4px;" onchange="rotItems['+idx+'].type=this.value; renderRotationTable();">'
+            + '<option value="combined" '+(isCombined?'selected':'')+'>สถานะ & แพลตฟอร์ม</option>'
+            + '<option value="status" '+(isStatusOnly?'selected':'')+'>สถานะอย่างเดียว</option>'
+            + '<option value="platform" '+(isPlatformOnly?'selected':'')+'>แพลตฟอร์มอย่างเดียว</option>'
+            + '</select>'
+            + '</td>'
+            + '<td style="padding:6px;">'
+            + (isPlatformOnly
+                ? '<span style="color:var(--text3);font-size:0.8em;">(ไม่เปลี่ยน)</span>'
+                : '<select id="rot-status-'+idx+'" style="font-size:0.8em;padding:4px;" onchange="rotItems['+idx+'].status=this.value">'
+                + '<option value="online" '+(item.status==='online'?'selected':'')+'>🟢 Online</option>'
+                + '<option value="idle" '+(item.status==='idle'?'selected':'')+'>🌙 Idle</option>'
+                + '<option value="dnd" '+(item.status==='dnd'?'selected':'')+'>⛔ DND</option>'
+                + '<option value="invisible" '+(item.status==='invisible'?'selected':'')+'>⚫ Invisible</option>'
+                + '</select>')
+            + '</td>'
+            + '<td style="padding:6px;">'
+            + (isStatusOnly
+                ? '<span style="color:var(--text3);font-size:0.8em;">(ไม่เปลี่ยน)</span>'
+                : '<select id="rot-plat-'+idx+'" style="font-size:0.8em;padding:4px;" onchange="rotItems['+idx+'].platform=this.value">'
+                + PLATFORMS.map(p => '<option value="'+p.id+'" '+(item.platform===p.id?'selected':'')+'>'+p.icon+' '+p.name+'</option>').join('')
+                + '</select>')
+            + '</td>'
+            + '<td style="padding:6px;">'
+            + '<input type="number" id="rot-dur-'+idx+'" value="'+(item.durationMinutes||5)+'" min="1" max="1440" style="width:70px;font-size:0.85em;padding:4px;" onchange="rotItems['+idx+'].durationMinutes=Number(this.value)||5">'
+            + '</td>'
+            + '<td style="padding:6px;text-align:center;">'
+            + '<button type="button" class="btn btn-sm" style="padding:2px 6px;" onclick="movePresenceRotationItem('+idx+',-1)" '+(isFirst?'disabled':'')+'>⬆️</button> '
+            + '<button type="button" class="btn btn-sm" style="padding:2px 6px;" onclick="movePresenceRotationItem('+idx+',1)" '+(isLast?'disabled':'')+'>⬇️</button> '
+            + '<button type="button" class="btn btn-danger btn-sm" style="padding:2px 6px;" onclick="removePresenceRotationItem('+idx+')">🗑️</button>'
+            + '</td>'
+            + '</tr>';
+    }
+    tbody.innerHTML=html;
 }
 
-function removeRotate(idx){
-    const el=document.getElementById('ri-'+idx);
-    if(el) el.remove();
-
-    if(!document.querySelectorAll('.ri').length){
-        document.getElementById('rotate-list').innerHTML='<div class="ri-empty" id="ri-empty">ยังไม่มีข้อความ</div>';
-    }
+function addPresenceRotationItem(){
+    rotItems.push({
+        id:'item_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
+        name:'รายการใหม่ '+(rotItems.length+1),
+        type:'combined',
+        status:'online',
+        platform:'desktop',
+        durationMinutes:5,
+        enabled:true
+    });
+    renderRotationTable();
 }
 
-async function saveRotate(){
-    const rotateEnabled=document.getElementById('rotateEnabled').value==='true';
-    const rotateInterval=Number.parseInt(document.getElementById('rotateInterval').value,10)||5;
-    const msgs=[...document.querySelectorAll('.ri input')]
-        .map(i=>i.value.trim())
-        .filter(Boolean);
+function removePresenceRotationItem(idx){
+    rotItems.splice(idx,1);
+    renderRotationTable();
+}
 
-    if(rotateEnabled&&!msgs.length){
-        return showMsg('❌ กรุณาเพิ่มข้อความอย่างน้อย 1 ข้อความ',false);
-    }
+function movePresenceRotationItem(idx,dir){
+    const targetIdx=idx+dir;
+    if(targetIdx<0||targetIdx>=rotItems.length) return;
+    const temp=rotItems[idx];
+    rotItems[idx]=rotItems[targetIdx];
+    rotItems[targetIdx]=temp;
+    renderRotationTable();
+}
+
+async function savePresenceRotation(){
+    rotItems.forEach((item,idx)=>{
+        const enEl=document.getElementById('rot-en-'+idx);
+        const nameEl=document.getElementById('rot-name-'+idx);
+        const typeEl=document.getElementById('rot-type-'+idx);
+        const statusEl=document.getElementById('rot-status-'+idx);
+        const platEl=document.getElementById('rot-plat-'+idx);
+        const durEl=document.getElementById('rot-dur-'+idx);
+        if(enEl) item.enabled=enEl.checked;
+        if(nameEl) item.name=nameEl.value.trim()||item.name;
+        if(typeEl) {
+            const rawType = typeEl.value;
+            item.type = (rawType === 'both' || rawType === 'combined') ? 'combined' : rawType;
+        }
+        if(item.type === 'status') {
+            item.platform = null;
+        } else if(platEl && platEl.value) {
+            item.platform = platEl.value;
+        }
+        if(item.type === 'platform') {
+            item.status = null;
+        } else if(statusEl && statusEl.value) {
+            item.status = statusEl.value;
+        }
+        if(durEl) item.durationMinutes=Math.max(1,Number(durEl.value)||5);
+    });
 
     try{
-        const r=await fetch('/api/presence/rotate',{
+        const r=await fetch('/api/presence/rotation',{
             method:'POST',
-            headers:{
-                'Content-Type':'application/json',
-                'Authorization':SECRET
-            },
-            body:JSON.stringify({rotateEnabled,rotateInterval,rotateMessages:msgs})
+            headers:{'Content-Type':'application/json','Authorization':SECRET},
+            body:JSON.stringify({enabled:rotIsRunning,items:rotItems})
         });
-
         const d=await r.json();
-
-        showMsg(
-            d.success
-                ? (rotateEnabled?'✅ Auto-Rotate เปิดแล้ว! สลับทุก '+rotateInterval+' นาที':'✅ ปิด Auto-Rotate แล้ว')
-                : '❌ '+(d.error||'Unknown'),
-            d.success
-        );
+        showMsg(d.success?'✅ บันทึกตารางสลับสถานะเรียบร้อยแล้ว':'❌ '+(d.error||'บันทึกไม่สำเร็จ'),d.success);
     }catch(e){
         showMsg('❌ เชื่อมต่อไม่ได้',false);
     }
 }
+
+async function togglePresenceRotation(){
+    try{
+        const r=await fetch('/api/presence/rotation/toggle',{
+            method:'POST',
+            headers:{'Authorization':SECRET}
+        });
+        const d=await r.json();
+        if(d.success){
+            rotIsRunning=d.enabled;
+            const btn=document.getElementById('btnToggleRot');
+            const badge=document.getElementById('rotStatusBadge');
+            if(btn){
+                btn.className='btn btn-sm '+(rotIsRunning?'btn-danger':'btn-success');
+                btn.textContent=rotIsRunning?'⏸️ หยุดชั่วคราว':'▶️ เริ่มทำงาน';
+            }
+            if(badge){
+                badge.style.background=rotIsRunning?'rgba(34,197,94,0.2)':'rgba(239,68,68,0.2)';
+                badge.style.color=rotIsRunning?'#4ade80':'#f87171';
+                badge.textContent=rotIsRunning?'🟢 ทำงานอยู่ (Active)':'⏸️ หยุดชั่วคราว (Paused)';
+            }
+            showMsg(rotIsRunning?'▶️ เริ่มทำงานตารางสลับสถานะแล้ว':'⏸️ หยุดตารางสลับสถานะชั่วคราวแล้ว',true);
+        }else{
+            showMsg('❌ '+(d.error||'ดำเนินการไม่สำเร็จ'),false);
+        }
+    }catch(e){
+        showMsg('❌ เชื่อมต่อไม่ได้',false);
+    }
+}
+
+const savePresence=savePresenceStatus;
+const saveRotate=savePresenceRotation;
 
 async function loadNatural(){
     try{
@@ -1833,6 +2075,7 @@ async function saveAutoDeaf(){
 
 loadNatural();
 loadAutoDeaf();
+renderRotationTable();
 </script>`);
 }
 

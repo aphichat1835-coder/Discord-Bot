@@ -304,3 +304,133 @@ test("retired moderation queue purge deletes only unsent records", async () => {
         dmService._test.resetTestState();
     }
 });
+
+test("claimRecord succeeds and executes when databaseReady is true without lean error", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(true);
+    const recipient = { send: async () => ({ id: "msg-123" }) };
+    dmService.configure({
+        client: {
+            users: { cache: new Map([["test-user-db", recipient]]), fetch: async () => recipient },
+            isReady: () => true
+        }
+    });
+
+    const originalFindOneAndUpdate = DmNotification.findOneAndUpdate;
+    const originalCreate = DmNotification.create;
+    const originalUpdateOne = DmNotification.updateOne;
+
+    try {
+        DmNotification.create = async data => ({ ...data, _id: "db_rec_1" });
+        DmNotification.updateOne = async () => ({ acknowledged: true });
+        DmNotification.findOneAndUpdate = (filter, update) => {
+            const promise = Promise.resolve({
+                _id: filter._id,
+                status: "sending",
+                eventKey: "test:db-ready-claim",
+                recipientId: "test-user-db",
+                payload: { content: "hello" }
+            });
+            promise.lean = () => promise;
+            return promise;
+        };
+
+        const result = await dmService.send({
+            eventKey: "test:db-ready-claim",
+            recipientId: "test-user-db",
+            category: "test",
+            payload: { content: "hello" }
+        });
+
+        assert.equal(result.status, "sent");
+    } finally {
+        DmNotification.findOneAndUpdate = originalFindOneAndUpdate;
+        DmNotification.create = originalCreate;
+        DmNotification.updateOne = originalUpdateOne;
+        dmService._test.resetTestState();
+    }
+});
+
+test("claimRecord gracefully handles findOneAndUpdate even if lean is not present", async () => {
+    dmService._test.resetTestState();
+    dmService._test.setDatabaseReadyForTest(true);
+    const recipient = { send: async () => ({ id: "msg-456" }) };
+    dmService.configure({
+        client: {
+            users: { cache: new Map([["test-user-nolean", recipient]]), fetch: async () => recipient },
+            isReady: () => true
+        }
+    });
+
+    const originalFindOneAndUpdate = DmNotification.findOneAndUpdate;
+    const originalCreate = DmNotification.create;
+    const originalUpdateOne = DmNotification.updateOne;
+
+    try {
+        DmNotification.create = async data => ({ ...data, _id: "db_rec_2" });
+        DmNotification.updateOne = async () => ({ acknowledged: true });
+        DmNotification.findOneAndUpdate = async filter => ({
+            _id: filter._id,
+            status: "sending",
+            eventKey: "test:no-lean-claim",
+            recipientId: "test-user-nolean",
+            payload: { content: "hi" }
+        });
+
+        const result = await dmService.send({
+            eventKey: "test:no-lean-claim",
+            recipientId: "test-user-nolean",
+            category: "test",
+            payload: { content: "hi" }
+        });
+
+        assert.equal(result.status, "sent");
+    } finally {
+        DmNotification.findOneAndUpdate = originalFindOneAndUpdate;
+        DmNotification.create = originalCreate;
+        DmNotification.updateOne = originalUpdateOne;
+        dmService._test.resetTestState();
+    }
+});
+
+test("DmNotification.findOneAndUpdate passes leaseUntil and status filter to claimRecord", async () => {
+    const { getDmNotificationRepository } = require("../../database/repositories/dm");
+    const repo = getDmNotificationRepository();
+    const originalClaimRecord = repo.claimRecord;
+
+    let capturedFilter = null;
+    let capturedNow = null;
+    let capturedLeaseUntil = null;
+
+    repo.claimRecord = (filter, now, leaseUntil) => {
+        capturedFilter = filter;
+        capturedNow = now;
+        capturedLeaseUntil = leaseUntil;
+        return { ...filter, status: "sending", nextAttemptAt: leaseUntil };
+    };
+
+    try {
+        const leaseTarget = Date.now() + 60000;
+        const res = await DmNotification.findOneAndUpdate(
+            {
+                _id: "test_claim_id_123",
+                status: { $in: ["pending", "retrying", "sending"] },
+                nextAttemptAt: { $lte: Date.now() }
+            },
+            {
+                $set: {
+                    status: "sending",
+                    nextAttemptAt: leaseTarget,
+                    updatedAt: Date.now()
+                }
+            }
+        ).lean();
+
+        assert.ok(res);
+        assert.equal(capturedFilter.id, "test_claim_id_123");
+        assert.deepEqual(capturedFilter.status.$in, ["pending", "retrying", "sending"]);
+        assert.equal(capturedLeaseUntil, leaseTarget);
+    } finally {
+        repo.claimRecord = originalClaimRecord;
+    }
+});

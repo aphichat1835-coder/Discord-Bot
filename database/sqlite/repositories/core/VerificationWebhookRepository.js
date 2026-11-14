@@ -588,7 +588,7 @@ class VerificationWebhookRepository {
     }
 }
 
-module.exports = {
-    VerificationWebhookRepository,
-    verificationWebhookRepository: new VerificationWebhookRepository()
-};
+VerificationWebhookRepository.VerificationWebhookRepository = VerificationWebhookRepository;
+VerificationWebhookRepository.verificationWebhookRepository = new VerificationWebhookRepository();
+
+module.exports = VerificationWebhookRepository;

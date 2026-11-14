@@ -160,7 +160,6 @@ function getOneShotSessionSummary(session) {
                 break;
             case ONE_SHOT_QUEST_STATUS.COMPLETED_EXTERNAL:
                 summary.completedExternalCount++;
-                summary.issues.push({ id: quest.id, name: quest.name, reason: quest.reason });
                 break;
             case ONE_SHOT_QUEST_STATUS.FAILED:
                 summary.failedCount++;
@@ -170,6 +169,7 @@ function getOneShotSessionSummary(session) {
                 summary.pendingCount++;
         }
     }
+    summary.totalCompletedCount = summary.completedByBotCount + summary.completedExternalCount;
     return summary;
 }
 

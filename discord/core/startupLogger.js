@@ -20,6 +20,8 @@ const RUNTIME_LEVELS = Object.freeze({
 });
 
 const FORMATTED_LINE_PATTERN = /^\[(?:BOOT|BOT)\] \[(?:🚀 START|✅ OK|ℹ️ INFO|⚠️ WARN|❌ FAIL|⏭️ SKIP)\] \[[^\]]+\] /;
+const RAW_LINE_PATTERN = /^[═─━-]{8,}|^ {2,}\S/;
+const NODE_WARNING_PATTERN = /^\(node:\d+\)\s+(?:\[[^\]]+\]\s+)?(?:DeprecationWarning|Warning|ExperimentalWarning):/i;
 const LEADING_SCOPE_PATTERN = /^\[([a-zA-Z0-9_.:/-]{1,40})\]\s*/;
 const GENERIC_LEVEL_SCOPES = new Set(["START", "OK", "INFO", "WARN", "FAIL", "SKIP", "ERROR", "DEBUG"]);
 const LEGACY_STATUS_PATTERN = /^(✅|🟢|❌|🔴|⚠️?|ℹ️?)\s*/u;
@@ -72,7 +74,7 @@ function formatStartupLine({ prefix = "BOOT", level = "info", scope = "GENERAL",
 
 function normalizeRuntimeLine(type, value) {
     const message = safeMessage(value);
-    if (FORMATTED_LINE_PATTERN.test(message)) return message;
+    if (FORMATTED_LINE_PATTERN.test(message) || RAW_LINE_PATTERN.test(message)) return message;
 
     const match = LEADING_SCOPE_PATTERN.exec(message);
     const candidateScope = match?.[1]?.toUpperCase();
@@ -81,9 +83,12 @@ function normalizeRuntimeLine(type, value) {
     const rawBody = match ? message.slice(match[0].length).trim() : message;
     const statusMatch = LEGACY_STATUS_PATTERN.exec(rawBody);
     const body = statusMatch ? rawBody.slice(statusMatch[0].length).trim() : rawBody;
-    const level = statusMatch?.[1]
-        ? LEGACY_STATUS_LEVEL[statusMatch[1]] || RUNTIME_LEVELS[type] || "info"
-        : RUNTIME_LEVELS[type] || "info";
+    const isNodeWarning = NODE_WARNING_PATTERN.test(rawBody);
+    const level = isNodeWarning
+        ? "warn"
+        : statusMatch?.[1]
+            ? LEGACY_STATUS_LEVEL[statusMatch[1]] || RUNTIME_LEVELS[type] || "info"
+            : RUNTIME_LEVELS[type] || "info";
 
     return formatStartupLine({
         prefix: "BOT",
@@ -113,6 +118,28 @@ function createStartupLogger({ consoleLike = console, now = Date.now, prefix = "
         else if (level === "warn") consoleLike.warn(line);
         else consoleLike.log(line);
         return line;
+    }
+
+    function writeRaw(level, rawMessage) {
+        const line = safeMessage(rawMessage);
+        if (level === "error") consoleLike.error(line);
+        else if (level === "warn") consoleLike.warn(line);
+        else consoleLike.log(line);
+        return line;
+    }
+
+    function divider(char = "═", length = 68) {
+        return writeRaw("info", char.repeat(length));
+    }
+
+    function banner(title, lines = []) {
+        const separator = "═".repeat(68);
+        writeRaw("info", separator);
+        writeRaw("info", `  ${title}`);
+        for (const item of lines) {
+            if (item) writeRaw("info", `  ${item}`);
+        }
+        writeRaw("info", separator);
     }
 
     async function runStage(scope, message, operation, options = {}) {
@@ -145,6 +172,9 @@ function createStartupLogger({ consoleLike = console, now = Date.now, prefix = "
         warn: (scope, message, details) => write("warn", scope, message, details),
         error: (scope, message, details) => write("error", scope, message, details),
         skip: (scope, message, details) => write("skip", scope, message, details),
+        divider,
+        banner,
+        raw: (level, msg) => writeRaw(level, msg),
         runStage
     };
 }

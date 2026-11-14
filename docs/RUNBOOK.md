@@ -5,7 +5,7 @@ Updated: 2026-10-05 (`main`).
 ## Start and health
 
 ```bash
-npm ci
+npm ci --ignore-scripts
 npm start
 ```
 
@@ -30,12 +30,14 @@ ready
 
 ## Deployment
 
-### inwcloud
+### inwcloud / Bot Hosting Panels
 
 ```text
-Custom command: npm ci && npm start
+Custom command: npm install --ignore-scripts && npm start & wait
 Internal port: PORT, otherwise 3000
 ```
+
+> `--ignore-scripts` uses precompiled `better-sqlite3` native binaries without needing a Python 3 toolchain. `& wait` runs the bot in the background and keeps the container shell alive to handle hosting panel lifecycle/shutdown signals.
 
 Generate one domain for that port. Set `PUBLIC_BASE_URL` to its canonical HTTPS
 origin and register `https://DOMAIN/auth/callback` in Discord Developer Portal.

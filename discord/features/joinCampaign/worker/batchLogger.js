@@ -284,8 +284,7 @@ async function sendFinalSummaryEmbed({
         title,
         description,
         color,
-        fields,
-        timestamp: new Date().toISOString()
+        fields
     };
 
     await sendRawWebhook(webhookUrl, {

@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased] - 2026-10-17
+## [Unreleased]
+
+- **Hosting & Container Startup Documentation Update:**
+  - Updated [README.md](README.md) and [docs/RUNBOOK.md](docs/RUNBOOK.md) to document the single custom command `npm install --ignore-scripts && npm start & wait` for container and bot hosting environments (such as inwcloud / Pterodactyl).
+  - Explicitly clarified `--ignore-scripts` to use prebuilt `better-sqlite3` binaries without requiring Python 3 / C++ build tools.
+  - Documented the `& wait` shell pattern for keeping background container processes alive and handling hosting panel lifecycle/shutdown signals.
 
 - **Voice Admin SQLite Migration & Subsystem Hardening (Migration 013):**
   - **SQLite Engine Integration:** Migrated Voice Admin persistence (`voice_admin_locks` and `voice_admin_notices`) from MongoDB/Mongoose to high-performance WAL-mode SQLite tables (`013_voice_admin_locks.sql`).

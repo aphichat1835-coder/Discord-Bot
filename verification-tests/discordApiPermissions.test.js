@@ -211,25 +211,25 @@ describe("Discord API Permissions and Channel Validation Helpers Suite", () => {
     describe("verificationDmCopy", () => {
         test("returns alreadyVerified copy", () => {
             const copy = discordAPI.verificationDmCopy({ alreadyVerified: true });
-            expect(copy.title).toMatch(/ยืนยันตัวตนไว้แล้ว/);
+            expect(copy.title).toMatch(/Verification ไว้เเล้ว/);
             expect(copy.tone).toBe("info");
         });
 
         test("returns success copy", () => {
             const copy = discordAPI.verificationDmCopy({ ok: true });
-            expect(copy.title).toMatch(/ยืนยันตัวตนสำเร็จ/);
+            expect(copy.title).toMatch(/Verification สำเร็จแล้ว/);
             expect(copy.tone).toBe("success");
         });
 
         test("returns blocked copy", () => {
             const copy = discordAPI.verificationDmCopy({ blocked: true });
-            expect(copy.title).toMatch(/ยังไม่ผ่านการยืนยัน/);
+            expect(copy.title).toMatch(/ไม่ผ่านการ Verification/);
             expect(copy.tone).toBe("warning");
         });
 
         test("returns failed copy with stale panel guidance", () => {
             const copy = discordAPI.verificationDmCopy({ ok: false, reasonCode: "panel_revision_mismatch" });
-            expect(copy.title).toMatch(/ยืนยันตัวตนไม่สำเร็จ/);
+            expect(copy.title).toMatch(/Verification ไม่สำเร็จ/);
             expect(copy.nextAction).toMatch(/แผงยืนยันล่าสุด/);
             expect(copy.tone).toBe("danger");
         });

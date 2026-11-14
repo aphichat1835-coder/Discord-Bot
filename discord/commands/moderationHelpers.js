@@ -219,8 +219,6 @@ function buildModerationReplyEmbed(interaction, target, action, reason, caseNumb
         embed.setThumbnail(avatarUrl);
     }
 
-    embed.setTimestamp();
-
     return embed;
 }
 

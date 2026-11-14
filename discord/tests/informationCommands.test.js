@@ -125,11 +125,16 @@ test("serverinfo groups current Discord data into readable Thai sections", () =>
 });
 
 test("information commands use distinct truthful loading embeds before the final result", async () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    let fetchReplyCalled = false;
     const interaction = {
         guild: { name: "Test Server", iconURL: () => null },
         user: { username: "caller", displayAvatarURL: () => null },
         options: { getUser: () => ({ username: "target", displayAvatarURL: () => null }) },
-        reply: async payload => payload
+        reply: async payload => payload,
+        fetchReply: async () => {
+            fetchReplyCalled = true;
+            return { id: "loading-msg", allowedMentions: { parse: [] } };
+        }
     };
     const server = information._test.buildLoadingEmbed("serverinfo", interaction).toJSON();
     const user = information._test.buildLoadingEmbed("userinfo", interaction).toJSON();
@@ -145,7 +150,7 @@ test("information commands use distinct truthful loading embeds before the final
     assert.notEqual(server.color, user.color);
     assert.notEqual(user.color, ping.color);
     assert.doesNotMatch(JSON.stringify([server, user, ping]), /\d+%|progress/i);
-    assert.equal(sent.fetchReply, true);
+    assert.equal(fetchReplyCalled, true);
     assert.deepEqual(sent.allowedMentions, { parse: [] });
     assertEmbedWithinDiscordLimits(information._test.buildLoadingEmbed("serverinfo", interaction));
     assertEmbedWithinDiscordLimits(information._test.buildLoadingEmbed("userinfo", interaction));

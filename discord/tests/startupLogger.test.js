@@ -74,10 +74,49 @@ test("legacy runtime logs receive a consistent level and scope", () => { // NOSO
         normalizeRuntimeLine("log", "[DATABASE] ✅ Connection active"),
         "[BOT] [✅ OK] [DATABASE] Connection active"
     );
+    assert.equal(
+        normalizeRuntimeLine("error", "(node:35) DeprecationWarning: The ready event has been renamed"),
+        "[BOT] [⚠️ WARN] [GENERAL] (node:35) DeprecationWarning: The ready event has been renamed"
+    );
+    assert.equal(
+        normalizeRuntimeLine("error", "(node:35) Warning: Supplying \"fetchReply\" for interaction response options is deprecated"),
+        "[BOT] [⚠️ WARN] [GENERAL] (node:35) Warning: Supplying \"fetchReply\" for interaction response options is deprecated"
+    );
 });
 
 test("runtime normalization preserves already formatted and redacted lines", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     const bootLine = "[BOOT] [✅ OK] [HTTP] Listening | port=3000";
     assert.equal(normalizeRuntimeLine("log", bootLine), bootLine);
     assert.doesNotMatch(normalizeRuntimeLine("error", "[AUTH] token=private-value"), /private-value/);
+});
+
+test("startup logger divider emits a clean full-width visual separator line without prefix", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const lines = [];
+    const logger = createStartupLogger({
+        consoleLike: { log: line => lines.push(line), warn: () => {}, error: () => {} }
+    });
+    logger.divider();
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0], "═".repeat(68));
+});
+
+test("startup logger banner emits clean full-width header block without prefix", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const lines = [];
+    const logger = createStartupLogger({
+        consoleLike: { log: line => lines.push(line), warn: () => {}, error: () => {} }
+    });
+    logger.banner("SYSTEM TITLE", ["Detail 1", "Detail 2"]);
+    assert.equal(lines.length, 5);
+    assert.equal(lines[0], "═".repeat(68));
+    assert.equal(lines[1], "  SYSTEM TITLE");
+    assert.equal(lines[2], "  Detail 1");
+    assert.equal(lines[3], "  Detail 2");
+    assert.equal(lines[4], "═".repeat(68));
+});
+
+test("runtime normalization preserves full-width dividers and indented banner lines", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
+    const divider = "═".repeat(68);
+    assert.equal(normalizeRuntimeLine("log", divider), divider);
+    const bannerTitle = "  🚀 SYSTEM ONLINE";
+    assert.equal(normalizeRuntimeLine("log", bannerTitle), bannerTitle);
 });

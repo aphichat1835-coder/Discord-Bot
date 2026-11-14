@@ -65,6 +65,28 @@ describe("Storage Check & Volume Mount Probe Suite", () => {
         assert.ok(res.warnings.some(w => w.includes("ALLOW_IN_SOURCE_STORAGE=true is active")));
     });
 
+    test("evaluateStoragePaths: auto-storage mode allows local storage in production with warning when allowInSource is unspecified", () => {
+        const origAllow = process.env.ALLOW_IN_SOURCE_STORAGE;
+        try {
+            delete process.env.ALLOW_IN_SOURCE_STORAGE;
+            const repoRoot = path.resolve(process.cwd());
+            const res = evaluateStoragePaths({
+                env: "production",
+                dbPath: path.join(repoRoot, "data", "test.sqlite"),
+                backupDir: path.join(repoRoot, "backups"),
+                assetDir: path.join(repoRoot, "data", "cache-assets")
+            });
+
+            assert.equal(res.isProduction, true);
+            assert.equal(res.ok, true);
+            assert.equal(res.errors.length, 0);
+            assert.equal(res.isPersistent, false);
+            assert.ok(res.warnings.some(w => w.includes("Auto-storage mode selected local workspace directory")));
+        } finally {
+            if (origAllow !== undefined) process.env.ALLOW_IN_SOURCE_STORAGE = origAllow;
+        }
+    });
+
     test("evaluateStoragePaths: passes cleanly when external persistent paths are provided in production", () => {
         const res = evaluateStoragePaths({
             env: "production",

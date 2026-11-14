@@ -11,7 +11,10 @@ const {
     getStatusStopSessionId
 } = require("../commands/customIds");
 const {
-    buildVoiceStatusControls
+    buildVoiceStatusControls,
+    buildControlPanelEmbed,
+    getVoicePanelBannerPath,
+    VOICE_PANEL_BANNER_ATTACHMENT_NAME
 } = require("../commands/panelViews");
 const {
     getSessionAccountLabel,
@@ -155,4 +158,19 @@ test("pageApproved formats joined dates and handles missing dates", () => { // N
     assert.match(html, /10/);
     assert.match(html, /นำบอทออก/);
     assert.match(html, /<td style="color:var\(--text3\);">-<\/td>/);
+});
+
+test("voice online panel: buildControlPanelEmbed configures banner attachment correctly", () => {
+    assert.equal(VOICE_PANEL_BANNER_ATTACHMENT_NAME, "voice-online-banner.gif");
+    const bannerPath = getVoicePanelBannerPath();
+    assert.ok(bannerPath && bannerPath.endsWith("voice-online-banner.gif"));
+
+    const embedDefault = buildControlPanelEmbed();
+    assert.equal(embedDefault.data?.image?.url || embedDefault.image?.url, `attachment://${VOICE_PANEL_BANNER_ATTACHMENT_NAME}`);
+
+    const embedWithAttachment = buildControlPanelEmbed(null, { hasAttachment: true });
+    assert.equal(embedWithAttachment.data?.image?.url || embedWithAttachment.image?.url, `attachment://${VOICE_PANEL_BANNER_ATTACHMENT_NAME}`);
+
+    const embedWithoutAttachment = buildControlPanelEmbed(null, { hasAttachment: false });
+    assert.equal(embedWithoutAttachment.data?.image, undefined);
 });

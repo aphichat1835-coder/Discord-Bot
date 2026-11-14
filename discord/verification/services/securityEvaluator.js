@@ -32,7 +32,7 @@ function uniqueStrings(values = []) {
     return Array.from(new Set((values || []).map(v => String(v || "").trim()).filter(Boolean)));
 }
 
-function evaluateProfilePolicy({ profile, policySnapshot, connections, findings, violations }) {
+function _evaluateAccountAgePolicy({ profile, policySnapshot, findings, violations }) {
     const minAge = Number(policySnapshot.minAccountAgeDays) || 0;
     if (minAge > 0 && profile.accountAgeDays < minAge) {
         findings.push("new_account");
@@ -43,7 +43,9 @@ function evaluateProfilePolicy({ profile, policySnapshot, connections, findings,
             userError: `บัญชีของคุณยังใหม่อยู่ (เปิดมาแล้ว ${profile.accountAgeDays} วัน เซิร์ฟเวอร์ต้องการอย่างน้อย ${minAge} วัน)`
         });
     }
+}
 
+function _evaluateEmailPolicy({ profile, policySnapshot, findings, violations }) {
     if (policySnapshot.requireEmail && !profile.email) {
         findings.push("email_missing_or_unverified");
         violations.push({
@@ -61,16 +63,36 @@ function evaluateProfilePolicy({ profile, policySnapshot, connections, findings,
             userError: "อีเมลของบัญชี Discord ยังไม่ได้รับการยืนยัน กรุณายืนยันอีเมลก่อน"
         });
     }
+}
 
-    if (policySnapshot.requireConnections && !connections?.length) {
-        findings.push("no_connections");
+function _evaluateConnectionsPolicy({ connections, policySnapshot, findings, violations }) {
+    if (!policySnapshot.requireConnections) return;
+
+    const connCount = Array.isArray(connections) ? connections.length : 0;
+    const parsedMin = Number(policySnapshot.minConnections);
+    const minRequired = Number.isFinite(parsedMin) && parsedMin > 0
+        ? Math.floor(parsedMin)
+        : 1;
+
+    if (connCount < minRequired) {
+        const isZero = connCount === 0;
+        const reason = isZero ? "no_connections" : `insufficient_connections:${connCount}/${minRequired}`;
+        findings.push(isZero ? "no_connections" : "insufficient_connections");
         violations.push({
             key: "requireConnections",
             action: "deny_role",
-            reason: "no_connections",
-            userError: "เซิร์ฟเวอร์นี้ต้องการให้บัญชี Discord ของคุณเชื่อมต่อกับบริการภายนอก (เช่น Steam, YouTube, GitHub) ก่อนยืนยันตัวตน"
+            reason,
+            userError: minRequired > 1
+                ? `เซิร์ฟเวอร์นี้ต้องการให้บัญชี Discord ของคุณเชื่อมต่อกับบริการภายนอกอย่างน้อย ${minRequired} บัญชีก่อนยืนยันตัวตน (ปัจจุบันเชื่อมต่อแล้ว ${connCount} บัญชี)`
+                : "เซิร์ฟเวอร์นี้ต้องการให้บัญชี Discord ของคุณเชื่อมต่อกับบริการภายนอก (เช่น Steam, YouTube, GitHub) ก่อนยืนยันตัวตน"
         });
     }
+}
+
+function evaluateProfilePolicy({ profile, policySnapshot, connections, findings, violations }) {
+    _evaluateAccountAgePolicy({ profile, policySnapshot, findings, violations });
+    _evaluateEmailPolicy({ profile, policySnapshot, findings, violations });
+    _evaluateConnectionsPolicy({ connections, policySnapshot, findings, violations });
 }
 
 function _recordAnonymizerAndHostingFindings(ipInfo, securityRules, findings, violations) {

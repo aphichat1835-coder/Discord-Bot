@@ -1,6 +1,32 @@
 "use strict";
 
 const { getDatabase } = require("../../connection");
+function toTimestamp(value) {
+    return value ? new Date(value).getTime() : null;
+}
+
+const UPDATE_FIELD_MAPPINGS = [
+    { key: "username", col: "username", transform: String },
+    { key: "channelId", col: "channel_id", transform: (v) => (v ? String(v) : "dm") },
+    { key: "enabled", col: "enabled", transform: (v) => (v ? 1 : 0) },
+    { key: "nextCheckAt", col: "next_check_at", transform: toTimestamp },
+    { key: "lastCheckAt", col: "last_check_at", transform: toTimestamp },
+    { key: "lastError", col: "last_error", transform: (v) => (v ? String(v) : null) }
+];
+
+function buildScheduledRunnerUpdate(updates) {
+    const setClauses = [];
+    const values = [];
+
+    for (const field of UPDATE_FIELD_MAPPINGS) {
+        if (updates[field.key] !== undefined) {
+            setClauses.push(`${field.col} = ?`);
+            values.push(field.transform(updates[field.key]));
+        }
+    }
+
+    return { setClauses, values };
+}
 
 class ScheduledRunnerRepository {
     constructor(db = null) {
@@ -25,7 +51,7 @@ class ScheduledRunnerRepository {
         const info = stmt.run(
             String(data.ownerId),
             data.guildId ? String(data.guildId) : null,
-            String(data.channelId),
+            data.channelId ? String(data.channelId) : 'dm',
             String(data.accountId),
             String(data.username || ""),
             String(data.token_ciphertext),
@@ -97,33 +123,7 @@ class ScheduledRunnerRepository {
     }
 
     updateById(id, updates = {}) {
-        const setClauses = [];
-        const values = [];
-
-        if (updates.username !== undefined) {
-            setClauses.push("username = ?");
-            values.push(String(updates.username));
-        }
-        if (updates.channelId !== undefined) {
-            setClauses.push("channel_id = ?");
-            values.push(String(updates.channelId));
-        }
-        if (updates.enabled !== undefined) {
-            setClauses.push("enabled = ?");
-            values.push(updates.enabled ? 1 : 0);
-        }
-        if (updates.nextCheckAt !== undefined) {
-            setClauses.push("next_check_at = ?");
-            values.push(updates.nextCheckAt ? new Date(updates.nextCheckAt).getTime() : null);
-        }
-        if (updates.lastCheckAt !== undefined) {
-            setClauses.push("last_check_at = ?");
-            values.push(updates.lastCheckAt ? new Date(updates.lastCheckAt).getTime() : null);
-        }
-        if (updates.lastError !== undefined) {
-            setClauses.push("last_error = ?");
-            values.push(updates.lastError ? String(updates.lastError) : null);
-        }
+        const { setClauses, values } = buildScheduledRunnerUpdate(updates);
 
         if (setClauses.length === 0) return this.findById(id);
 
@@ -167,7 +167,7 @@ class ScheduledRunnerRepository {
             id: row.id,
             ownerId: row.owner_id,
             guildId: row.guild_id,
-            channelId: row.channel_id,
+            channelId: (row.channel_id === 'dm' || !row.channel_id) ? null : row.channel_id,
             accountId: row.account_id,
             username: row.username,
             token_ciphertext: row.token_ciphertext,

@@ -185,7 +185,6 @@ function buildClearResultEmbed(interaction, result) {
         ]);
     }
 
-    embed.setTimestamp();
     return embed;
 }
 

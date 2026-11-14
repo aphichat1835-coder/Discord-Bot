@@ -202,7 +202,7 @@ a reliable Nitro conclusion.
 ## Setup
 
 ```bash
-npm install
+npm install --ignore-scripts
 cp .env.example .env
 npm start
 ```
@@ -252,12 +252,16 @@ Environment:     Continuous 24/7 background process (no sleep or idle spin-down 
 Web port:        process.env.PORT (or 3000)
 ```
 
-For inwcloud:
+For inwcloud / Bot Hosting (Single Custom Command):
 
 ```text
-Custom command: npm install && npm start
+Custom command: npm install --ignore-scripts && npm start & wait
 Internal port:   PORT (or 3000)
 ```
+
+> **Note on `--ignore-scripts` & `& wait`:**
+> - `--ignore-scripts` uses the precompiled `better-sqlite3` native binaries without requiring a Python 3 / C++ build toolchain in the container.
+> - `& wait` runs the bot in the background and keeps the container shell alive while correctly receiving lifecycle / shutdown signals from host control panels.
 
 `render.yaml` describes one root Web Service with `npm start` and uses `/ping` for host liveness. `/health` and `/ready` remain the combined dependency-readiness responses used by monitoring and diagnostics.
 

@@ -49,8 +49,7 @@ function buildDmPanelEmbed({ hasAttachment = false } = {}) {
             `- ดำเนินการทุกคนตามบอทที่อยู่ในเซิฟเวอร์นั้น\n\n` +
             `- ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง\n\n` +
             `*Developed by <@${ownerId}>*`
-        )
-        .setTimestamp();
+        );
 
     if (hasAttachment) {
         embed.setImage(`attachment://${DM_PANEL_BANNER_ATTACHMENT_NAME}`);
@@ -224,8 +223,7 @@ async function _handleDmConfirmButton(interaction) {
             `บอทตัวรอง **${staged.botUser?.tag || 'Helper Bot'}** เริ่มทำการส่งข้อความไปยังสมาชิกจำนวน **${staged.targetCount}** คน ในเซิร์ฟเวอร์ **${staged.guild?.name || staged.guildId}**\n\n` +
             `• คุณสามารถดูความคืบหน้าแบบ Real-time ได้ในช่อง Webhook ที่ระบุไว้\n` +
             `• เมื่อส่งครบทุกคน ระบบจะส่งรายงานสรุปยอดรวมและตัดการเชื่อมต่ออัตโนมัติ`
-        )
-        .setTimestamp();
+        );
 
     return interaction.update({
         embeds: [successEmbed],
@@ -341,8 +339,7 @@ async function handleDmPanelModal(interaction) {
             { name: '💬 ตัวอย่างข้อความที่จะส่ง', value: `\`\`\`\n${previewMessage}\n\`\`\``, inline: false },
             { name: '🖼️ รูปภาพแนบ', value: imageUrl || '*(ไม่มี)*', inline: true },
             { name: '🪝 Webhook รับ Log', value: `\`${webhookUrl.slice(0, 45)}...\``, inline: true }
-        )
-        .setTimestamp();
+        );
 
     if (checkResult.botUser?.avatarUrl) {
         confirmEmbed.setThumbnail(checkResult.botUser.avatarUrl);

@@ -24,11 +24,14 @@ function payload(overrides = {}) {
 
 test("readiness is healthy only when every required runtime dependency is ready", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.
     assert.equal(payload().ready, true);
+    assert.equal(payload().sqliteReady, true);
     assert.equal(payload({ client: { isReady: () => false } }).ready, false);
     assert.equal(payload({ sessionManager: { getDatabaseStatus: () => ({ connected: false }) } }).ready, false);
     assert.equal(payload({ verification: { ready: false } }).ready, false);
     assert.equal(payload({ voiceWorker: { getWorkerDiagnostics: () => ({ ready: false }) } }).ready, false);
     assert.equal(payload({ commandsReady: () => false }).ready, false);
+    assert.equal(payload({ sqlite: { isReady: () => false } }).ready, false);
+    assert.equal(payload({ sqlite: { isReady: () => false } }).sqliteReady, false);
 });
 
 test("disabled optional subsystems do not block readiness", () => { // NOSONAR -- node:test assertions are not recognized by Sonar S2699.

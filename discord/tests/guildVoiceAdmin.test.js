@@ -119,7 +119,15 @@ test("panel is Administrator-only, voice-only, and has stable rows", () => {
     assert.equal(_test.verifyVoiceAdminAccess(admin, channel), null);
     assert.equal(_test.verifyVoiceAdminAccess(member("regular"), channel), "ต้องเป็น Administrator");
     assert.equal(_test.verifyVoiceAdminAccess(admin, { ...channel, type: ChannelType.GuildStageVoice }), "ต้องใช้คำสั่งในแชทของห้องเสียงปกติ");
-    const rows = _test.buildPanel(channel).components.map(row => row.toJSON());
+    const defaultPanel = _test.buildPanel(channel);
+    assert.match(defaultPanel.embeds[0].data.title, /:DEAF_pmt: Voice Admin$/);
+    assert.match(_test.buildPanel(channel, null, "mute").embeds[0].data.title, /:DEAF_pmt: Voice Admin - ปิดไมค์/);
+    assert.match(_test.buildPanel(channel, null, "disconnect").embeds[0].data.title, /:DEAF_pmt: Voice Admin - ตัดสายทั้งหมด/);
+    assert.match(_test.buildPanel(channel, null, "deaf").embeds[0].data.title, /:DEAF_pmt: Voice Admin - ปิดหู/);
+    assert.match(_test.buildPanel(channel, null, "unmute").embeds[0].data.title, /:DEAF_pmt: Voice Admin - เปิดไมค์/);
+    assert.match(_test.buildPanel(channel, null, "undeaf").embeds[0].data.title, /:DEAF_pmt: Voice Admin - เปิดหู/);
+    assert.match(_test.buildPanel(channel, null, "move").embeds[0].data.title, /:DEAF_pmt: Voice Admin - ย้ายสมาชิก/);
+    const rows = defaultPanel.components.map(row => row.toJSON());
     assert.equal(rows.length, 3);
     assert.deepEqual(rows[0].components.map(component => component.custom_id), [IDS.DISCONNECT, IDS.LOCK_MUTE, IDS.LOCK_DEAF, IDS.UNLOCK_MUTE, IDS.UNLOCK_DEAF]);
     assert.equal(rows[1].components[0].custom_id, IDS.MOVE);
@@ -695,7 +703,8 @@ test("component matcher and result format include new numeric result fields", ()
     assert.equal(_test.isVoiceAdminInteraction({ isButton: () => true, customId: IDS.LOCK_MUTE }), true);
     assert.equal(_test.isVoiceAdminInteraction({ isChannelSelectMenu: () => true, customId: IDS.MOVE }), true);
     assert.equal(_test.isVoiceAdminInteraction({ isButton: () => true, customId: "btn_start" }), false);
-    assert.match(_test.buildResult("งาน", { targeted: 3, succeeded: 1, failed: 1, timedOut: 1, persistenceFailed: 1 }), /หมดเวลา 1 คน/);
+    assert.match(_test.buildResult("งาน", { targeted: 3, succeeded: 1, failed: 1, timedOut: 1, persistenceFailed: 1 }), /• หมดเวลา 1 คน/);
+    assert.match(_test.buildResult("ผลการทำงาน", { targeted: 1, succeeded: 1, failed: 0, durationMs: 0 }), /\*\*ผลการทำงาน\*\*\n• เป้าหมาย 1 คน\n• สำเร็จ 1 คน\n• ไม่สำเร็จ 0 คน\n• ใช้เวลา 0\.0 วินาที/);
     assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 2, failed: 0, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.success || "✅");
     assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 1, failed: 1, skipped: 0, timedOut: 0, persistenceFailed: 0 }), config.emojis?.warning || "⚠️");
     assert.equal(_test.resultEmoji({ targeted: 2, succeeded: 0, failed: 2, skipped: 0, timedOut: 0, persistenceFailed: 2 }), config.emojis?.error || "❌");
@@ -748,10 +757,13 @@ test("panel interactions refresh, reject invalid controls, and execute selected 
     };
     await voiceAdmin.handleVoiceAdminInteraction({ ...base, customId: IDS.REFRESH });
     assert.ok(base.updated);
+    assert.match(base.updated.embeds[0].data.title, /:DEAF_pmt: Voice Admin$/);
     await voiceAdmin.handleVoiceAdminInteraction({ ...base, customId: "voiceadmin:unknown" });
     assert.equal(base.deferred, true);
     await voiceAdmin.handleVoiceAdminInteraction({ ...base, customId: IDS.DISCONNECT });
     assert.deepEqual(target.calls.at(-1), ["disconnect"]);
+    assert.match(base.edited.embeds[0].data.title, /:DEAF_pmt: Voice Admin - ตัดสายทั้งหมด/);
+    assert.match(base.edited.embeds[0].data.description, /(?:<a:CHECK_pmt:\d+>|:CHECK_pmt:) \*\*ผลการทำงาน\*\*\n• เป้าหมาย 1 คน\n• สำเร็จ 1 คน\n• ไม่สำเร็จ 0 คน/);
 });
 
 test("owner message commands are handled before normal processing and malformed messages exit silently", async () => {
@@ -1181,7 +1193,7 @@ test("secret commands reply with clean rich embeds with server thumbnail and exi
     const message = mockSecretMessage(guild, source, "//ปิดไมค์หมด", replies);
     await voiceAdmin.handleSecretMessage(message);
     assert.ok(replies.at(-1).embeds?.[0]);
-    assert.match(replies.at(-1).embeds[0].data.title, /Voice Admin — ปิดไมค์หมด/);
+    assert.match(replies.at(-1).embeds[0].data.title, /:DEAF_pmt: Voice Admin - ปิดไมค์หมด/);
     assert.match(replies.at(-1).embeds[0].data.description, /สำเร็จ/);
     assert.equal(replies.at(-1).embeds[0].data.thumbnail?.url, "https://cdn.discordapp.com/icons/guild/icon.png");
 
@@ -1666,9 +1678,11 @@ test("formatDuration formats milliseconds into seconds and minutes correctly", (
     const resWithoutDuration = buildResult("ตัดสาย", { targeted: 2, succeeded: 2, failed: 0 });
     assert.equal(resWithoutDuration.includes("ใช้เวลา"), false);
 
-    // Test buildSecretResultEmbed includes duration
+    // Test buildSecretResultEmbed includes duration and customized title/emojis
     const embed = buildSecretResultEmbed("ตัดหมด", { targeted: 2, succeeded: 2, failed: 0, durationMs: 2300 });
-    assert.match(embed.data.description, /⏱️ ใช้เวลาดำเนินการ: \*\*2\.3 วินาที\*\*/);
+    assert.match(embed.data.title, /:DEAF_pmt: Voice Admin - ตัดหมด/);
+    assert.match(embed.data.description, /:03loading_pmt: ใช้เวลาดำเนินการ: \*\*2\.3 วินาที\*\*/);
+    assert.equal(embed.data.description.includes("คำสั่งลับสำหรับผู้ดูแลระบบห้องเสียง"), false);
 });
 
 test("Smart Skip avoids redundant Discord API calls when members are already in the requested state", async () => {

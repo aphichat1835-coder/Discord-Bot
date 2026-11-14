@@ -5,6 +5,25 @@ process.env.VERIFY_STATE_SECRET = "state-test-secret-value-1234567890";
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "oauth-test-"));
+const testDbPath = path.join(tempDir, "test.sqlite");
+process.env.SQLITE_DB_PATH = testDbPath;
+process.env.ALLOW_IN_SOURCE_STORAGE = "true";
+
+const { openDatabase, closeDatabase } = require("../database/sqlite/connection");
+const { runMigrations } = require("../database/sqlite/migrations/migrationRunner");
+const db = openDatabase({ path: testDbPath });
+runMigrations(db, { migrationsDir: path.resolve(__dirname, "../database/sqlite/migrations") });
+
+test.after(() => {
+    closeDatabase();
+    try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch (_) {}
+});
 
 const oauthRoute = require("../discord/verification/routes/oauth");
 const {

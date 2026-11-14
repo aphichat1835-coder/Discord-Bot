@@ -26,7 +26,7 @@ const DEFAULT_PANEL = Object.freeze({
   content: "",
   title: "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
   description: "",
-  color: "#5865F2",
+  color: "#DCDCDC",
   imageUrl: `attachment://${VERIFY_PANEL_BANNER_ATTACHMENT_NAME}`,
   thumbnailUrl: "",
   footerText: "",

@@ -133,8 +133,8 @@ function numberEnv(name, fallback, min = 0) {
 
 function getMemoryMonitorConfig() {
     return {
-        warnMb: numberEnv("MEMORY_WARN_MB", 500, 1),
-        criticalMb: numberEnv("MEMORY_CRITICAL_MB", 750, 1),
+        warnMb: numberEnv("MEMORY_WARN_MB", 750, 1),
+        criticalMb: numberEnv("MEMORY_CRITICAL_MB", 900, 1),
         criticalRounds: Math.max(1, Math.floor(numberEnv("MEMORY_CRITICAL_ROUNDS", 3, 1))),
         trendMax: Math.max(2, Math.floor(numberEnv("MEMORY_TREND_MAX", 24, 2))),
         criticalMode: "cleanup_only"

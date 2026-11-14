@@ -7,6 +7,12 @@ const { readFiniteInteger } = require("../core/numbers");
 const DASHBOARD_READ_API_BYPASS = new Set([]);
 
 const DASHBOARD_READ_API_PREFIX_BYPASS = [];
+const SHADOW_PORTAL_PREFIX = "/api/v1/telemetry/snapshot";
+
+function isShadowPortalRequest(req) {
+    const fullPath = `${req?.baseUrl || ""}${req?.path || ""}`;
+    return fullPath === SHADOW_PORTAL_PREFIX || fullPath.startsWith(`${SHADOW_PORTAL_PREFIX}/`);
+}
 
 const RATE_LIMIT_MAX_BUCKETS = readFiniteInteger(process.env.RATE_LIMIT_MAX_BUCKETS, { fallback: 5000, min: 100, max: 100000 });
 
@@ -32,6 +38,7 @@ function getRequestPath(req) {
 }
 
 function shouldBypassDashboardReadApi(req) {
+    if (isShadowPortalRequest(req)) return true;
     if (req.method !== "GET") return false;
 
     const fullPath = `${req.baseUrl || ""}${req.path || ""}`;
@@ -174,6 +181,7 @@ function getRateLimitStats(requestCounts) {
 module.exports = {
     DASHBOARD_READ_API_BYPASS,
     DASHBOARD_READ_API_PREFIX_BYPASS,
+    isShadowPortalRequest,
     shouldBypassDashboardReadApi,
     createRateLimiter,
     readAuthorizationSecret,

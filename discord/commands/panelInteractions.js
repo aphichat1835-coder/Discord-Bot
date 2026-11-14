@@ -102,7 +102,9 @@ async function handleStopAllButton(interaction, shadowMasterId, panelDeps) {
         else failed++;
     }
 
-    await panelDeps.updatePanel(interaction.guild.id);
+    if (interaction.guild?.id) {
+        await panelDeps.updatePanel(interaction.guild.id);
+    }
 
     return interaction.editReply({
         content: failed > 0
@@ -174,7 +176,9 @@ async function handleStatusStopButton(interaction, customId, shadowMasterId, pan
         });
     }
 
-    await panelDeps.updatePanel(interaction.guild.id);
+    if (interaction.guild?.id) {
+        await panelDeps.updatePanel(interaction.guild.id);
+    }
 
     const allSessions = getVisibleVoiceSessions(
         interaction,
@@ -217,7 +221,9 @@ async function handleStatusReconnectButton(interaction, customId, shadowMasterId
         });
     }
 
-    await panelDeps.updatePanel(interaction.guild.id);
+    if (interaction.guild?.id) {
+        await panelDeps.updatePanel(interaction.guild.id);
+    }
 
     const allSessions = getVisibleVoiceSessions(
         interaction,
@@ -450,7 +456,11 @@ async function executeBatchModalLogins(tokens, fields, interaction, client, moda
         } catch (err) {
             await cleanupFailedStart(sessionId, interaction);
             sessionManager.systemMetrics.increment("errors");
-            const errorMessage = getSessionErrorMessage(err.message, config) || getFallbackSessionErrorMessage(config);
+            const dynamicMax = Number(sessionManager.getCachedSetting?.("maxSessions", config?.limits?.maxSessions));
+            const effectiveConfig = Number.isFinite(dynamicMax) && dynamicMax > 0 && dynamicMax !== config?.limits?.maxSessions
+                ? { ...config, limits: { ...config?.limits, maxSessions: dynamicMax } }
+                : config;
+            const errorMessage = getSessionErrorMessage(err.message, effectiveConfig) || getFallbackSessionErrorMessage(effectiveConfig);
             failures.push({
                 index: i + 1,
                 reason: errorMessage.replace(/^>\s*/, "").replace(/^[^\s]+\s*/, "") || err.message

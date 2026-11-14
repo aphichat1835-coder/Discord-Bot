@@ -504,7 +504,7 @@
     setInput("p-content", panel.content || "");
     setInput("p-title", panel.title || "");
     setInput("p-description", panel.description || "");
-    setInput("p-color", panel.color || "#5865F2");
+    setInput("p-color", panel.color || "#DCDCDC");
     setInput("p-imageUrl", panel.imageUrl || "");
     setInput("p-thumbnailUrl", panel.thumbnailUrl || "");
     setInput("p-footerText", panel.footerText || "");
@@ -1475,7 +1475,7 @@
         content: readText("p-content"),
         title: readText("p-title"),
         description: readText("p-description"),
-        color: readText("p-color") || "#5865F2",
+        color: readText("p-color") || "#DCDCDC",
         imageUrl: readText("p-imageUrl"),
         thumbnailUrl: readText("p-thumbnailUrl"),
         footerText: readText("p-footerText"),
@@ -1517,7 +1517,7 @@
       content: readText("p-content"),
       title: readText("p-title") || "<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ",
       description: readText("p-description"),
-      color: readText("p-color") || "#5865F2",
+      color: readText("p-color") || "#DCDCDC",
       imageUrl: readText("p-imageUrl") || "/verification-assets/images/verification-panel-banner.webp",
       thumbnailUrl: readText("p-thumbnailUrl"),
       footerText: readText("p-footerText"),
@@ -1597,7 +1597,7 @@
     if (!box || !btnBox) return;
 
     const panel = readEmbedPreviewPanel();
-    const color = /^#[0-9A-Fa-f]{6}$/.test(panel.color) ? panel.color : "#5865F2";
+    const color = /^#[0-9A-Fa-f]{6}$/.test(panel.color) ? panel.color : "#DCDCDC";
     box.style.borderLeftColor = color;
     const content = $("preview-content");
     if (content) {

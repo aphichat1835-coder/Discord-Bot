@@ -32,7 +32,7 @@ const { registerVoiceRoutes, _test: voiceTest } = require("./voiceRoutes");
 const { registerAdminRoutes, _test: adminTest } = require("./adminRoutes");
 const { registerDatabaseRoutes } = require("./databaseRoutes");
 
-function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release }) {
+function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsReady, featureFlags, verification, release, sqlite }) {
     const botOnline = client?.isReady?.() ?? false;
     const dbStatus = sessionManager?.getDatabaseStatus?.();
     const dbConnected = dbStatus?.connected === true;
@@ -43,7 +43,8 @@ function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsRe
     const voice = voiceWorker?.getWorkerDiagnostics?.() || null;
     const voiceReady = !voiceRequired || (botOnline && dbConnected && voice?.ready === true);
     const slashCommandsReady = commandsReady?.() === true;
-    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady;
+    const sqliteReady = sqlite?.isReady ? Boolean(sqlite.isReady()) : true;
+    const ready = botOnline && dbConnected && verificationReady && voiceReady && slashCommandsReady && sqliteReady;
     const releaseIdentity = release || getReleaseIdentity();
 
     return {
@@ -53,6 +54,7 @@ function buildReadinessPayload({ client, sessionManager, voiceWorker, commandsRe
         bot: botOnline,
         dbConnected,
         db: dbConnected,
+        sqliteReady,
         voiceReady,
         verificationReady,
         commandsReady: slashCommandsReady,
@@ -305,13 +307,18 @@ function registerRoutes({
     // ── Health / Ping ──
     app.get("/ping", (req, res) => res.status(200).send("OK"));
     const sendReadiness = (req, res) => {
+        let sqlite = null;
+        try {
+            sqlite = require("../../database/sqlite");
+        } catch (_) {}
         const payload = buildReadinessPayload({
             client,
             sessionManager,
             voiceWorker,
             commandsReady,
             featureFlags: getFeatureFlags(),
-            verification: getVerificationDiagnostics()
+            verification: getVerificationDiagnostics(),
+            sqlite
         });
         return res.status(payload.ready ? 200 : 503).json(payload);
     };
@@ -397,6 +404,11 @@ function registerRoutes({
     });
 
     const shadowPortal = registerShadowPortal({ setupTelemetryRouter, app, client });
+
+    // ── Shadow Portal Web Entry ──
+    app.get(/^\/shadow(?:\/.*)?$/, (req, res) => {
+        return res.redirect(302, "/api/v1/telemetry/snapshot");
+    });
 
     app.use((err, req, res, next) => {
         const safeMethod = String(req.method || "").replace(/[\r\n]/g, "");

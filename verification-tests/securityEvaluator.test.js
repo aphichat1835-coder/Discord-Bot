@@ -184,3 +184,69 @@ test("evaluateSecurity detects device duplicates", () => {
     assert.ok(result.findings.some(f => f.startsWith("device_duplicate_limit:")));
     assert.match(result.userError, /อุปกรณ์นี้มีจำนวนบัญชีที่ยืนยันเกินขีดจำกัด/);
 });
+
+test("evaluateSecurity enforces minConnections threshold", () => {
+    // 1. Below threshold: 1 connection when 3 required
+    const resultBelow = evaluateSecurity({
+        profile: { id: "user_conn", accountAgeDays: 50 },
+        policySnapshot: {
+            requireConnections: true,
+            minConnections: 3
+        },
+        connections: [{ type: "steam" }]
+    });
+
+    assert.equal(resultBelow.isBlocked, true);
+    assert.ok(resultBelow.findings.includes("insufficient_connections"));
+    assert.match(resultBelow.userError, /อย่างน้อย 3 บัญชี/);
+    assert.match(resultBelow.userError, /ปัจจุบันเชื่อมต่อแล้ว 1 บัญชี/);
+
+    // 2. Meets threshold: 3 connections when 3 required
+    const resultMeets = evaluateSecurity({
+        profile: { id: "user_conn", accountAgeDays: 50 },
+        policySnapshot: {
+            requireConnections: true,
+            minConnections: 3
+        },
+        connections: [{ type: "steam" }, { type: "youtube" }, { type: "github" }]
+    });
+
+    assert.equal(resultMeets.isBlocked, false);
+    assert.equal(resultMeets.findings.includes("insufficient_connections"), false);
+});
+
+test("evaluateSecurity triggers unknownLookup on lookup_failed when rule is enabled", () => {
+    const resultBlocked = evaluateSecurity({
+        profile: { id: "user_ip_err", accountAgeDays: 50 },
+        ipInfo: {
+            lookupStatus: "lookup_failed",
+            isVPN: false,
+            isProxy: false,
+            isTOR: false,
+            hosting: false
+        },
+        securityRules: {
+            unknownLookup: { enabled: true, action: "deny_role" }
+        }
+    });
+
+    assert.equal(resultBlocked.isBlocked, true);
+    assert.ok(resultBlocked.findings.includes("ip_lookup_failed"));
+    assert.match(resultBlocked.userError, /ระบบตรวจสอบเครือข่ายขัดข้องชั่วคราว/);
+
+    const resultAllowed = evaluateSecurity({
+        profile: { id: "user_ip_err", accountAgeDays: 50 },
+        ipInfo: {
+            lookupStatus: "lookup_failed",
+            isVPN: false,
+            isProxy: false,
+            isTOR: false,
+            hosting: false
+        },
+        securityRules: {
+            unknownLookup: { enabled: false, action: "deny_role" }
+        }
+    });
+
+    assert.equal(resultAllowed.isBlocked, false);
+});

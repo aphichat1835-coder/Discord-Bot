@@ -6,6 +6,7 @@ const {
     ButtonBuilder,
     ButtonStyle
 } = require("discord.js");
+const config = require("../../../config.json");
 const emoji = require("./emojis");
 
 const IDS = Object.freeze({
@@ -26,7 +27,7 @@ function buildPreflightConfirmationPayload({
     const embed = new EmbedBuilder()
         .setTitle(`${emoji.shield} ตรวจสอบข้อมูลก่อนเริ่มดึงสมาชิก`)
         .setDescription("ตรวจสอบรายละเอียดด้านล่างให้ถูกต้องเรียบร้อย แล้วกดยืนยันเพื่อเริ่มดึงสมาชิกได้เลยครับ")
-        .setColor(0x57F287)
+        .setColor(config.system?.themeColors?.success || '#CC66FF')
         .addFields([
             {
                 name: `${emoji.sparkle} รูปแบบการทำงาน`,

@@ -104,7 +104,12 @@ continuation payloads when one Discord message cannot hold the full event.
 │   ├── commands.js
 │   ├── commands/                 slash command modules
 │   ├── core/                     env, HTTP, feature flags, safe logging, webhooks
-│   │   └── tokenCoordinator.js   master token coordinator, rate-limit backoff, quarantine lifecycle
+│   ├── tokens/                   Token Hub: coordinator and OAuth subsystems
+│   │   ├── coordinator/          Token coordinator, rate limiter, quarantine, activity, profile cache
+│   │   ├── oauth/                OAuth token manager: refresh, storage, candidate query, recovery, migration
+│   │   ├── tokenCoordinator.js   compatibility facade -> ./coordinator
+│   │   ├── oauthTokenManager.js  compatibility facade -> ./oauth
+│   │   └── index.js              central Token Hub public entry point
 │   ├── dm/                       shared DM design, volatile outage recovery, durable outbox, and retry
 │   ├── features/                 protection, role button, Join Campaign
 │   ├── guards/                   command/dashboard guards
@@ -138,7 +143,7 @@ continuation payloads when one Discord message cannot hold the full event.
 
 ### Master Token Coordinator & Concurrency Hub
 
-Located at `discord/tokens/tokenCoordinator.js`, the Token Coordinator provides centralized governance for all user tokens across the runtime:
+Located at `discord/tokens/coordinator/` (with `discord/tokens/tokenCoordinator.js` serving as the compatibility facade and `discord/tokens/index.js` as entry point), the Token Coordinator provides centralized governance for all user tokens across the runtime:
 - **Subsystem Registration**: Subsystems (`voiceWorker`, `quest`, etc.) register callbacks for token quarantine events.
 - **Activity Locking**: Tracks in-flight tasks per token to prevent conflicting concurrent API operations.
 - **Rate-Limit Backoff (429 Handling)**: Detects HTTP 429 response headers and applies exponential backoff per token and globally, preventing Discord IP and token bans.
@@ -447,7 +452,7 @@ The system does not claim to discover a residential IP behind VPN/TOR.
 
 ### Tokens and OAuth Token Manager
 
-`discord/tokens/oauthTokenManager.js` serves as the centralized **Single Authority** for all OAuth2 token lifecycle operations:
+Located at `discord/tokens/oauth/` (with `discord/tokens/oauthTokenManager.js` serving as the compatibility facade and `discord/tokens/index.js` as central Token Hub entry point), the OAuth Token Manager serves as the centralized **Single Authority** for all OAuth2 token lifecycle operations:
 - **Acquisition & Exchange:** Handles Discord Authorization Code exchange for Access/Refresh token pairs.
 - **Atomic Activation & Serialized Mutation:** Executes `commitVerificationActivation()` as the single authority for atomic `OAuthUser` record updates and token activation with strict payload validation (while the OAuth callback route retains ownership of compensating snapshot rollback when the activation commit fails). Serialized under `withOAuthTokenStateLock` (`withTokenRefreshLock(`${userId}:${tokenField}`)`), guaranteeing atomic version sequencing with in-flight refreshes and revocations.
 - **Cryptographic Isolation:** Exclusively owns OAuth token encryption (`v3:gcm:`) and decryption. Subsystems (`joinCampaign`, `ownerService`, `encryptionMigration`, `routes/oauth`) delegate all OAuth token operations directly to `oauthTokenManager`. Zero independent crypto implementations exist outside the Manager.

@@ -137,11 +137,11 @@ async function handleJoinPanelCommand(interaction, client) {
     let replyMessage;
     if (interaction.deferred) {
         replyMessage = await interaction.editReply(payload);
+    } else if (typeof interaction.fetchReply === "function") {
+        await interaction.reply(payload);
+        replyMessage = await interaction.fetchReply();
     } else {
-        replyMessage = await interaction.reply({
-            ...payload,
-            fetchReply: true
-        });
+        replyMessage = await interaction.reply(payload);
     }
 
     // 8. Persist Panel State to SQLite

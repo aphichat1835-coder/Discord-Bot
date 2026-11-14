@@ -1,13 +1,14 @@
 "use strict";
 
 const { MessageEmbed } = require("../core/discordCompat");
+const config = require("../config.json");
 
 const COLORS = Object.freeze({
-    success: "#57F287",
-    info: "#5865F2",
-    warning: "#FEE75C",
-    action: "#F59E0B",
-    danger: "#ED4245",
+    success: config.system?.themeColors?.success || "#CC66FF",
+    info: config.system?.themeColors?.info || "#FFCCCC",
+    warning: config.system?.themeColors?.warning || "#D2691E",
+    action: config.system?.themeColors?.warning || "#D2691E",
+    danger: config.system?.themeColors?.error || "#FF9999",
     neutral: "#747F8D"
 });
 
@@ -97,11 +98,10 @@ function buildDmEmbed(options = {}) {
     const fields = fitFields(fieldCandidates, title.length + summary.length);
 
     const embed = new MessageEmbed()
-        .setColor(COLORS[options.tone] || COLORS.info)
+        .setColor(options.color || COLORS[options.tone] || COLORS.info)
         .setTitle(title)
         .setDescription(summary)
-        .addFields(fields)
-        .setTimestamp(timestamp);
+        .addFields(fields);
 
     if (profile.avatarUrl) embed.setThumbnail(profile.avatarUrl);
     return embed;

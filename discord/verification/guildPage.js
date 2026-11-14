@@ -115,7 +115,7 @@ ${navBar("/verification")}
         <label for="p-title">หัวข้อ</label><input id="p-title" type="text" maxlength="256" placeholder="<a:sn_pmt:1559878089750749244> 𝗩𝗲𝗿𝗶𝗳𝗶𝗰𝗮𝘁𝗶𝗼𝗻 เพื่อรับยศ">
         <label for="p-description">คำอธิบาย</label><textarea id="p-description" maxlength="4000" placeholder="ปล่อยว่างได้ (ไม่มีคำอธิบาย)"></textarea>
         <div class="form-row form-row-2">
-          <div><label for="p-color">สี Embed</label><input id="p-color" type="text" maxlength="7" placeholder="#5865F2"></div>
+          <div><label for="p-color">สี Embed</label><input id="p-color" type="text" maxlength="7" placeholder="#DCDCDC"></div>
           <div><label for="p-verifyType">รูปแบบการยืนยัน</label><select id="p-verifyType"><option value="oauth">OAuth2 Verification</option><option value="direct">กดรับยศทันที</option></select></div>
         </div>
         <label for="p-buttonText">ข้อความบนปุ่ม</label><input id="p-buttonText" type="text" maxlength="80" placeholder="<a:ddd_pmt:1553844572873040044> vfy (user)">

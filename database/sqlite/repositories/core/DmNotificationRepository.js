@@ -49,6 +49,39 @@ function _buildTimestampConditions(filter, conditions, params) {
     }
 }
 
+function _resolveMaxAttemptTime(record, now) {
+    if (typeof record?.nextAttemptAt?.$lte === "number") {
+        return Math.min(record.nextAttemptAt.$lte, now);
+    }
+    if (typeof record?.nextAttemptAt === "number") {
+        return Math.min(record.nextAttemptAt, now);
+    }
+    return now;
+}
+
+function _resolveClaimStatuses(record) {
+    if (Array.isArray(record?.status?.$in) && record.status.$in.length > 0) {
+        return record.status.$in;
+    }
+    if (typeof record?.status === "string") {
+        return [record.status];
+    }
+    if (typeof record?.status?.$eq === "string") {
+        return [record.status.$eq];
+    }
+    return ["pending", "retrying"];
+}
+
+function _resolveEffectiveLeaseUntil(leaseUntil, record) {
+    if (typeof leaseUntil === "number") {
+        return leaseUntil;
+    }
+    if (typeof record?.leaseUntil === "number") {
+        return record.leaseUntil;
+    }
+    return null;
+}
+
 class DmNotificationRepository {
     constructor(db = null) {
         this._db = db;
@@ -122,17 +155,22 @@ class DmNotificationRepository {
         return null;
     }
 
-    claimRecord(record, now = Date.now()) {
-        const id = record.id || record._id;
+    claimRecord(record, now = Date.now(), leaseUntil = null) {
+        const id = record?.id || record?._id;
         if (!id) return null;
+
+        const maxAttemptTime = _resolveMaxAttemptTime(record, now);
+        const statuses = _resolveClaimStatuses(record);
+        const ph = statuses.map(() => "?").join(",");
+        const effectiveLeaseUntil = _resolveEffectiveLeaseUntil(leaseUntil, record);
 
         const stmt = this.db.prepare(`
             UPDATE dm_notifications
-            SET status = 'sending', updated_at = ?
-            WHERE id = ? AND status IN ('pending', 'retrying') AND next_attempt_at <= ?
+            SET status = 'sending', updated_at = ?, next_attempt_at = COALESCE(?, next_attempt_at)
+            WHERE id = ? AND status IN (${ph}) AND next_attempt_at <= ?
         `);
 
-        const info = stmt.run(now, id, now);
+        const info = stmt.run(now, effectiveLeaseUntil, id, ...statuses, maxAttemptTime);
         if (info.changes === 1) {
             return this.findById(id);
         }

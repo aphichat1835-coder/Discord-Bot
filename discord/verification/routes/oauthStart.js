@@ -53,8 +53,7 @@ function validatePanelStateMatch(panelState, verification, roleId) {
     if (!verification.enabled || String(verification.roleId || "") !== roleId) {
         return "แผงยืนยันนี้ไม่พร้อมใช้งาน";
     }
-    if (panelState.panelRevision && verification.panelRevision &&
-        String(panelState.panelRevision) !== String(verification.panelRevision)) {
+    if (verification.panelRevision && (!panelState.panelRevision || String(panelState.panelRevision) !== String(verification.panelRevision))) {
         return "แผงยืนยันนี้ถูกแทนที่แล้ว กรุณาใช้แผงล่าสุด";
     }
     return null;

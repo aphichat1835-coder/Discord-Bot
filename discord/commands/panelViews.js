@@ -10,9 +10,19 @@ const {
 
 const CB = "```";
 
-function buildControlPanelEmbed(_total = null) {
+const VOICE_PANEL_BANNER_ATTACHMENT_NAME = "voice-online-banner.gif";
+
+function getVoicePanelBannerPath() {
+    try {
+        return require.resolve("../assets/voice-online-banner.gif");
+    } catch {
+        return null;
+    }
+}
+
+function buildControlPanelEmbed(_total = null, { hasAttachment = Boolean(getVoicePanelBannerPath()) } = {}) {
     const primaryOwnerId = getPrimaryOwnerId();
-    return new MessageEmbed()
+    const embed = new MessageEmbed()
         .setColor(config.system.themeColors.primary)
         .setTitle(`${config.emojis.universe} : Phomueangtai ระบบออนช่องเสียง`)
         .setDescription(
@@ -20,8 +30,17 @@ function buildControlPanelEmbed(_total = null) {
             `ออนไลน์ฟรีครบ 24. ${config.emojis.dreamworld}\n\n` +
             `ตั้งค่าควบคุมผ่านปุ่มแผงควบคุมด้านล่าง ${config.emojis.dreamworld}\n\n` +
             `*Developed by <@${primaryOwnerId}>*`
-        )
-        .setImage(config.system.bannerUrl || null);
+        );
+
+    if (hasAttachment) {
+        embed.setImage(`attachment://${VOICE_PANEL_BANNER_ATTACHMENT_NAME}`);
+    } else if (config.system?.voiceBannerUrl) {
+        embed.setImage(config.system.voiceBannerUrl);
+    } else if (config.system?.bannerUrl) {
+        embed.setImage(config.system.bannerUrl);
+    }
+
+    return embed;
 }
 
 function buildControlPanelRow() {
@@ -153,6 +172,8 @@ function buildStartModal() {
 }
 
 module.exports = {
+    VOICE_PANEL_BANNER_ATTACHMENT_NAME,
+    getVoicePanelBannerPath,
     buildControlPanelEmbed,
     buildControlPanelRow,
     buildVoiceStatusEmbed,

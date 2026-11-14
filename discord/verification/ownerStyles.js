@@ -158,7 +158,7 @@ const OWNER_VERIFICATION_CSS = `
 .table-wrap th { position:sticky; top:0; background:#110c22; z-index:1; }
 .mono { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
 .secret-value { color:#f5d0fe; word-break:break-all; user-select:all; }
-.embed-preview { position:relative; min-height:170px; border-left:5px solid #5865f2; border-radius:5px 13px 13px 5px; padding:16px; background:#2b2d31; color:#dbdee1; overflow:hidden; }
+.embed-preview { position:relative; min-height:170px; border-left:5px solid #dcdcdc; border-radius:5px 13px 13px 5px; padding:16px; background:#2b2d31; color:#dbdee1; overflow:hidden; }
 .embed-preview-title { color:#fff; font-weight:850; margin-bottom:7px; }
 .embed-preview-desc { white-space:pre-wrap; }
 .embed-preview-img img { width:100%; max-height:260px; object-fit:cover; border-radius:8px; margin-top:12px; }

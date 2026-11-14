@@ -25,6 +25,20 @@ const IDS = Object.freeze({
     UNLOCK_DEAF: "voiceadmin:unlock-deaf", REFRESH: "voiceadmin:refresh", MOVE: "voiceadmin:move"
 });
 
+const PANEL_ACTION_NAMES = Object.freeze({
+    disconnect: "ตัดสายทั้งหมด",
+    mute: "ปิดไมค์",
+    deaf: "ปิดหู",
+    unmute: "เปิดไมค์",
+    undeaf: "เปิดหู",
+    move: "ย้ายสมาชิก"
+});
+
+function resolvePanelActionName(action) {
+    if (!action) return null;
+    return PANEL_ACTION_NAMES[action] || action;
+}
+
 let defaultRepo = null;
 function getRepository() {
     if (!defaultRepo) defaultRepo = new VoiceAdminRepository();
@@ -746,10 +760,18 @@ function formatDuration(durationMs) {
 }
 
 function buildResult(action, result) {
-    const skipped = result.skipped ? ` | ออกจากห้องก่อนถึงคิว ${result.skipped} คน` : "";
-    const timeout = result.timedOut ? ` | หมดเวลา ${result.timedOut} คน` : "";
-    const duration = typeof result?.durationMs === "number" ? ` | ใช้เวลา ${formatDuration(result.durationMs)}` : "";
-    return `**${action}** — เป้าหมาย ${result.targeted} คน | สำเร็จ ${result.succeeded} คน | ไม่สำเร็จ ${result.failed} คน${skipped}${timeout}${duration}`;
+    const lines = [
+        `**${action}**`,
+        `• เป้าหมาย ${result.targeted} คน`,
+        `• สำเร็จ ${result.succeeded} คน`,
+        `• ไม่สำเร็จ ${result.failed} คน`
+    ];
+    if (result.skipped) lines.push(`• ออกจากห้องก่อนถึงคิว ${result.skipped} คน`);
+    if (result.timedOut) lines.push(`• หมดเวลา ${result.timedOut} คน`);
+    if (typeof result?.durationMs === "number") {
+        lines.push(`• ใช้เวลา ${formatDuration(result.durationMs)}`);
+    }
+    return lines.join("\n");
 }
 function _isOperationCompleteSuccess(targeted, succeeded, incomplete) {
     return targeted > 0 && succeeded === targeted && incomplete === 0;
@@ -791,13 +813,20 @@ function isStillInSource(member, source) {
     const channelId = member?.voice?.channelId || member?.voice?.channel?.id || null;
     return String(channelId || "") === String(source.id);
 }
-function buildPanel(channel, status = null) {
-    const members = Array.from(channel?.members?.values?.() || []); const inChannel = new Set(members.map(member => String(member.id)));
-    let mute = 0; let deaf = 0;
+function countLockedMembers(channel, inChannel) {
+    let mute = 0;
+    let deaf = 0;
     for (const [id, lock] of getGuildLocks(channel?.guild?.id)) {
         if (inChannel.has(id) && lock.muteLocked) mute++;
         if (inChannel.has(id) && lock.deafLocked) deaf++;
     }
+    return { mute, deaf };
+}
+
+function buildPanelEmbed(channel, status, action) {
+    const members = Array.from(channel?.members?.values?.() || []);
+    const inChannel = new Set(members.map(member => String(member.id)));
+    const { mute, deaf } = countLockedMembers(channel, inChannel);
     const descriptionLines = [
         `• ห้อง: <#${channel.id}>`,
         `• สมาชิกในห้อง: **${members.length}** คน (จัดการได้ **${sourceMembers(channel).length}** คน)\n`,
@@ -808,13 +837,19 @@ function buildPanel(channel, status = null) {
     if (status) {
         descriptionLines.push(`\n${status}`);
     }
+    const deafEmoji = config.emojis?.DEAF_pmt || config.emojis?.deaf || ":DEAF_pmt:";
+    const actionName = resolvePanelActionName(action);
+    const title = actionName ? `${deafEmoji} Voice Admin - ${actionName}` : `${deafEmoji} Voice Admin`;
     const embed = new EmbedBuilder()
         .setColor(config.system?.themeColors?.primary || "#5865F2")
-        .setTitle(`${config.emojis?.voice_ch || "🔊"} จัดการห้องเสียง`)
-        .setDescription(descriptionLines.join("\n"))
-        .setTimestamp();
+        .setTitle(title)
+        .setDescription(descriptionLines.join("\n"));
     const iconUrl = channel?.guild?.iconURL?.({ forceStatic: false, size: 256 }) || channel?.guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
+    return embed;
+}
+
+function buildPanelActionRows() {
     const actions = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(IDS.DISCONNECT).setLabel("ตัดสายทั้งหมด").setEmoji(config.emojis?.voice_leave || "🚪").setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(IDS.LOCK_MUTE).setLabel("ปิดไมค์").setEmoji(config.emojis?.voice_leave || "🔇").setStyle(ButtonStyle.Secondary),
@@ -822,9 +857,28 @@ function buildPanel(channel, status = null) {
         new ButtonBuilder().setCustomId(IDS.UNLOCK_MUTE).setLabel("เปิดไมค์").setEmoji("🎙️").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(IDS.UNLOCK_DEAF).setLabel("เปิดหู").setEmoji(config.emojis?.voice_ch || "🔊").setStyle(ButtonStyle.Success)
     );
-    const move = new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId(IDS.MOVE).setPlaceholder("เลือกห้องเสียงปลายทางเพื่อย้ายสมาชิก").setChannelTypes(ChannelType.GuildVoice).setMinValues(1).setMaxValues(1));
-    const refresh = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(IDS.REFRESH).setLabel("รีเฟรช").setEmoji(config.emojis?.loading_circle || config.emojis?.loading || "🔄").setStyle(ButtonStyle.Primary));
-    return { embeds: [embed], components: [actions, move, refresh] };
+    const move = new ActionRowBuilder().addComponents(
+        new ChannelSelectMenuBuilder()
+            .setCustomId(IDS.MOVE)
+            .setPlaceholder("เลือกห้องเสียงปลายทางเพื่อย้ายสมาชิก")
+            .setChannelTypes(ChannelType.GuildVoice)
+            .setMinValues(1)
+            .setMaxValues(1)
+    );
+    const refresh = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(IDS.REFRESH)
+            .setLabel("รีเฟรช")
+            .setEmoji(config.emojis?.loading_circle || config.emojis?.loading || "🔄")
+            .setStyle(ButtonStyle.Primary)
+    );
+    return [actions, move, refresh];
+}
+
+function buildPanel(channel, status = null, action = null) {
+    const embed = buildPanelEmbed(channel, status, action);
+    const components = buildPanelActionRows();
+    return { embeds: [embed], components };
 }
 function verifyVoiceAdminAccess(actor, channel) {
     if (!isVoiceChannel(channel)) return "ต้องใช้คำสั่งในแชทของห้องเสียงปกติ";
@@ -1003,26 +1057,27 @@ async function _resolveMoveDestination(interaction) {
 }
 
 function _resolveActionLoadingText(action) {
+    const loadingDotsEmoji = config.emojis?.["03loading_pmt"] || config.emojis?.loading_dots || config.emojis?.loading || "⏳";
     const actionLoadingText = ({
-        disconnect: `${config.emojis?.loading || "⏳"} กำลังตัดสายทั้งหมด...`,
-        mute: `${config.emojis?.loading || "⏳"} กำลังปิดไมค์...`,
-        deaf: `${config.emojis?.loading || "⏳"} กำลังปิดหู...`,
-        unmute: `${config.emojis?.loading || "⏳"} กำลังเปิดไมค์...`,
-        undeaf: `${config.emojis?.loading || "⏳"} กำลังเปิดหู...`,
-        move: `${config.emojis?.loading || "⏳"} กำลังย้ายสมาชิก...`
+        disconnect: `${loadingDotsEmoji} กำลังตัดสายทั้งหมด...`,
+        mute: `${loadingDotsEmoji} กำลังปิดไมค์...`,
+        deaf: `${loadingDotsEmoji} กำลังปิดหู...`,
+        unmute: `${loadingDotsEmoji} กำลังเปิดไมค์...`,
+        undeaf: `${loadingDotsEmoji} กำลังเปิดหู...`,
+        move: `${loadingDotsEmoji} กำลังย้ายสมาชิก...`
     })[action];
-    return actionLoadingText || `${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`;
+    return actionLoadingText || `${loadingDotsEmoji} กำลังดำเนินการ...`;
 }
 
 async function _executePanelAction(interaction, action, destination) {
-    await interaction.editReply(buildPanel(interaction.channel, `> ${_resolveActionLoadingText(action)}`)).catch(() => {});
+    await interaction.editReply(buildPanel(interaction.channel, `> ${_resolveActionLoadingText(action)}`, action)).catch(() => {});
     try {
         const result = await runPanelAction(interaction, action, destination);
-        return interaction.editReply(buildPanel(interaction.channel, `> ${resultEmoji(result)} ${buildResult("ผลการทำงาน", result)}`));
+        return interaction.editReply(buildPanel(interaction.channel, `${resultEmoji(result)} ${buildResult("ผลการทำงาน", result)}`, action));
     }
     catch (error) {
         const detail = describePanelActionFailure(error);
-        return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} ${detail}`));
+        return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.CROSS_pmt || config.emojis?.error || "❌"} ${detail}`, action));
     }
 }
 
@@ -1032,7 +1087,7 @@ async function handleVoiceAdminInteraction(interaction) {
     if (interaction.customId === IDS.REFRESH) return interaction.update(buildPanel(interaction.channel));
     await interaction.deferUpdate();
     const action = PANEL_ACTION_MAP[interaction.customId];
-    if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.error || "❌"} คำสั่งแผงนี้ไม่ถูกต้อง`));
+    if (!action) return interaction.editReply(buildPanel(interaction.channel, `> ${config.emojis?.CROSS_pmt || config.emojis?.error || "❌"} คำสั่งแผงนี้ไม่ถูกต้อง`, "ข้อผิดพลาด"));
     const destination = action === "move" ? await _resolveMoveDestination(interaction) : null;
     return _executePanelAction(interaction, action, destination);
 }
@@ -1118,30 +1173,32 @@ function formatFailureReasons(failedDetails) {
 function buildSecretResultEmbed(command, result, guild = null) {
     const isFullSuccess = isResultFullSuccess(result);
     const color = resultColor(result);
-    const successEmoji = config.emojis?.success || "✅";
-    const errorEmoji = config.emojis?.error || "❌";
+    const successEmoji = config.emojis?.CHECK_pmt || config.emojis?.success || "<a:CHECK_pmt:1553832954051174426>";
+    const statusEmoji = config.emojis?.sn_pmt || config.emojis?.check_white || "<a:sn_pmt:1559878089750749244>";
+    const errorEmoji = config.emojis?.CROSS_pmt || config.emojis?.error || "<a:CROSS_pmt:1553833049135906816>";
     const warningEmoji = config.emojis?.warning || "⚠️";
-    const loadingEmoji = config.emojis?.loading || "⏳";
+    const loadingDotsEmoji = config.emojis?.["03loading_pmt"] || config.emojis?.loading_dots || ":03loading_pmt:";
+    const deafEmoji = config.emojis?.DEAF_pmt || config.emojis?.deaf || ":DEAF_pmt:";
 
     let statusText = `${errorEmoji} ดำเนินการไม่สำเร็จ`;
     if (isFullSuccess) {
-        statusText = `${successEmoji} ดำเนินการเสร็จสมบูรณ์`;
+        statusText = `${statusEmoji} ดำเนินการเสร็จสมบูรณ์`;
     } else if (result.succeeded > 0) {
         statusText = `${warningEmoji} ดำเนินการสำเร็จบางส่วน`;
     }
 
     const lines = [
-        `### ${statusText}`,
-        `> คำสั่งลับสำหรับผู้ดูแลระบบห้องเสียง • คำสั่ง: **${command}**\n`,
+        statusText,
+        "",
         "**สรุปผลการดำเนินการ:**",
         `• เป้าหมายทั้งหมด: **${result.targeted}** คน`,
         `• ${successEmoji} ดำเนินการสำเร็จ: **${result.succeeded}** คน`
     ];
     if (result.failed > 0) lines.push(`• ${errorEmoji} ไม่สำเร็จ: **${result.failed}** คน`);
     if (result.skipped > 0) lines.push(`• ออกจากห้องก่อนถึงคิว: **${result.skipped}** คน`);
-    if (result.timedOut > 0) lines.push(`• ${loadingEmoji} หมดเวลา: **${result.timedOut}** คน`);
+    if (result.timedOut > 0) lines.push(`• ${loadingDotsEmoji} หมดเวลา: **${result.timedOut}** คน`);
     if (typeof result?.durationMs === "number") {
-        lines.push(`• ⏱️ ใช้เวลาดำเนินการ: **${formatDuration(result.durationMs)}**`);
+        lines.push(`• ${loadingDotsEmoji} ใช้เวลาดำเนินการ: **${formatDuration(result.durationMs)}**`);
     }
 
     const failureReasons = formatFailureReasons(result.failedDetails);
@@ -1151,27 +1208,25 @@ function buildSecretResultEmbed(command, result, guild = null) {
 
     const embed = new EmbedBuilder()
         .setColor(color)
-        .setTitle(`Voice Admin — ${command}`)
-        .setDescription(lines.join("\n"))
-        .setTimestamp();
+        .setTitle(`${deafEmoji} Voice Admin - ${command}`)
+        .setDescription(lines.join("\n"));
     const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
     return embed;
 }
 
 function buildSecretErrorEmbed(detail, guild = null) {
-    const errorEmoji = config.emojis?.error || "❌";
     const warningEmoji = config.emojis?.warning || "⚠️";
+    const deafEmoji = config.emojis?.DEAF_pmt || config.emojis?.deaf || ":DEAF_pmt:";
     const embed = new EmbedBuilder()
         .setColor(config.system?.themeColors?.error || "#ED4245")
-        .setTitle(`${errorEmoji} ดำเนินการไม่สำเร็จ`)
+        .setTitle(`${deafEmoji} Voice Admin - ข้อผิดพลาด`)
         .setDescription(
             `### ${warningEmoji} พบข้อผิดพลาดในการประมวลผล\n` +
             `> ระบบไม่สามารถดำเนินการตามคำสั่งลับได้ในขณะนี้\n\n` +
             `**รายละเอียดข้อผิดพลาด:**\n` +
             `• ${detail}`
-        )
-        .setTimestamp();
+        );
     const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
     return embed;
@@ -1228,8 +1283,9 @@ async function handleSecretMessage(message) {
         excludeId: parsed.includeAdministrators ? message.author.id : null
     });
 
+    const loadingProgressEmoji = config.emojis?.["03loading_pmt"] || config.emojis?.loading_dots || config.emojis?.loading || "⏳";
     const pendingPromise = sendSecretMessage(message, {
-        content: `> ${config.emojis?.loading || "⏳"} กำลังดำเนินการ...`
+        content: `> ${loadingProgressEmoji} กำลังดำเนินการ...`
     }).catch(() => null);
 
     try {
@@ -1643,7 +1699,7 @@ module.exports = {
     handleVoiceStateUpdate, handleAuditLogEntry, handleMemberUpdate, handleMemberRemove, reconcileConnectedLocks,
     _test: {
         parseSecretCommand, sourceMembers, isVoiceChannel, isStillInSource, buildResult, resultEmoji, buildPersistenceFailureContext, getLock, setCachedLock, lockKey, noticeKey, BULK_SKIPPED,
-        changeContains, buildPanel, isAdministrator, verifyVoiceAdminAccess, runBulkUnsafe, withDeadline, isVoiceAdminInteraction,
+        changeContains, buildPanel, PANEL_ACTION_NAMES, resolvePanelActionName, isAdministrator, verifyVoiceAdminAccess, runBulkUnsafe, withDeadline, isVoiceAdminInteraction,
         operationWasAcknowledged, writeLock, clearLockField, clearBothLocks, clearAllLocksForMember, lockVoiceState,
         unlockVoiceState, unlockBoth, disconnectMembers, moveMembers, ensureBotPermission, runPanelAction, setVoiceBoth,
         isPermanentDiscordError, classifyVoiceAdminError, formatFailureReasons, buildSecretResultEmbed,

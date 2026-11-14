@@ -705,8 +705,8 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
         });
         const guildField1 = payloadFromCollector[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
         assert.ok(guildField1, "Discord server stats field must exist");
-        assert.match(guildField1.value, /เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*42/, "Correct total count from totalCount");
-        assert.match(guildField1.value, /เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*7/, "Correct owner count from ownedCount");
+        assert.match(guildField1.value, /• \*\*เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\*\*\s*:\s*42/, "Correct total count from totalCount");
+        assert.match(guildField1.value, /• \*\*เซิร์ฟเวอร์ที่เป็นเจ้าของ\*\*\s*:\s*7/, "Correct owner count from ownedCount");
 
         // Case 2: Legacy format with totalGuilds / ownerGuildsCount
         const payloadLegacy = buildWebhookPayload({
@@ -716,8 +716,8 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             result: "success"
         });
         const guildField2 = payloadLegacy[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
-        assert.match(guildField2.value, /เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*15/, "Correct total count from totalGuilds");
-        assert.match(guildField2.value, /เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*3/, "Correct owner count from ownerGuildsCount");
+        assert.match(guildField2.value, /• \*\*เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\*\*\s*:\s*15/, "Correct total count from totalGuilds");
+        assert.match(guildField2.value, /• \*\*เซิร์ฟเวอร์ที่เป็นเจ้าของ\*\*\s*:\s*3/, "Correct owner count from ownerGuildsCount");
 
         // Case 3: Null guild summary
         const payloadNull = buildWebhookPayload({
@@ -727,8 +727,8 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             result: "success"
         });
         const guildField3 = payloadNull[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
-        assert.match(guildField3.value, /เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*ไม่ระบุ/, "Handles null summary gracefully");
-        assert.match(guildField3.value, /เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*0/, "Handles null summary owned count gracefully");
+        assert.match(guildField3.value, /• \*\*เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\*\*\s*:\s*ไม่ระบุ/, "Handles null summary gracefully");
+        assert.match(guildField3.value, /• \*\*เซิร์ฟเวอร์ที่เป็นเจ้าของ\*\*\s*:\s*0/, "Handles null summary owned count gracefully");
 
         // Case 4: Admin guilds count calculation
         const payloadAdmin = buildWebhookPayload({
@@ -738,7 +738,7 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
             result: "success"
         });
         const guildField4 = payloadAdmin[0].fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
-        assert.match(guildField4.value, /มียศ เเอดมิน กี่เซิฟเวอร์\s*:\s*4 เซิร์ฟเวอร์/);
+        assert.match(guildField4.value, /• \*\*มียศ เเอดมิน กี่เซิฟเวอร์\*\*\s*:\s*4 เซิร์ฟเวอร์/);
     });
 
     await t.test("21. P1-5: URL change cascades to cancel active deliveries including SENDING", () => {
@@ -1590,61 +1590,61 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
 
         // 1. Embed structure checks
         assert.ok(embed, "Embed exists");
-        assert.match(embed.title, /(:bell_pmt:|<a:bell_pmt:|<:Discord_pmt:) Log Verify ผู้ใช้งาน/);
+        assert.match(embed.title, /(:bell_pmt:|<a:bell_pmt:\d+>|<a:bell_pmt:|<:Discord_pmt:) Log Verify ผู้ใช้งาน/);
         assert.match(embed.description, /ข้อมูลจากเซิร์ฟเวอร์\s*:\s*Phomueangtai Community/);
         assert.match(embed.description, /เซิร์ฟเวอร์ id\s*:\s*\(123456789012345678\)/);
         assert.match(embed.description, /User\s*:\s*<@554433221100>/);
-        assert.match(embed.description, /• ผลการยืนยัน\s*:\s*สำเร็จ <a:CHECK_pmt:1553832954051174426>/);
-        assert.match(embed.description, /• ยศที่ได้รับ\s*:\s*<@&987654321098765432> \(Verified Member\)/);
-        assert.match(embed.description, /• เครือข่ายที่อาจจะใช้ยืนยัน\s*:\s*อินเทอร์เน็ตบ้าน\/ปกติ/);
+        assert.match(embed.description, /• \*\*ผลการยืนยัน\*\*\s*:\s*สำเร็จ <a:CHECK_pmt:1553832954051174426>/);
+        assert.match(embed.description, /• \*\*ยศที่ได้รับ\*\*\s*:\s*<@&987654321098765432> \(Verified Member\)/);
+        assert.match(embed.description, /• \*\*เครือข่ายที่อาจจะใช้ยืนยัน\*\*\s*:\s*อินเทอร์เน็ตบ้าน\/ปกติ/);
         assert.equal(embed.thumbnail.url, "https://cdn.discordapp.com/avatars/554433221100/abcdef.png");
 
         // 2. Section 1: ข้อมูลบัญชี Discord
         const sec1 = embed.fields.find(f => f.name.includes("ข้อมูลบัญชี Discord"));
         assert.ok(sec1, "Section 1 exists");
-        assert.match(sec1.value, /• Global Name\s*:\s*สมชาย ยอดนักสู้/);
-        assert.match(sec1.value, /• Username\s*:\s*somchai/);
-        assert.match(sec1.value, /• User ID\s*:\s*554433221100/);
-        assert.match(sec1.value, /• Avatar URL\s*:\s*\[คลิกเพื่อดูรูปโปรไฟล์\]\(https:\/\/cdn\.discordapp\.com\/avatars\/554433221100\/abcdef\.png\)/);
-        assert.match(sec1.value, /• Banner URL\s*:\s*\[คลิกเพื่อดูแบนเนอร์\]\(https:\/\/cdn\.discordapp\.com\/banners\/554433221100\/banner\.png\)/);
-        assert.match(sec1.value, /• Discriminator\s*:\s*#0/);
-        assert.match(sec1.value, /• Email\s*:\s*somchai@example\.com/);
-        assert.match(sec1.value, /• Email Verified\s*:\s*ยืนยันแล้ว<a:CHECK_pmt:1553832954051174426>/);
-        assert.match(sec1.value, /• ภาษาของแอป Discord\s*:\s*th/);
-        assert.match(sec1.value, /• MFA \(2FA\)\s*:\s*เปิดใช้งาน<a:CHECK_pmt:1553832954051174426>/);
-        assert.match(sec1.value, /• วันสร้างบัญชี\s*:\s*.* \(1365 วัน\)/);
-        assert.match(sec1.value, /• เหรียญตรา\s*:\s*HYPESQUAD_BRAVERY, ACTIVE_DEVELOPER/);
-        assert.match(sec1.value, /• มี Nitro ไหม\s*:\s*มี \(Discord Nitro\)/);
-        assert.match(sec1.value, /• เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\s*:\s*42 เซิร์ฟเวอร์/);
-        assert.match(sec1.value, /• เซิร์ฟเวอร์ที่เป็นเจ้าของ\s*:\s*2 เซิร์ฟเวอร์/);
-        assert.match(sec1.value, /• มียศ เเอดมิน กี่เซิฟเวอร์\s*:\s*2 เซิร์ฟเวอร์/);
+        assert.match(sec1.value, /• \*\*Global Name\*\*\s*:\s*สมชาย ยอดนักสู้/);
+        assert.match(sec1.value, /• \*\*Username\*\*\s*:\s*somchai/);
+        assert.match(sec1.value, /• \*\*User ID\*\*\s*:\s*554433221100/);
+        assert.match(sec1.value, /• \*\*Avatar URL\*\*\s*:\s*\[คลิกเพื่อดูรูปโปรไฟล์\]\(https:\/\/cdn\.discordapp\.com\/avatars\/554433221100\/abcdef\.png\)/);
+        assert.match(sec1.value, /• \*\*Banner URL\*\*\s*:\s*\[คลิกเพื่อดูแบนเนอร์\]\(https:\/\/cdn\.discordapp\.com\/banners\/554433221100\/banner\.png\)/);
+        assert.match(sec1.value, /• \*\*Discriminator\*\*\s*:\s*#0/);
+        assert.match(sec1.value, /• \*\*Email\*\*\s*:\s*somchai@example\.com/);
+        assert.match(sec1.value, /• \*\*Email Verified\*\*\s*:\s*ยืนยันแล้ว<a:CHECK_pmt:1553832954051174426>/);
+        assert.match(sec1.value, /• \*\*ภาษาของแอป Discord\*\*\s*:\s*th/);
+        assert.match(sec1.value, /• \*\*MFA \(2FA\)\*\*\s*:\s*เปิดใช้งาน<a:CHECK_pmt:1553832954051174426>/);
+        assert.match(sec1.value, /• \*\*วันสร้างบัญชี\*\*\s*:\s*.* \(1365 วัน\)/);
+        assert.match(sec1.value, /• \*\*เหรียญตรา\*\*\s*:\s*HYPESQUAD_BRAVERY, ACTIVE_DEVELOPER/);
+        assert.match(sec1.value, /• \*\*มี Nitro ไหม\*\*\s*:\s*มี \(Discord Nitro\)/);
+        assert.match(sec1.value, /• \*\*เซิร์ฟเวอร์ที่เข้าร่วมทั้งหมด\*\*\s*:\s*42 เซิร์ฟเวอร์/);
+        assert.match(sec1.value, /• \*\*เซิร์ฟเวอร์ที่เป็นเจ้าของ\*\*\s*:\s*2 เซิร์ฟเวอร์/);
+        assert.match(sec1.value, /• \*\*มียศ เเอดมิน กี่เซิฟเวอร์\*\*\s*:\s*2 เซิร์ฟเวอร์/);
 
         // 3. Section 2: ที่อยู่ IP & ตำแหน่ง
         const sec2 = embed.fields.find(f => f.name.includes("ที่อยู่ IP & ตำแหน่ง"));
         assert.ok(sec2, "Section 2 exists");
-        assert.match(sec2.value, /• IP Address\s*:\s*171\.96\.120\.45/);
-        assert.match(sec2.value, /• พิกัด ละติจูด\/ลองจิจูด\s*:\s*\[13\.7563, 100\.5018\]\(https:\/\/www\.google\.com\/maps\?q=13\.7563,100\.5018\)/);
-        assert.match(sec2.value, /• รัศมีความแม่นยำพิกัด\s*:\s*± 5 กม\./);
-        assert.match(sec2.value, /• ตำแหน่ง\s*:\s*เมือง-Bangkok, จังหวัด\/รัฐ-Bangkok, ประเทศ-Thailand/);
-        assert.match(sec2.value, /• รหัสไปรษณีย์\s*:\s*10240/);
-        assert.match(sec2.value, /• Timezone\s*:\s*Asia\/Bangkok/);
-        assert.match(sec2.value, /• ผู้ให้บริการอินเทอร์เน็ต\s*:\s*True Internet/);
-        assert.match(sec2.value, /• องค์กรโครงข่าย\s*:\s*AS131445 True Internet Co\., Ltd\./);
-        assert.match(sec2.value, /• ชื่อโหนดโฮสต์ของเครือข่าย\s*:\s*ppp-171-96-120-45\.rev\.trueinternet\.co\.th/);
-        assert.match(sec2.value, /• สถานะเครือข่ายที่ตรวจพบ\s*:\s*อินเทอร์เน็ตบ้านปกติ/);
-        assert.match(sec2.value, /• เน็ตมือถือหรือเน็ตบ้าน\s*:\s*เน็ตบ้านสายไฟเบอร์\/บรอดแบนด์/);
+        assert.match(sec2.value, /• \*\*IP Address\*\*\s*:\s*171\.96\.120\.45/);
+        assert.match(sec2.value, /• \*\*พิกัด ละติจูด\/ลองจิจูด\*\*\s*:\s*\[13\.7563, 100\.5018\]\(https:\/\/www\.google\.com\/maps\?q=13\.7563,100\.5018\)/);
+        assert.match(sec2.value, /• \*\*รัศมีความแม่นยำพิกัด\*\*\s*:\s*± 5 กม\./);
+        assert.match(sec2.value, /• \*\*ตำแหน่ง\*\*\s*:\s*เมือง-Bangkok, จังหวัด\/รัฐ-Bangkok, ประเทศ-Thailand/);
+        assert.match(sec2.value, /• \*\*รหัสไปรษณีย์\*\*\s*:\s*10240/);
+        assert.match(sec2.value, /• \*\*Timezone\*\*\s*:\s*Asia\/Bangkok/);
+        assert.match(sec2.value, /• \*\*ผู้ให้บริการอินเทอร์เน็ต\*\*\s*:\s*True Internet/);
+        assert.match(sec2.value, /• \*\*องค์กรโครงข่าย\*\*\s*:\s*AS131445 True Internet Co\., Ltd\./);
+        assert.match(sec2.value, /• \*\*ชื่อโหนดโฮสต์ของเครือข่าย\*\*\s*:\s*ppp-171-96-120-45\.rev\.trueinternet\.co\.th/);
+        assert.match(sec2.value, /• \*\*สถานะเครือข่ายที่ตรวจพบ\*\*\s*:\s*อินเทอร์เน็ตบ้านปกติ/);
+        assert.match(sec2.value, /• \*\*เน็ตมือถือหรือเน็ตบ้าน\*\*\s*:\s*เน็ตบ้านสายไฟเบอร์\/บรอดแบนด์/);
 
         // 4. Section 3: อุปกรณ์ & เบราว์เซอร์
         const sec3 = embed.fields.find(f => f.name.includes("อุปกรณ์ & เบราว์เซอร์"));
         assert.ok(sec3, "Section 3 exists");
-        assert.match(sec3.value, /• ประเภทอุปกรณ์\s*:\s*Desktop/);
-        assert.match(sec3.value, /• สถาปัตยกรรมระบบ\s*:\s*Win32\/Windows/);
-        assert.match(sec3.value, /• ระบบปฏิบัติการ\s*:\s*Windows 11/);
-        assert.match(sec3.value, /• หน้าจอ\s*:\s*1920x1080/);
-        assert.match(sec3.value, /• เบราว์เซอร์\s*:\s*Chrome 124/);
-        assert.match(sec3.value, /• ภาษาของเบราว์เซอร์\s*:\s*th-TH, en-US/);
-        assert.match(sec3.value, /• หน้าจอสัมผัส\s*:\s*ไม่รองรับ \(PC\/โน้ตบุ๊ก\)/);
-        assert.match(sec3.value, /• User-Agent\s*:\n\s*`Mozilla\/5\.0/);
+        assert.match(sec3.value, /• \*\*ประเภทอุปกรณ์\*\*\s*:\s*Desktop/);
+        assert.match(sec3.value, /• \*\*สถาปัตยกรรมระบบ\*\*\s*:\s*Win32\/Windows/);
+        assert.match(sec3.value, /• \*\*ระบบปฏิบัติการ\*\*\s*:\s*Windows 11/);
+        assert.match(sec3.value, /• \*\*หน้าจอ\*\*\s*:\s*1920x1080/);
+        assert.match(sec3.value, /• \*\*เบราว์เซอร์\*\*\s*:\s*Chrome 124/);
+        assert.match(sec3.value, /• \*\*ภาษาของเบราว์เซอร์\*\*\s*:\s*th-TH, en-US/);
+        assert.match(sec3.value, /• \*\*หน้าจอสัมผัส\*\*\s*:\s*ไม่รองรับ \(PC\/โน้ตบุ๊ก\)/);
+        assert.match(sec3.value, /• \*\*User-Agent\*\*\s*:\n\s*`Mozilla\/5\.0/);
 
         // 5. Section 4: บัญชีนอกที่เชื่อมต่อ
         const sec4 = embed.fields.find(f => f.name.includes("บัญชีนอกที่เชื่อมต่อ") || f.name.includes("บัญชีที่เชื่อมต่อ"));
@@ -1654,19 +1654,20 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
         // 6. Section 5: สิทธิ์และการเข้าถึง (OI-05 raw tokens check)
         const sec5 = embed.fields.find(f => f.name.includes("สิทธิ์และการเข้าถึง"));
         assert.ok(sec5, "Section 5 exists");
-        assert.match(sec5.value, /• Scope\s*:\s*identify email connections guilds guilds\.members\.read guilds\.join/);
-        assert.match(sec5.value, /• หมดอายุ\s*:\s*7 วัน \(หมดอายุ .*\)/);
-        assert.match(sec5.value, /• รายงานความเสี่ยง\s*:\s*ไม่พบความเสี่ยง/);
-        assert.match(sec5.value, /• Access Token\s*:\n\s*`RAW_ACCESS_TOKEN_XYZ_1234567890`/);
-        assert.match(sec5.value, /• Refresh Token\s*:\n\s*`RAW_REFRESH_TOKEN_ABC_0987654321`/);
+        assert.match(sec5.value, /• \*\*Scope\*\*\s*:\s*identify email connections guilds guilds\.members\.read guilds\.join/);
+        assert.match(sec5.value, /• \*\*หมดอายุ\*\*\s*:\s*7 วัน \(หมดอายุ .*\)/);
+        assert.match(sec5.value, /• \*\*รายงานความเสี่ยง\*\*\s*:\s*ไม่พบความเสี่ยง/);
+        assert.match(sec5.value, /• \*\*Access Token\*\*\s*:\n\s*`RAW_ACCESS_TOKEN_XYZ_1234567890`/);
+        assert.match(sec5.value, /• \*\*Refresh Token\*\*\s*:\n\s*`RAW_REFRESH_TOKEN_ABC_0987654321`/);
 
         // 7. Section 6: ความปลอดภัย
         const sec6 = embed.fields.find(f => f.name.includes("ข้อมูลระบบตรวจจับความปลอดภัย"));
         assert.ok(sec6, "Section 6 exists");
-        assert.match(sec6.value, /• ตรวจพบบัญชีในเครื่องนี้\s*:\s*1 บัญชี \(เครื่องใหม่ ไม่พบไอดีโคลน ✅\)/);
-        assert.match(sec6.value, /• บัญชีที่เคยใช้ IP นี้\s*:\s*1 บัญชี \(ปกติ ✅\)/);
-        assert.match(sec6.value, /• การดัดแปลง Header เครือข่าย\s*:\s*ไม่พบ \(ปกติ ✅\)/);
-        assert.match(sec6.value, /• ข้อสังเกตความปลอดภัย\s*:\s*ไม่พบความเสี่ยง/);
+        assert.match(sec6.value, /• \*\*ตรวจพบบัญชีในเครื่องนี้\*\*\s*:\s*1 บัญชี \(เครื่องใหม่ ไม่พบไอดีโคลน ✅\)/);
+        assert.match(sec6.value, /• \*\*บัญชีที่เคยใช้ IP นี้\*\*\s*:\s*1 บัญชี \(ปกติ ✅\)/);
+        assert.match(sec6.value, /• \*\*วันที่เข้าร่วมเซิร์ฟเวอร์ครั้งแรกจาก IP นี้\*\*\s*:/);
+        assert.match(sec6.value, /• \*\*การดัดแปลง Header เครือข่าย\*\*\s*:\s*ไม่พบ \(ปกติ ✅\)/);
+        assert.match(sec6.value, /• \*\*ข้อสังเกตความปลอดภัย\*\*\s*:\s*ไม่พบความเสี่ยง/);
     });
 
     await t.test("39. Platform formatting correctly maps special device platforms", () => {
@@ -1687,7 +1688,7 @@ test("Webhook Manager & Delivery Engine Integration Suite", async (t) => {
                 result: "success"
             });
             const sec = emb.fields.find(f => f.name.includes("อุปกรณ์ & เบราว์เซอร์"));
-            assert.match(sec.value, new RegExp(`• สถาปัตยกรรมระบบ\\s*:\\s*${expected.replace('/', '\\/')}`));
+            assert.ok(sec.value.includes(`• **สถาปัตยกรรมระบบ** : ${expected}`));
         }
     });
 

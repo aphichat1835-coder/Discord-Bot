@@ -256,6 +256,13 @@ const slashCommandsData = [
                 required: false,
                 options: [
                     {
+                        type: 7,
+                        name: "log_channel",
+                        description: "ห้องสำหรับส่ง Log ระบบทำเควส (หากไม่เลือกจะส่งเข้า DM)",
+                        required: false,
+                        channel_types: [0, 5]
+                    },
+                    {
                         type: 5,
                         name: "auto_daily",
                         description: "แสดงปุ่ม AUTO DAILY บนแผงควบคุม (ค่าเริ่มต้น: ปิด)",

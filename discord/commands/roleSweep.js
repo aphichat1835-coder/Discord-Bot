@@ -312,8 +312,7 @@ function buildPreviewEmbed(guild, stats, exceptRoleIds = [], actorId = null, tar
             value: `กด “ยืนยัน” ด้านล่าง หรือพิมพ์ **${CONFIRMATION_TEXT}** ในห้องนี้`,
             inline: false
         }
-    )
-    .setTimestamp();
+    );
 
     const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);
@@ -384,8 +383,7 @@ function buildSummaryEmbed(guild, { changedMembers, removedAssignments, failedAs
                        (failedAssignments > 0 ? `\n• ยศที่ถอดไม่สำเร็จ: **${failedAssignments}** รายการ` : ""),
                 inline: false
             }
-        )
-        .setTimestamp();
+        );
 
     if (actorId) {
         embed.addFields({
@@ -408,8 +406,7 @@ function buildCancelEmbed(guild, actorId = null) {
         .setTitle(`${warningEmoji} ยกเลิกการถอดยศแล้ว`)
         .setDescription(
             `> ไม่มีการเปลี่ยนแปลงยศใด ๆ ในเซิร์ฟเวอร์`
-        )
-        .setTimestamp();
+        );
 
     if (actorId) {
         embed.addFields({
@@ -433,8 +430,7 @@ function buildExpiredEmbed(guild) {
         .setDescription(
             `> คำขอนี้เกินกำหนดเวลา 60 วินาที ระบบได้ยกเลิกงานอัตโนมัติเพื่อความปลอดภัย\n` +
             `> ไม่มีการเปลี่ยนแปลงยศใด ๆ ในเซิร์ฟเวอร์`
-        )
-        .setTimestamp();
+        );
 
     const iconUrl = guild?.iconURL?.({ forceStatic: false, size: 256 }) || guild?.iconURL?.();
     if (iconUrl) embed.setThumbnail(iconUrl);

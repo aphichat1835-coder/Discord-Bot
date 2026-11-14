@@ -343,5 +343,143 @@ test("guildRoute panelDifferences, comparablePanel, and safeRollbackEmbed", () =
   expect(rollbackPayload.embeds[0].title).toBe("Restored Title");
 });
 
+test("sanitizeVerificationBasicFlags normalizes legacy string boolean inputs", () => {
+  const { sanitizeVerificationBasicFlags } = guildRoute._test;
 
+  const disabled = sanitizeVerificationBasicFlags({
+    blockVPN: "false",
+    blockHosting: "0",
+    requireEmail: "off",
+    requireConnections: "no"
+  });
+  expect(disabled.blockVPN).toBe(false);
+  expect(disabled.blockHosting).toBe(false);
+  expect(disabled.requireEmail).toBe(false);
+  expect(disabled.requireConnections).toBe(false);
 
+  const enabled = sanitizeVerificationBasicFlags({
+    blockVPN: "true",
+    blockHosting: "1",
+    requireEmail: "on",
+    requireConnections: "yes"
+  });
+  expect(enabled.blockVPN).toBe(true);
+  expect(enabled.blockHosting).toBe(true);
+  expect(enabled.requireEmail).toBe(true);
+  expect(enabled.requireConnections).toBe(true);
+});
+
+test("mergeVerificationConfig synchronizes legacy blockVPN and blockHosting into securityRules", () => {
+  const { mergeVerificationConfig } = guildRoute._test;
+
+  // Initial state with VPN enabled
+  const base = {
+    securityRules: {
+      vpnProxyTor: { enabled: true, action: "deny_role" },
+      hosting: { enabled: true, action: "deny_role" }
+    }
+  };
+
+  // Disabling via string booleans
+  const mergedDisabling = mergeVerificationConfig(base, {
+    blockVPN: "false",
+    blockHosting: "0"
+  });
+  expect(mergedDisabling.securityRules.vpnProxyTor.enabled).toBe(false);
+  expect(mergedDisabling.blockVPN).toBe(false);
+  expect(mergedDisabling.securityRules.hosting.enabled).toBe(false);
+  expect(mergedDisabling.blockHosting).toBe(false);
+
+  // Enabling via string booleans
+  const mergedEnabling = mergeVerificationConfig(mergedDisabling, {
+    blockVPN: "true",
+    blockHosting: "1"
+  });
+  expect(mergedEnabling.securityRules.vpnProxyTor.enabled).toBe(true);
+  expect(mergedEnabling.blockVPN).toBe(true);
+  expect(mergedEnabling.securityRules.hosting.enabled).toBe(true);
+  expect(mergedEnabling.blockHosting).toBe(true);
+
+  // Synchronizing when securityRules is provided directly
+  const mergedDirectRules = mergeVerificationConfig(mergedEnabling, {
+    securityRules: {
+      vpnProxyTor: { enabled: false },
+      hosting: { enabled: false }
+    }
+  });
+  expect(mergedDirectRules.securityRules.vpnProxyTor.enabled).toBe(false);
+  expect(mergedDirectRules.blockVPN).toBe(false);
+  expect(mergedDirectRules.securityRules.hosting.enabled).toBe(false);
+  expect(mergedDirectRules.blockHosting).toBe(false);
+});
+
+test("serializeConfig exposes blockVPN and blockHosting consistently with security rule state", () => {
+  const { serializeConfig } = guildRoute._test;
+
+  const docVPNEnabled = {
+    guildId: "123456789012345678",
+    guildName: "Test Guild",
+    verification: {
+      securityRules: {
+        vpnProxyTor: { enabled: true, action: "deny_role" },
+        hosting: { enabled: false, action: "allow" }
+      }
+    }
+  };
+
+  const serialized1 = serializeConfig(docVPNEnabled);
+  expect(serialized1.verification.blockVPN).toBe(true);
+  expect(serialized1.verification.blockHosting).toBe(false);
+
+  const docHostingEnabled = {
+    toObject: () => ({
+      guildId: "123456789012345678",
+      guildName: "Test Guild",
+      verification: {
+        securityRules: {
+          vpnProxyTor: { enabled: false, action: "allow" },
+          hosting: { enabled: true, action: "deny_role" }
+        }
+      }
+    })
+  };
+
+  const serialized2 = serializeConfig(docHostingEnabled);
+  expect(serialized2.verification.blockVPN).toBe(false);
+  expect(serialized2.verification.blockHosting).toBe(true);
+});
+
+test("mergeVerificationConfig synchronizes legacy blockVPN and blockHosting on unrelated saves", () => {
+  const { mergeVerificationConfig } = guildRoute._test;
+
+  // Legacy config with no stored securityRules
+  const legacyDoc = {
+    blockVPN: true,
+    blockHosting: true,
+    panel: { title: "Old Title" }
+  };
+
+  // Unrelated change: updating panel only
+  const merged = mergeVerificationConfig(legacyDoc, {
+    panel: { title: "New Title" }
+  });
+
+  expect(merged.securityRules.vpnProxyTor.enabled).toBe(true);
+  expect(merged.blockVPN).toBe(true);
+  expect(merged.securityRules.hosting.enabled).toBe(true);
+  expect(merged.blockHosting).toBe(true);
+  expect(merged.panel.title).toBe("New Title");
+
+  // When stored securityRules explicitly disagrees with legacy flag, stored rule wins
+  const conflictingDoc = {
+    blockVPN: true,
+    securityRules: {
+      vpnProxyTor: { enabled: false, action: "allow" }
+    }
+  };
+  const mergedConflict = mergeVerificationConfig(conflictingDoc, {
+    panel: { title: "New Title" }
+  });
+  expect(mergedConflict.securityRules.vpnProxyTor.enabled).toBe(false);
+  expect(mergedConflict.blockVPN).toBe(false);
+});

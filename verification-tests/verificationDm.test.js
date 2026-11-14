@@ -41,6 +41,7 @@ describe("Verification DM experience", () => {
             reasonCode: "already_verified_has_role",
             reason: "บัญชีนี้มียศอยู่แล้ว",
             roleName: "สมาชิก",
+            guildId: "222222222222222222",
             guildName: "เซิร์ฟเวอร์ตัวอย่าง",
             guildIconUrl: "https://cdn.discordapp.com/icons/222222222222222222/iconhash.png?size=128",
             requestId: "already-role-test"
@@ -48,11 +49,13 @@ describe("Verification DM experience", () => {
         const serialized = JSON.stringify(sent[0]);
 
         expect(delivered).toBe(true);
-        expect(serialized).toContain("ยืนยันตัวตนไว้แล้ว");
+        expect(serialized).toContain("คุณเคยทำการ Verification ไว้เเล้ว");
+        expect(serialized).toContain("ระบบจึงไม่สามารถเพิ่มยศให้คุณได้");
         expect(serialized).not.toContain("ได้รับยศใหม่");
         expect(serialized).not.toContain("บัญชีที่เกี่ยวข้อง");
         expect(serialized).not.toContain("already-role-test");
         expect(sent[0].embeds[0].thumbnail.url).toBe("https://cdn.discordapp.com/icons/222222222222222222/iconhash.png?size=128");
+        expect(sent[0].components[0].components[0].url).toBe("https://discord.com/channels/222222222222222222");
     });
 
     test("all verification outcomes have distinct concise presentation", () => {
@@ -82,13 +85,41 @@ describe("Verification DM experience", () => {
             guildName: "เซิร์ฟเวอร์ตัวอย่าง"
         }).toJSON();
 
-        expect(success.title).toContain("สำเร็จ");
-        expect(alreadyVerified.title).toContain("ไว้แล้ว");
-        expect(blocked.title).toContain("ยังไม่ผ่าน");
-        expect(failed.title).toContain("ไม่สำเร็จ");
-        expect(blocked.fields.some(field => field.value.includes("บัญชีอายุน้อยเกินไป"))).toBe(true);
-        expect(failed.fields.some(field => field.value.includes("Discord ตอบกลับไม่สำเร็จ"))).toBe(true);
-        expect(new Set([success.color, alreadyVerified.color, blocked.color, failed.color]).size).toBe(4);
+        expect(success.title).toContain("คุณได้ทำการ Verification สำเร็จแล้ว");
+        expect(success.description).toContain("คุณผ่านการตรวจสอบเเล้วเเละได้รับยศเเล้ว");
+        expect(alreadyVerified.title).toContain("คุณเคยทำการ Verification ไว้เเล้ว");
+        expect(alreadyVerified.description).toContain("ระบบจึงไม่สามารถเพิ่มยศให้คุณได้");
+        expect(blocked.title).toContain("ไม่ผ่านการ Verification ของเซิร์ฟเวอร์");
+        expect(blocked.description).toContain("บัญชีของคุณไม่ผ่านเงื่อนไขความปลอดภัยของเซิร์ฟเวอร์");
+        expect(failed.title).toContain("คุณ Verification ไม่สำเร็จ");
+        expect(failed.description).toContain("ระบบทำการตรวจสอบไม่สำเร็จ โปรดลองใหม่อีกครั้ง");
+        expect(success.color).toBe(parseInt("2ECC71", 16));
+        expect(alreadyVerified.color).toBe(parseInt("2ECC71", 16));
+        expect(blocked.color).toBe(parseInt("E74C3C", 16));
+        expect(failed.color).toBe(parseInt("E74C3C", 16));
+    });
+
+    test("verification link button directs to guild or verification channel", () => {
+        const successComps = discordAPI.buildVerificationDmComponents({
+            ok: true,
+            guildId: "123456789012345678"
+        });
+        expect(successComps.length).toBe(1);
+        expect(successComps[0].components[0].data.url).toBe("https://discord.com/channels/123456789012345678");
+        expect(successComps[0].components[0].data.emoji.id).toBe("1553835220912840814");
+
+        const blockedCompsWithChannel = discordAPI.buildVerificationDmComponents({
+            ok: false,
+            guildId: "123456789012345678",
+            channelId: "987654321098765432"
+        });
+        expect(blockedCompsWithChannel[0].components[0].data.url).toBe("https://discord.com/channels/123456789012345678/987654321098765432");
+
+        const failedCompsFallback = discordAPI.buildVerificationDmComponents({
+            ok: false,
+            guildId: "123456789012345678"
+        });
+        expect(failedCompsFallback[0].components[0].data.url).toBe("https://discord.com/channels/123456789012345678");
     });
 
     test("verification DM never contains OAuth or network secrets", async () => {

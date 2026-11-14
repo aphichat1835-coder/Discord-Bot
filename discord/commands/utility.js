@@ -448,8 +448,7 @@ function buildEmojiResultEmbed({ total, added, skipped, failed, createdStatic, c
     const embed = new MessageEmbed()
         .setColor(theme.color)
         .setTitle(theme.title)
-        .setDescription(descLines.join("\n"))
-        .setTimestamp();
+        .setDescription(descLines.join("\n"));
 
     const fields = buildEmojiResultFields({ createdStatic, createdAnimated, skippedEmojis, failedEmojis });
     if (fields.length > 0) {

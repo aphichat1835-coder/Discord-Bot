@@ -314,13 +314,13 @@ describe("Audit Follow-up Architecture & Invariants Suite", () => {
             const versionDb = new Database(":memory:");
             const results = runMigrations(versionDb);
 
-            assert.equal(results.currentVersion, 13);
+            assert.equal(results.currentVersion, 14);
             const userVersion = versionDb.pragma("user_version", { simple: true });
-            assert.equal(userVersion, 13, "PRAGMA user_version must be exactly 13");
+            assert.equal(userVersion, 14, "PRAGMA user_version must be exactly 14");
 
-            // Verify all 13 migrations recorded in schema_migrations
+            // Verify all 14 migrations recorded in schema_migrations
             const rows = versionDb.prepare("SELECT migration_id, version FROM schema_migrations ORDER BY version ASC").all();
-            assert.equal(rows.length, 13);
+            assert.equal(rows.length, 14);
             assert.equal(rows[0].migration_id, "001_initial_core.sql");
             assert.equal(rows[1].migration_id, "002_history_events.sql");
             assert.equal(rows[2].migration_id, "003_cache_subsystem.sql");
@@ -334,6 +334,7 @@ describe("Audit Follow-up Architecture & Invariants Suite", () => {
             assert.equal(rows[10].migration_id, "011_p0_journal_replay_receipts.sql");
             assert.equal(rows[11].migration_id, "012_verification_webhook_sent_parts.sql");
             assert.equal(rows[12].migration_id, "013_voice_admin_locks.sql");
+            assert.equal(rows[13].migration_id, "014_scheduled_runners_legacy_dm.sql");
 
             versionDb.close();
         });

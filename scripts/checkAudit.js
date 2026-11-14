@@ -31,6 +31,18 @@ const ALLOWED_DEV_EXCEPTIONS = [
         parentPackage: null,
         advisoryId: "GHSA-86w9-cpqp-85rv",
         reason: "Direct devDependency wrapping vulnerable transitive node-forge. Upstream has no fix available."
+    },
+    {
+        packageName: "follow-redirects",
+        parentPackage: "@sonar/scan",
+        advisoryId: "GHSA-q3jh-wrc6-jgq8",
+        reason: "Development and CI scanner tooling only via @sonar/scan -> axios; not included in production runtime. Upstream @sonar/scan has no patched release available."
+    },
+    {
+        packageName: "follow-redirects",
+        parentPackage: "@sonar/scan",
+        advisoryId: "GHSA-8r9p-f939-6h3c",
+        reason: "Development and CI scanner tooling only via @sonar/scan -> axios; not included in production runtime. Upstream @sonar/scan has no patched release available."
     }
 ];
 

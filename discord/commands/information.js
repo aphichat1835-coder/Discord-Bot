@@ -221,8 +221,7 @@ function buildServerLoadingEmbed(interaction) {
         .addField(
             "ขอบเขตที่กำลังตรวจสอบ",
             "`MEMBERS` คนและบอท\n`CHANNELS` ช่องและหมวดหมู่\n`SECURITY` การยืนยัน 2FA และตัวกรองสื่อ"
-        )
-        .setTimestamp();
+        );
     const icon = interaction.guild?.iconURL?.({ forceStatic: false, size: 256 });
     if (icon) embed.setThumbnail(icon);
     return embed;
@@ -239,8 +238,7 @@ function buildUserLoadingEmbed(interaction) {
         .addField(
             "กำลังจัดเรียงข้อมูล",
             `${config.emojis?.loading || "⏳"} โปรไฟล์และอายุบัญชี • ยศและสิทธิ์ • Timeout และสถานะสมาชิก`
-        )
-        .setTimestamp();
+        );
     const avatar = user?.displayAvatarURL?.({ forceStatic: false, size: 256 });
     if (avatar) embed.setThumbnail(avatar);
     return embed;
@@ -256,8 +254,7 @@ function buildPingLoadingEmbed() {
             "CPU/RAM   กำลังเก็บตัวอย่าง\n" +
             "VOICE     กำลังอ่านสถานะ\n" +
             "```"
-        )
-        .setTimestamp();
+        );
 }
 
 function buildLoadingEmbed(kind, interaction) {
@@ -267,11 +264,14 @@ function buildLoadingEmbed(kind, interaction) {
 }
 
 function sendLoadingState(interaction, kind) {
-    return interaction.reply({
+    const payload = {
         embeds: [buildLoadingEmbed(kind, interaction)],
-        fetchReply: true,
         allowedMentions: { parse: [] }
-    });
+    };
+    if (typeof interaction.fetchReply === "function") {
+        return interaction.reply(payload).then(() => interaction.fetchReply());
+    }
+    return interaction.reply(payload);
 }
 
 function channelCounts(guild) {
@@ -454,8 +454,7 @@ function buildServerInfoEmbed(guild, owner, memberCounts, extra = {}) {
             buildServerChannelsAndResourcesField(guild, channels),
             buildServerSecurityAndBoostField(guild, extra),
             buildServerSystemAndFeaturesField(guild)
-        )
-        .setTimestamp();
+        );
 
     const iconUrl = guild.iconURL?.({ forceStatic: false, size: 1024 });
     if (iconUrl) embed.setThumbnail(iconUrl);
@@ -808,8 +807,7 @@ function buildUserInfoEmbed(interaction, user, member) {
             buildUserServerProfileField(member, displayColor),
             buildUserRolesAndPermsField(member),
             buildUserStatusAndActivityField(member)
-        )
-        .setTimestamp();
+        );
 
     const avatar = member?.displayAvatarURL?.({ forceStatic: false, size: 1024 }) ||
         user.displayAvatarURL?.({ forceStatic: false, size: 1024 });
@@ -899,8 +897,7 @@ async function handleUserAvatar(interaction) {
     try {
         if (typeof interaction.editReply === "function") {
             await interaction.reply({
-                content: `${config.emojis?.loading || "⏳"} กำลังโหลด...`,
-                fetchReply: true
+                content: `${config.emojis?.loading || "⏳"} กำลังโหลด...`
             });
             const user = await resolveAvatarTarget(interaction);
             if (!user || typeof user.displayAvatarURL !== "function") {
@@ -1051,8 +1048,7 @@ function buildPingEmbed(stats) {
                     `• สถิติการทำงาน: คำขอ **${formatCount(stats.requests)}** • ข้อผิดพลาด **${formatCount(stats.errors)}** • เชื่อมต่อใหม่ **${formatCount(stats.reconnects)}**`,
                 inline: false
             }
-        )
-        .setTimestamp();
+        );
 
     if (stats.botAvatarUrl) {
         embed.setThumbnail(stats.botAvatarUrl);

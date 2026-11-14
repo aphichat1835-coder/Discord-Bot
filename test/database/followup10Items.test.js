@@ -253,6 +253,7 @@ describe("Follow-Up 10 Audit Items Suite", () => {
             assert.equal(typeof DmNotification.findOne, "function");
             assert.equal(typeof DmNotification.find, "function");
             assert.equal(typeof DmNotification.updateOne, "function");
+            assert.equal(typeof DmNotification.findOneAndUpdate, "function");
         });
     });
 });

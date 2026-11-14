@@ -37,14 +37,15 @@ function isBotOwner(userId) {
 }
 
 function shortStatus(row) {
-    if (row.lastError) return `มีข้อผิดพลาด: ${row.lastError}`.slice(0, 100);
+    if (row.lastError) return 'พบปัญหาในการทำงาน';
     if (row.nextCheckAt) {
         const next = new Date(row.nextCheckAt);
         if (Number.isFinite(next.getTime())) {
-            return `ตรวจครั้งถัดไป ${next.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', hour12: false })}`.slice(0, 100);
+            const timeStr = next.toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit', hour12: false });
+            return `ตรวจรอบถัดไป ${timeStr} น.`;
         }
     }
-    return 'ระบบอัตโนมัติรายวันกำลังทำงาน';
+    return 'โหมดเควสอัตโนมัติรายวัน';
 }
 
 function buildQuestPanelEmbed(interaction = null, { hasAttachment = false } = {}) {
@@ -74,40 +75,49 @@ function buildQuestPanelEmbed(interaction = null, { hasAttachment = false } = {}
     return embed;
 }
 
-function buildQuestPanelRow({ showDaily = false } = {}) {
+function buildQuestPanelRow({ showDaily = false, channelId = null } = {}) {
+    const oneshotCustomId = channelId
+        ? `${IDS.BTN_QUEST_RUN_ONESHOT}:${channelId}`
+        : IDS.BTN_QUEST_RUN_ONESHOT;
+
+    const dailyCustomId = channelId
+        ? `${IDS.BTN_QUEST_RUN_DAILY}:${channelId}`
+        : IDS.BTN_QUEST_RUN_DAILY;
+
     const buttons = [
         new MessageButton()
-            .setCustomId(IDS.BTN_QUEST_RUN_ONESHOT)
-            .setLabel('START NOW')
-            .setEmoji(config.emojis?.boost || '🚀')
+            .setCustomId(oneshotCustomId)
+            .setLabel('เริ่มทำเควส')
+            .setEmoji(config.emojis?.ddd_pmt || config.emojis?.dreamworld || '<a:ddd_pmt:1553844572873040044>')
             .setStyle('SUCCESS')
     ];
 
     if (showDaily) {
         buttons.push(
             new MessageButton()
-                .setCustomId(IDS.BTN_QUEST_RUN_DAILY)
-                .setLabel('AUTO DAILY')
-                .setEmoji('🤖')
-                .setStyle('PRIMARY')
+                .setCustomId(dailyCustomId)
+                .setLabel('Auto')
+                .setEmoji(config.emojis?.UN9_pmt || config.emojis?.gear_blue || '<a:UN9_pmt:1561669460027244614>')
+                .setStyle('PRIMARY'),
+            new MessageButton()
+                .setCustomId(IDS.BTN_QUEST_STOP)
+                .setLabel('หยุด')
+                .setEmoji(config.emojis?.CROSS_pmt || config.emojis?.error || '<a:CROSS_pmt:1553833049135906816>')
+                .setStyle('DANGER')
         );
     }
-
-    buttons.push(
-        new MessageButton()
-            .setCustomId(IDS.BTN_QUEST_STOP)
-            .setLabel('STOP')
-            .setEmoji(config.emojis?.stop || '🛑')
-            .setStyle('DANGER')
-    );
 
     return new MessageActionRow().addComponents(...buttons);
 }
 
-async function showQuestModal(interaction, mode = 'oneshot') {
+async function showQuestModal(interaction, mode = 'oneshot', targetChannelId = null) {
     const isDaily = mode === 'scheduled';
+    const modalCustomId = targetChannelId
+        ? `${IDS.MODAL_QUEST_RUN}:${mode}:${targetChannelId}`
+        : `${IDS.MODAL_QUEST_RUN}:${mode}`;
+
     const modal = new Modal()
-        .setCustomId(`${IDS.MODAL_QUEST_RUN}:${mode}`)
+        .setCustomId(modalCustomId)
         .setTitle(isDaily ? '🤖 AUTO DAILY QUEST' : '🔥 AUTO QUEST LOGIN');
 
     const tokenInput = new TextInputComponent()
@@ -123,7 +133,7 @@ async function showQuestModal(interaction, mode = 'oneshot') {
     return interaction.showModal(modal);
 }
 
-async function buildStopPanelPayload(ownerId, notice = null) {
+async function buildStopPanelPayload(ownerId) {
     let rows = [];
     try {
         rows = await listScheduledRunners(ownerId);
@@ -132,53 +142,54 @@ async function buildStopPanelPayload(ownerId, notice = null) {
     const oneShotJobs = getUserJobs(ownerId, { mode: 'oneshot' });
     const totalActive = rows.length + oneShotJobs.length;
 
-    const embedTitle = totalActive > 0 ? `${config.emojis?.stop || '🛑'} จัดการ Runner เควสอัตโนมัติ` : `${config.emojis?.success || '✅'} ไม่มี Runner ที่กำลังทำงาน`;
-    const embedDesc = totalActive > 0
-        ? 'เลือก Token ที่ต้องการหยุดจากเมนูด้านล่าง หรือกดปุ่ม **STOP ALL** เพื่อหยุดทั้งหมด'
-        : 'สามารถกด **START NOW** หรือ **AUTO DAILY** ได้เลย';
+    const crossEmoji = config.emojis?.CROSS_pmt || config.emojis?.error || '<a:CROSS_pmt:1553833049135906816>';
+    const snEmoji = config.emojis?.sn_pmt || config.emojis?.check_white || '<a:sn_pmt:1559878089750749244>';
+    const bellEmoji = config.emojis?.bell_pmt || config.emojis?.bell || '<a:bell_pmt:1559247893343248438>';
+    const discordEmoji = config.emojis?.Discord_pmt || config.emojis?.server_icon || '<:Discord_pmt:1553835220912840814>';
+
+    if (totalActive === 0) {
+        return {
+            content: `> ${snEmoji} ตอนนี้ไม่มีเควสที่กำลังทำงานอยู่`,
+            embeds: [],
+            components: []
+        };
+    }
 
     const embed = new MessageEmbed()
-        .setTitle(embedTitle)
-        .setColor(totalActive > 0 ? '#ED4245' : '#57F287')
-        .setDescription([
-            notice ? `${notice}\n` : '',
-            embedDesc
-        ].filter(Boolean).join('\n'))
-        .setTimestamp();
+        .setTitle(`${bellEmoji} : หยุดการทำเควส`)
+        .setColor(config.system?.themeColors?.error || '#FF9999')
+        .setDescription(
+            `${crossEmoji} กำลังทำงาน : **${totalActive}** บัญชี\n` +
+            'เลือกบัญชีที่ต้องการให้หยุดจากเมนูด้านล่าง หรือกดปุ่มเพื่อหยุดทั้งหมด'
+        );
 
     const components = [];
 
     if (rows.length > 0) {
         const select = new MessageSelectMenu()
             .setCustomId(IDS.SELECT_QUEST_STOP)
-            .setPlaceholder('เลือก Token ที่ต้องการหยุด')
+            .setPlaceholder('เลือกบัญชีที่ต้องการหยุด...')
             .setMinValues(1)
             .setMaxValues(Math.min(rows.length, 10))
             .addOptions(rows.slice(0, 10).map((row) => ({
                 label: (row.username || 'Unknown').slice(0, 100),
                 description: shortStatus(row),
                 value: String(row._id),
-                emoji: '🤖'
+                emoji: discordEmoji
             })));
         components.push(new MessageActionRow().addComponents(select));
     }
 
     const buttonRow = new MessageActionRow().addComponents(
         new MessageButton()
-            .setCustomId(IDS.BTN_QUEST_REFRESH)
-            .setLabel('Refresh')
-            .setEmoji(config.emojis?.loading_circle || config.emojis?.loading || '🔄')
-            .setStyle('SECONDARY'),
-        new MessageButton()
             .setCustomId(IDS.BTN_QUEST_STOP_ALL)
-            .setLabel('STOP ALL')
-            .setEmoji(config.emojis?.stop || '🛑')
+            .setLabel('หยุดทั้งหมด')
+            .setEmoji(crossEmoji)
             .setStyle('DANGER')
-            .setDisabled(totalActive === 0)
     );
     components.push(buttonRow);
 
-    return { embeds: [embed], components };
+    return { content: null, embeds: [embed], components };
 }
 
 async function handleQuestCommand(interaction) {
@@ -193,10 +204,12 @@ async function handleQuestCommand(interaction) {
         }
         await safeDefer(interaction);
         const showDaily = interaction.options?.getBoolean?.('auto_daily') === true;
+        const logChannel = interaction.options?.getChannel?.('log_channel');
+        const channelId = logChannel?.id || null;
         const bannerPath = getQuestBannerPath();
         const hasAttachment = Boolean(bannerPath);
         const embed = buildQuestPanelEmbed(interaction, { hasAttachment });
-        const row = buildQuestPanelRow({ showDaily });
+        const row = buildQuestPanelRow({ showDaily, channelId });
         const payload = { embeds: [embed], components: [row] };
         if (hasAttachment) {
             payload.files = [new AttachmentBuilder(bannerPath, { name: QUEST_BANNER_ATTACHMENT_NAME })];
@@ -213,9 +226,8 @@ async function handleQuestCommand(interaction) {
 async function handleQuestStopAction(interaction) {
     if (typeof interaction.deferReply === 'function') {
         await interaction.deferReply({ flags: 64 });
-        await interaction.editReply({ content: `${config.emojis?.loading_circle || config.emojis?.loading || '⏳'} กำลังโหลด...` }).catch(() => null);
         const payload = await buildStopPanelPayload(interaction.user.id);
-        return interaction.editReply({ content: null, ...payload });
+        return interaction.editReply(payload);
     }
     const payload = await buildStopPanelPayload(interaction.user.id);
     return interaction.reply({ ...payload, flags: 64 });
@@ -224,10 +236,10 @@ async function handleQuestStopAction(interaction) {
 async function handleQuestRefreshAction(interaction) {
     if (typeof interaction.deferUpdate === 'function') {
         await interaction.deferUpdate();
-        const payload = await buildStopPanelPayload(interaction.user.id, `${config.emojis?.loading_circle || config.emojis?.loading || '🔄'} อัปเดตสถานะแล้ว`);
+        const payload = await buildStopPanelPayload(interaction.user.id);
         return interaction.editReply(payload);
     }
-    const payload = await buildStopPanelPayload(interaction.user.id, `${config.emojis?.loading_circle || config.emojis?.loading || '🔄'} อัปเดตสถานะแล้ว`);
+    const payload = await buildStopPanelPayload(interaction.user.id);
     return interaction.update(payload);
 }
 
@@ -235,18 +247,17 @@ async function handleQuestStopAllAction(interaction) {
     if (typeof interaction.deferUpdate === 'function') {
         await interaction.deferUpdate();
     }
-    const stoppedCount = stopAllForUser(interaction.user.id);
+    const crossEmoji = config.emojis?.CROSS_pmt || config.emojis?.error || '<a:CROSS_pmt:1553833049135906816>';
+    stopAllForUser(interaction.user.id);
     const scheduledList = await listScheduledRunners(interaction.user.id).catch(() => []);
     for (const r of scheduledList) {
         stopScheduledJob(interaction.user.id, String(r._id));
     }
-    const totalStopped = stoppedCount + scheduledList.length;
-    const payload = await buildStopPanelPayload(
-        interaction.user.id,
-        totalStopped > 0
-            ? `> ${config.emojis?.stop || '🛑'} สั่งหยุด Runner ทั้งหมดแล้ว **${totalStopped}** รายการ`
-            : `> ${config.emojis?.alert || 'ℹ️'} ไม่มี Runner ที่กำลังทำงาน`
-    );
+    const payload = {
+        content: `> ${crossEmoji} สั่งหยุดการทำเควสทั้งหมดเรียบร้อยแล้ว`,
+        embeds: [],
+        components: []
+    };
     if (typeof interaction.editReply === 'function' && interaction.deferred) {
         return interaction.editReply(payload);
     }
@@ -256,12 +267,16 @@ async function handleQuestStopAllAction(interaction) {
 async function handleQuestButton(interaction) {
     const customId = interaction.customId;
 
-    if (customId === IDS.BTN_QUEST_RUN || customId === IDS.BTN_QUEST_RUN_ONESHOT) {
-        return showQuestModal(interaction, 'oneshot');
+    if (customId === IDS.BTN_QUEST_RUN || customId === IDS.BTN_QUEST_RUN_ONESHOT || customId.startsWith(`${IDS.BTN_QUEST_RUN_ONESHOT}:`)) {
+        const parts = customId.split(':');
+        const targetChannelId = parts.length > 2 ? parts[2] : null;
+        return showQuestModal(interaction, 'oneshot', targetChannelId);
     }
 
-    if (customId === IDS.BTN_QUEST_RUN_DAILY) {
-        return showQuestModal(interaction, 'scheduled');
+    if (customId === IDS.BTN_QUEST_RUN_DAILY || customId.startsWith(`${IDS.BTN_QUEST_RUN_DAILY}:`)) {
+        const parts = customId.split(':');
+        const targetChannelId = parts.length > 2 ? parts[2] : null;
+        return showQuestModal(interaction, 'scheduled', targetChannelId);
     }
 
     if (customId === IDS.BTN_QUEST_STOP) {
@@ -289,6 +304,7 @@ async function handleQuestSelect(interaction) {
         await interaction.deferUpdate();
     }
 
+    const crossEmoji = config.emojis?.CROSS_pmt || config.emojis?.error || '<a:CROSS_pmt:1553833049135906816>';
     const selectedIds = interaction.values || [];
     let stopped = 0;
     for (const scheduleId of selectedIds) {
@@ -297,22 +313,46 @@ async function handleQuestSelect(interaction) {
         }
     }
 
-    const payload = await buildStopPanelPayload(
-        interaction.user.id,
-        stopped > 0
-            ? `> ${config.emojis?.stop || '🛑'} สั่งหยุด Auto Daily Runner ที่เลือกแล้ว **${stopped}** บัญชี`
-            : `> ${config.emojis?.success || '✅'} ดำเนินการหยุดรายการที่เลือกเรียบร้อยแล้ว`
-    );
+    const payload = {
+        content: `> ${crossEmoji} สั่งหยุดเรียบร้อยแล้ว (${stopped} บัญชี)`,
+        embeds: [],
+        components: []
+    };
     if (typeof interaction.editReply === 'function' && interaction.deferred) {
         return interaction.editReply(payload);
     }
     return interaction.update(payload);
 }
 
+function formatModalSubmitResponse(results, isDaily, targetChannelId) {
+    const lines = results.map((r) => r.line || (r.started ? `${config.emojis?.check_alt || config.emojis?.success || '✅'} เริ่มสำเร็จ: ${r.username}` : `${config.emojis?.red_card || config.emojis?.error || '❌'} เริ่มไม่สำเร็จ`));
+    const anyStarted = results.some((r) => r.started);
+
+    const boostEmoji = config.emojis?.boost || '🚀';
+    const activateEmoji = config.emojis?.activate || boostEmoji;
+    let finalContent = lines.join('\n');
+    const destText = targetChannelId
+        ? `ห้อง <#${targetChannelId}>`
+        : '**DM (แชทส่วนตัว)** ของคุณ';
+    const fallbackNotice = targetChannelId
+        ? '(หากส่งเข้าห้องไม่สำเร็จ ระบบจะส่งไปยัง DM สำรอง)'
+        : '(หากปิดรับ DM ระบบจะยังคงทำงานต่อไปในเบื้องหลังตามปกติ)';
+
+    if (isDaily && anyStarted) {
+        return `**${activateEmoji} AUTO DAILY QUEST เปิดใช้งานแล้ว**\n\n${finalContent}\n\nระบบได้ส่งข้อความสถานะสดไปยัง ${destText} เรียบร้อยแล้ว ${fallbackNotice} และสามารถใช้ปุ่ม **หยุด** เพื่อหยุดได้ตลอดเวลา`;
+    }
+    if (anyStarted) {
+        return `**${activateEmoji} เริ่มต้นทำงาน ONE-SHOT QUEST แล้ว**\n\n${finalContent}\n\nระบบกำลังเริ่มทำเควสต์และส่งข้อความสถานะสดไปยัง ${destText} เรียบร้อยแล้ว ${fallbackNotice}`;
+    }
+    return finalContent;
+}
+
 async function handleQuestModalSubmit(interaction) {
     const customId = interaction.customId;
     const isDaily = customId.includes(':scheduled');
     const mode = isDaily ? 'scheduled' : 'oneshot';
+    const parts = customId.split(':');
+    const targetChannelId = parts.length > 2 ? parts[2] : null;
 
     const rawTokens = interaction.fields.getTextInputValue(IDS.FIELD_QUEST_TOKENS) || '';
     const tokens = [...new Set(rawTokens.split('\n').map((t) => t.trim()).filter(Boolean))];
@@ -340,22 +380,12 @@ async function handleQuestModalSubmit(interaction) {
         invokerTag: interaction.user.tag,
         guildId: interaction.guildId,
         channelId: interaction.channelId,
+        logChannelId: targetChannelId || null,
         tokens,
         mode
     });
 
-    const lines = results.map((r) => r.line || (r.started ? `${config.emojis?.check_alt || config.emojis?.success || '✅'} เริ่มสำเร็จ: ${r.username}` : `${config.emojis?.red_card || config.emojis?.error || '❌'} เริ่มไม่สำเร็จ`));
-    const anyStarted = results.some((r) => r.started);
-
-    const boostEmoji = config.emojis?.boost || '🚀';
-    const activateEmoji = config.emojis?.activate || boostEmoji;
-    let finalContent = lines.join('\n');
-    if (isDaily && anyStarted) {
-        finalContent = `**${activateEmoji} AUTO DAILY QUEST เปิดใช้งานแล้ว**\n\n${finalContent}\n\nระบบได้ส่งข้อความสถานะสดไปยัง **DM (แชทส่วนตัว)** ของคุณเรียบร้อยแล้ว (หากปิดรับ DM ระบบจะยังคงทำงานต่อไปในเบื้องหลังตามปกติ) และสามารถใช้ปุ่ม **STOP** เพื่อหยุดได้ตลอดเวลา`;
-    } else if (anyStarted) {
-        finalContent = `**${activateEmoji} เริ่มต้นทำงาน ONE-SHOT QUEST แล้ว**\n\n${finalContent}\n\nระบบกำลังเริ่มทำเควสต์และส่งข้อความสถานะสดไปยัง **DM (แชทส่วนตัว)** ของคุณเรียบร้อยแล้ว (หากปิดรับ DM ระบบจะยังคงทำงานต่อไปในเบื้องหลังตามปกติ)`;
-    }
-
+    const finalContent = formatModalSubmitResponse(results, isDaily, targetChannelId);
     return interaction.editReply({ content: finalContent });
 }
 
